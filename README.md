@@ -1,2 +1,4 @@
 # gwas-simulator
-A module for loading and simulating GWAS data
+A module for efficiently loading and simulating GWAS data
+
+By: Shadi Zabad and Matias Calderini
