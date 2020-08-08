@@ -1,3 +1,4 @@
+from scipy import stats
 import numpy as np
 import pandas as pd
 import dask.array as da
@@ -58,6 +59,7 @@ class GWASDataLoader(object):
 
         self.beta_hats = None
         self.z_scores = None
+        self.p_values = None
 
         # ------- Read data files -------
         self.read_genotypes(bed_files, ld_block_files)
@@ -217,6 +219,7 @@ class GWASDataLoader(object):
 
         self.get_beta_hat()
         self.get_z_scores()
+        self.get_p_values()
 
     def read_summary_stats(self, sumstats_file):
         """
@@ -291,6 +294,16 @@ class GWASDataLoader(object):
         self.z_scores = {i: b_hat * self.N / np.sqrt(self.N)
                          for i, b_hat in self.beta_hats.items()}
         return self.z_scores
+
+    def get_p_values(self, log10=True):
+        if log10:
+            self.p_values = {i: da.array(-np.log10(2.*stats.norm.sf(abs(z_sc))))
+                             for i, z_sc in self.z_scores.items()}
+        else:
+            self.p_values = {i: da.array(2.*stats.norm.sf(abs(z_sc)))
+                             for i, z_sc in self.z_scores.items()}
+
+        return self.p_values
 
     def iter_sumstats(self, w_annots=False):
 
@@ -408,3 +421,4 @@ class GWASSimulator(GWASDataLoader):
         self.simulate_phenotypes()
         self.get_beta_hat()
         self.get_z_scores()
+        self.get_p_values()
