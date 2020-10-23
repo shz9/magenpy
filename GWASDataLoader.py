@@ -1,4 +1,5 @@
 
+import copy
 import numpy as np
 import pandas as pd
 import dask.array as da
@@ -26,6 +27,7 @@ class GWASDataLoader(object):
                  max_cm_dist=1.,
                  lam=0.1,
                  batch_size=200,
+                 train_test_ratio=None,
                  output_dir=None):
 
         self.output_dir = output_dir
@@ -61,6 +63,12 @@ class GWASDataLoader(object):
         self.beta_hats = None
         self.z_scores = None
         self.p_values = None
+
+        # ------- Train/test split -------
+
+        self.train_test_ratio = train_test_ratio
+        self.train_idx = None
+        self.test_idx = None
 
         # ------- Read data files -------
         self.read_genotypes(bed_files, ld_block_files)
@@ -321,3 +329,17 @@ class GWASDataLoader(object):
 
     def iter_individual_data(self):
         pass
+
+    def to_sumstats_table(self):
+
+        sum_stats = pd.DataFrame({
+            'CHR': np.vstack([v['G'].chrom.values for k, v in self.genotypes.items()])[0],
+            'SNP': np.vstack([v['G'].snp.values for k, v in self.genotypes.items()])[0],
+            'Z': np.vstack([v.compute() for c, v in self.get_z_scores().items()])[0],
+            'A1': np.vstack([v['G'].a0.values for k, v in self.genotypes.items()])[0],
+            'A2': np.vstack([v['G'].a1.values for k, v in self.genotypes.items()])[0]
+        })
+
+        sum_stats['N'] = self.N
+
+        return sum_stats
