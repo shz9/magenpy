@@ -1,5 +1,6 @@
 import numpy as np
 import dask.array as da
+from xarray import DataArray
 
 from .GWASDataLoader import GWASDataLoader
 
@@ -20,7 +21,13 @@ class GWASSimulator(GWASDataLoader):
 
     def simulate_genotypes(self, n):
 
+        self.sample_ids = 'HG' + np.arange(1, n+1).astype(str).astype(np.object)
+        self.train_idx = self.test_idx = self.ld_subset_idx = np.arange(n)
+
         for i, ld_fac_list in self.ld_cholesky_factors.items():
+
+            gen = None
+            var_coords = self.genotypes[i]['G'].variant.coords
 
             for j, ld_fac in enumerate(ld_fac_list):
 
@@ -31,9 +38,18 @@ class GWASSimulator(GWASDataLoader):
                 ng_mat /= da.std(ng_mat, axis=0)
 
                 if j > 0:
-                    self.genotypes[i]['G'] = da.concatenate([self.genotypes[i]['G'], ng_mat], axis=1)
+                    gen = da.concatenate([gen, ng_mat], axis=1)
                 else:
-                    self.genotypes[i]['G'] = ng_mat
+                    gen = ng_mat
+
+            g = DataArray(gen, dims=["sample", "variant"], coords=[self.sample_ids, var_coords['variant'].values])
+            sample = {'iid': ("sample", self.sample_ids),
+                      'fid': ("sample", self.sample_ids)}
+            g = g.assign_coords(**sample)
+            g = g.assign_coords(var_coords)
+            g.name = "genotype"
+
+            self.genotypes[i]['G'] = g
 
         self.N = n
 
@@ -101,6 +117,4 @@ class GWASSimulator(GWASDataLoader):
             self.simulate_betas()
 
         self.simulate_phenotypes()
-        self.get_beta_hat()
-        self.get_z_scores()
-        self.get_p_values()
+        self.compute_summary_statistics()

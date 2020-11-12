@@ -23,21 +23,35 @@ class GWASDataLoader(object):
                  sumstats_file=None,
                  keep_individuals=None,
                  keep_snps=None,
+                 train_samples=None,
+                 train_idx=None,
+                 test_samples=None,
+                 test_idx=None,
+                 ld_subset_samples=None,
+                 ld_subset_idx=None,
                  regularize_ld=True,
                  max_cm_dist=1.,
                  lam=0.1,
                  batch_size=200,
-                 train_test_ratio=None,
-                 output_dir=None):
+                 phenotype_id=None,
+                 output_dir=None,
+                 verbose=True):
 
+        # ------- General options -------
+        self.verbose = verbose
+
+        self.bed_files = bed_files
         self.output_dir = output_dir
         self.batch_size = batch_size
 
+        # ------- General parameters -------
+
+        self.phenotype_id = None  # Name or ID of the phenotype
         self.N = None  # Number of individuals
         self.M = None  # Total number of SNPs
         self.C = None  # Number of annotations
 
-        # ------- LD regularization options -------
+        # ------- LD computation options -------
         self.regularize_ld = regularize_ld
         self.max_cm_dist = max_cm_dist
         self.lam = lam
@@ -47,11 +61,12 @@ class GWASDataLoader(object):
         self.keep_snps = self.read_filter_files(keep_snps)
 
         # ------- Genotype data -------
+
         self.genotypes = None
         self.sample_ids = None
-
         self.annotations = None
 
+        # ------- LD-related data -------
         self.ld = None
         self.ld_cholesky_factors = None
 
@@ -64,18 +79,25 @@ class GWASDataLoader(object):
         self.z_scores = None
         self.p_values = None
 
-        # ------- Train/test split -------
-
-        self.train_test_ratio = train_test_ratio
-        self.train_idx = None
-        self.test_idx = None
-
         # ------- Read data files -------
         self.read_genotypes(bed_files, ld_block_files)
         self.read_annotations(annotation_files)
-        self.read_phenotypes(phenotype_file)
+        self.read_phenotypes(phenotype_file, phenotype_id=phenotype_id)
         self.read_summary_stats(sumstats_file)
+
+        # ------- Compute LD matrices -------
+
+        self.ld_subset_idx = None
+        self.set_ld_subset_samples(ld_subset_samples, ld_subset_idx)
         self.compute_ld()
+
+        # ------- Train/test assignment -------
+
+        self.train_idx = None
+        self.test_idx = None
+
+        self.set_training_samples(train_samples, train_idx)
+        self.set_testing_samples(test_samples, test_idx)
 
     @staticmethod
     def read_filter_files(file):
@@ -90,6 +112,43 @@ class GWASDataLoader(object):
 
         return keep_list
 
+    def set_training_samples(self, train_samples=None, train_idx=None):
+
+        if train_samples is None and train_idx is None:
+            self.train_idx = np.arange(self.N)
+        elif train_idx is None:
+            self.train_idx = self.sample_ids_to_index(train_samples)
+        else:
+            self.train_idx = train_idx
+
+    def set_testing_samples(self, test_samples=None, test_idx=None):
+        if test_samples is None and test_idx is None:
+            self.test_idx = np.arange(self.N)
+        elif test_idx is None:
+            self.train_idx = self.sample_ids_to_index(test_samples)
+        else:
+            self.train_idx = test_idx
+
+    def set_ld_subset_samples(self, ld_samples=None, ld_sample_idx=None):
+        if ld_samples is None and ld_sample_idx is None:
+            self.ld_subset_idx = np.arange(self.N)
+        elif ld_sample_idx is None:
+            self.ld_subset_idx = self.sample_ids_to_index(ld_samples)
+        else:
+            self.ld_subset_idx = ld_sample_idx
+
+    def sample_ids_to_index(self, ids):
+        return np.where(np.isin(self.sample_ids, ids))[0]
+
+    def sample_index_to_ids(self, idx):
+        return self.sample_ids[idx]
+
+    def compute_summary_statistics(self):
+
+        self.get_beta_hat()
+        self.get_z_scores()
+        self.get_p_values()
+
     def read_annotations(self, annot_files):
         """
         Read the annotation files
@@ -99,7 +158,8 @@ class GWASDataLoader(object):
         if annot_files is None:
             return
 
-        print("> Reading annotation files...")
+        if self.verbose:
+            print("> Reading annotation files...")
 
         if not iterable(annot_files):
             files_to_read = [annot_files]
@@ -133,7 +193,8 @@ class GWASDataLoader(object):
         :return:
         """
 
-        print("> Reading genotype files...")
+        if self.verbose:
+            print("> Reading genotype files...")
 
         if not iterable(genotype_files):
             genotype_files = [genotype_files]
@@ -148,9 +209,9 @@ class GWASDataLoader(object):
 
             # Read plink file:
             try:
-                gt_ac = read_plink1_bin(bfile + ".bed")
+                gt_ac = read_plink1_bin(bfile + ".bed", verbose=False)
             except ValueError:
-                gt_ac = read_plink1_bin(bfile)
+                gt_ac = read_plink1_bin(bfile, verbose=False)
             except Exception as e:
                 self.genotypes = None
                 self.sample_ids = None
@@ -207,12 +268,13 @@ class GWASDataLoader(object):
 
                 self.genotypes[i]['LD Blocks'] = ld_blocks
 
-    def read_phenotypes(self, phenotype_file, normalize=True):
+    def read_phenotypes(self, phenotype_file, normalize=True, phenotype_id=None):
 
         if phenotype_file is None:
             return
 
-        print("> Reading phenotype files...")
+        if self.verbose:
+            print("> Reading phenotype files...")
 
         try:
             phe = pd.read_csv(phenotype_file)
@@ -226,9 +288,12 @@ class GWASDataLoader(object):
             self.phenotypes -= self.phenotypes.mean()
             self.phenotypes /= self.phenotypes.std()
 
-        self.get_beta_hat()
-        self.get_z_scores()
-        self.get_p_values()
+        if phenotype_id is None:
+            self.phenotype_id = str(np.random.randint(1, 1000))
+        else:
+            self.phenotype_id = phenotype_id
+
+        self.compute_summary_statistics()
 
     def read_summary_stats(self, sumstats_file):
         """
@@ -240,15 +305,16 @@ class GWASDataLoader(object):
 
         self.ld = {}
 
-        print("> Computing LD matrices...")
+        if self.verbose:
+            print("> Computing LD matrices...")
 
         for i, g_data in self.genotypes.items():
 
             if 'LD Blocks' in g_data:
-                g_matrices = [g_data['G'][:, snp_block] for snp_block in g_data['LD Blocks']]
+                g_matrices = [g_data['G'][self.ld_subset_idx, snp_block] for snp_block in g_data['LD Blocks']]
 
             else:
-                g_matrices = [g_data['G']]
+                g_matrices = [g_data['G'][self.ld_subset_idx, :]]
 
             self.ld[i] = []
 
@@ -295,7 +361,10 @@ class GWASDataLoader(object):
         self.lam = new_lam
 
     def get_beta_hat(self):
-        self.beta_hats = {i: da.dot(gt['G'].T, self.phenotypes) / self.N
+
+        self.beta_hats = {i: pd.Series((da.dot(gt['G'][self.train_idx, :].T,
+                                               self.phenotypes[self.train_idx]) / self.N).compute(),
+                                       index=gt['G'].variant.snp.values)
                           for i, gt in self.genotypes.items()}
         return self.beta_hats
 
@@ -304,13 +373,13 @@ class GWASDataLoader(object):
                          for i, b_hat in self.beta_hats.items()}
         return self.z_scores
 
-    def get_p_values(self, log10=True):
+    def get_p_values(self, log10=False):
+        self.p_values = {i: pd.Series(2.*stats.norm.sf(abs(z_sc)),
+                                      index=z_sc.index)
+                         for i, z_sc in self.z_scores.items()}
+
         if log10:
-            self.p_values = {i: da.array(-np.log10(2.*stats.norm.sf(abs(z_sc))))
-                             for i, z_sc in self.z_scores.items()}
-        else:
-            self.p_values = {i: da.array(2.*stats.norm.sf(abs(z_sc)))
-                             for i, z_sc in self.z_scores.items()}
+            self.p_values = {i: np.log10(pval) for i, pval in self.p_values.items()}
 
         return self.p_values
 
@@ -327,19 +396,30 @@ class GWASDataLoader(object):
                 else:
                     yield bh[bidx:min(bidx + self.batch_size, len(bh))].compute()
 
-    def iter_individual_data(self):
-        pass
+    def to_sumstats_table(self, per_chromosome=False):
 
-    def to_sumstats_table(self):
+        ss_tables = []
 
-        sum_stats = pd.DataFrame({
-            'CHR': np.vstack([v['G'].chrom.values for k, v in self.genotypes.items()])[0],
-            'SNP': np.vstack([v['G'].snp.values for k, v in self.genotypes.items()])[0],
-            'Z': np.vstack([v.compute() for c, v in self.get_z_scores().items()])[0],
-            'A1': np.vstack([v['G'].a0.values for k, v in self.genotypes.items()])[0],
-            'A2': np.vstack([v['G'].a1.values for k, v in self.genotypes.items()])[0]
-        })
+        beta_hat = self.get_beta_hat()
+        z_score = self.get_z_scores()
+        pval = self.get_p_values()
 
-        sum_stats['N'] = self.N
+        for k, v in self.genotypes.items():
+            ss_df = pd.DataFrame({
+                'CHR': v['G'].chrom.values,
+                'SNP': v['G'].snp.values,
+                'BETA': beta_hat[k],
+                'Z': z_score[k],
+                'PVAL': pval[k],
+                'A1': v['G'].a0.values,
+                'A2': v['G'].a1.values
+            })
 
-        return sum_stats
+            ss_df['N'] = len(self.train_idx)
+
+            ss_tables.append(ss_df)
+
+        if per_chromosome:
+            return ss_tables
+        else:
+            return pd.concat(ss_tables)
