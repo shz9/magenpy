@@ -100,7 +100,7 @@ class GWASSimulator(GWASDataLoader):
         y -= y.mean()
         y /= y.std()
 
-        self.phenotypes = y
+        self.phenotypes = y.compute()
         self.phenotype_id = 'Simulated_' + str(np.random.randint(1, 1000))
 
         return self.phenotypes

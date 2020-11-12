@@ -40,6 +40,9 @@ class GWASDataLoader(object):
         # ------- General options -------
         self.verbose = verbose
 
+        if not iterable(bed_files):
+            bed_files = [bed_files]
+
         self.bed_files = bed_files
         self.output_dir = output_dir
         self.batch_size = batch_size
@@ -88,7 +91,7 @@ class GWASDataLoader(object):
         # ------- Compute LD matrices -------
 
         self.ld_subset_idx = None
-        self.set_ld_subset_samples(ld_subset_samples, ld_subset_idx)
+        self.set_ld_subset_samples(ld_subset_idx, ld_subset_samples)
         self.compute_ld()
 
         # ------- Train/test assignment -------
@@ -96,8 +99,8 @@ class GWASDataLoader(object):
         self.train_idx = None
         self.test_idx = None
 
-        self.set_training_samples(train_samples, train_idx)
-        self.set_testing_samples(test_samples, test_idx)
+        self.set_training_samples(train_idx, train_samples)
+        self.set_testing_samples(test_idx, test_samples)
 
     @staticmethod
     def read_filter_files(file):
@@ -112,7 +115,7 @@ class GWASDataLoader(object):
 
         return keep_list
 
-    def set_training_samples(self, train_samples=None, train_idx=None):
+    def set_training_samples(self, train_idx=None, train_samples=None):
 
         if train_samples is None and train_idx is None:
             self.train_idx = np.arange(self.N)
@@ -121,15 +124,15 @@ class GWASDataLoader(object):
         else:
             self.train_idx = train_idx
 
-    def set_testing_samples(self, test_samples=None, test_idx=None):
+    def set_testing_samples(self, test_idx=None, test_samples=None):
         if test_samples is None and test_idx is None:
             self.test_idx = np.arange(self.N)
         elif test_idx is None:
-            self.train_idx = self.sample_ids_to_index(test_samples)
+            self.test_idx = self.sample_ids_to_index(test_samples)
         else:
-            self.train_idx = test_idx
+            self.test_idx = test_idx
 
-    def set_ld_subset_samples(self, ld_samples=None, ld_sample_idx=None):
+    def set_ld_subset_samples(self, ld_sample_idx=None, ld_samples=None):
         if ld_samples is None and ld_sample_idx is None:
             self.ld_subset_idx = np.arange(self.N)
         elif ld_sample_idx is None:
@@ -196,9 +199,6 @@ class GWASDataLoader(object):
         if self.verbose:
             print("> Reading genotype files...")
 
-        if not iterable(genotype_files):
-            genotype_files = [genotype_files]
-
         if not iterable(ld_block_files):
             ld_block_files = [ld_block_files]
 
@@ -224,6 +224,10 @@ class GWASDataLoader(object):
             # Filter SNPs:
             if self.keep_snps is not None:
                 gt_ac = gt_ac[:, pd.Series(gt_ac.variant.snp).isin(self.keep_snps)]
+
+            maf = gt_ac.sum(axis=0) / (2. * gt_ac.shape[0])
+            maf = np.round(np.where(maf > .5, 1. - maf, maf), 6)
+            gt_ac = gt_ac.assign_coords({"MAF": ("variant", maf)})
 
             # Normalize genotype matrix:
             if normalize:
@@ -411,11 +415,13 @@ class GWASDataLoader(object):
                 'BETA': beta_hat[k],
                 'Z': z_score[k],
                 'PVAL': pval[k],
+                'MAF': v['G'].MAF.values,
                 'A1': v['G'].a0.values,
                 'A2': v['G'].a1.values
             })
 
             ss_df['N'] = len(self.train_idx)
+            ss_df['SE'] = 1./np.sqrt(ss_df['N'])
 
             ss_tables.append(ss_df)
 
