@@ -7,17 +7,18 @@ from .GWASDataLoader import GWASDataLoader
 
 class GWASSimulator(GWASDataLoader):
 
-    def __init__(self, bed_files, h2g=0.2, pi=0.1, **kwargs):
+    def __init__(self, bed_files, h2g=0.2, pis=(0.9, 0.1), gammas=(0., 1.), **kwargs):
 
         super().__init__(bed_files, **kwargs)
 
         self.h2g = h2g
-        self.pi = pi
+        self.pis = pis
+        self.gammas = np.array(gammas)
 
         self.annotation_weights = None
 
         self.betas = None
-        self.pis = None
+        self.mixture_assignment = None
 
     def simulate_genotypes(self, n):
 
@@ -53,15 +54,15 @@ class GWASSimulator(GWASDataLoader):
 
         self.N = n
 
-    def simulate_pi(self):
+    def simulate_mixture_assignment(self):
 
-        self.pis = {}
+        self.mixture_assignment = {}
 
         for i, g_data in self.genotypes.items():
             _, p = g_data['G'].shape
-            self.pis[i] = da.random.binomial(1, self.pi, size=p)
+            self.mixture_assignment[i] = np.random.multinomial(1, self.pis, size=p)
 
-        return self.pis
+        return self.mixture_assignment
 
     def simulate_betas(self):
 
@@ -72,17 +73,19 @@ class GWASSimulator(GWASDataLoader):
             _, p = g_data['G'].shape
 
             if self.annotation_weights is not None:
-                std_beta = da.sqrt(da.absolute(da.dot(self.annotations[i], self.annotation_weights)))
+                std_beta = np.sqrt(np.absolute(np.dot(self.annotations[i], self.annotation_weights)))
             else:
                 std_beta = 1.
 
-            betas = da.random.normal(loc=0.0, scale=std_beta, size=p)*self.pis[i]
+            betas = np.random.normal(loc=0.0,
+                                     scale=self.gammas[np.where(self.mixture_assignment[i])[1]]*std_beta,
+                                     size=p)
 
             self.betas[i] = betas
 
     def simulate_annotation_weights(self):
         if self.C is not None:
-            self.annotation_weights = da.random.normal(scale=1./self.M, size=self.C)
+            self.annotation_weights = np.random.normal(scale=1./self.M, size=self.C)
 
     def simulate_phenotypes(self):
 
@@ -105,7 +108,7 @@ class GWASSimulator(GWASDataLoader):
 
         return self.phenotypes
 
-    def simulate(self, n=None, reset_beta=False):
+    def simulate(self, n=None, reset_beta=False, phenotype_id=None):
 
         if n is not None:
             if self.ld_cholesky_factors is None:
@@ -113,9 +116,13 @@ class GWASSimulator(GWASDataLoader):
             self.simulate_genotypes(n)
 
         if self.betas is None or reset_beta:
-            self.simulate_pi()
+            self.simulate_mixture_assignment()
             self.simulate_annotation_weights()
             self.simulate_betas()
 
         self.simulate_phenotypes()
         self.compute_summary_statistics()
+
+        if phenotype_id is not None:
+            self.phenotype_id = phenotype_id
+
