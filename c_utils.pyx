@@ -11,10 +11,25 @@ cimport numpy as np
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
+def zarr_islice(arr):
+
+    cdef unsigned int j, chunk_size = arr.chunks[0], end = arr.shape[0]
+    chunk = None
+
+    for j in range(end):
+        if j % chunk_size == 0:
+            chunk = arr[j: j + chunk_size]
+
+        yield chunk[j % chunk_size]
+
+
+@cython.cdivision(True)
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
 cpdef find_ld_boundaries(double[:] cm_dist, int max_dist, int n_threads):
 
-    cdef int M = len(cm_dist)
-    cdef int i, j
+    cdef unsigned int i, j, M = len(cm_dist)
     cdef double diff
     cdef long[:] v_min = np.zeros_like(cm_dist, dtype=np.int)
     cdef long[:] v_max = np.zeros_like(cm_dist, dtype=np.int)

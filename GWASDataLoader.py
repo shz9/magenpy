@@ -16,7 +16,7 @@ from itertools import zip_longest
 from scipy import stats
 
 from .c_utils import find_ld_boundaries
-from .utils import iterable, sparsify_chunked_matrix
+from .utils import iterable, get_filenames, sparsify_chunked_matrix, rechunk_zarr, zarr_to_ragged, makedir
 
 
 class GWASDataLoader(object):
@@ -41,8 +41,8 @@ class GWASDataLoader(object):
                  ld_block_files=None,
                  ld_subset_samples=None,
                  ld_subset_idx=None,
-                 regularize_ld=True,
-                 regularize_dist='cM',
+                 shrink_ld=True,
+                 shrink_dist='cM',
                  max_cm_dist=1.,
                  n_snps_wind=2000,
                  lam=0.0,
@@ -57,7 +57,9 @@ class GWASDataLoader(object):
         self.n_threads = n_threads
 
         if not iterable(bed_files):
-            bed_files = [bed_files]
+            bed_files = get_filenames(bed_files, extension='.bed')
+
+        makedir(temp_dir)
 
         self.bed_files = bed_files
         self.temp_dir = temp_dir
@@ -72,8 +74,8 @@ class GWASDataLoader(object):
         self.C = None  # Number of annotations
 
         # ------- LD computation options -------
-        self.regularize_ld = regularize_ld
-        self.regularize_dist = regularize_dist
+        self.shrink_ld = shrink_ld
+        self.shrink_dist = shrink_dist
         self.max_cm_dist = max_cm_dist
         self.n_snps_wind = n_snps_wind
         self.lam = lam
@@ -111,9 +113,10 @@ class GWASDataLoader(object):
 
         # ------- Compute LD matrices -------
 
+        self.ld_subset_idx = None
+        self.set_ld_subset_samples(ld_subset_idx, ld_subset_samples)
+
         if compute_ld or ld_store_files is not None:
-            self.ld_subset_idx = None
-            self.set_ld_subset_samples(ld_subset_idx, ld_subset_samples)
             self.get_ld_matrices(ld_store_files)
 
         # ------- Train/test assignment -------
@@ -129,6 +132,14 @@ class GWASDataLoader(object):
                              header=phenotype_header, phenotype_col=phenotype_col,
                              standardize=standardize_phenotype)
         self.read_summary_stats(sumstats_file)
+
+    @classmethod
+    def from_sumstats(cls, sum_stats_file, ld_store_files):
+
+        cls.read_summary_stats(sum_stats_file)
+        cls.get_ld_matrices(ld_store_files)
+
+        return cls
 
     @property
     def sample_size(self):
@@ -194,13 +205,6 @@ class GWASDataLoader(object):
 
     def sample_index_to_ids(self, idx):
         return self.sample_ids[idx]
-
-    def compute_summary_statistics(self):
-
-        self.get_beta_hats()
-        self.get_standard_errors()
-        self.get_z_scores()
-        self.get_p_values()
 
     def read_annotations(self, annot_files):
         """
@@ -268,6 +272,7 @@ class GWASDataLoader(object):
                 self.sample_ids = None
                 raise e
 
+            # TODO: Figure out a more efficient way to update gt_ac and select reference allele
             # plink-pandas assumes A1 is reference allele by default
             # In our case, A0 is reference allele, so we reverse status:
             gt_ac.data = np.abs(gt_ac.values - 2).astype(np.int64)
@@ -290,7 +295,7 @@ class GWASDataLoader(object):
                 self.standardized_genotype = standardize
 
             # Obtain information about current chromosome:
-            chr_id, (chr_n, chr_p) = gt_ac.chrom.values[0], gt_ac.shape
+            chr_id, (chr_n, chr_p) = int(gt_ac.chrom.values[0]), gt_ac.shape
 
             if i == 0:
                 self.N = chr_n
@@ -298,7 +303,8 @@ class GWASDataLoader(object):
 
             self.M += chr_p
 
-            self.genotypes[i] = {
+            # TODO: Harmonize the code given the updated keys (using chrom_id now).
+            self.genotypes[chr_id] = {
                 'CHR': chr_id,
                 'G': gt_ac
             }
@@ -360,26 +366,61 @@ class GWASDataLoader(object):
         else:
             self.phenotype_id = phenotype_id
 
-        self.compute_summary_statistics()
+        self.perform_gwas()
 
-    def read_summary_stats(self, sumstats_file):
+    def read_summary_stats(self, sumstats_file, ss_type='VEM'):
         """
         TODO: implement reading functions for summary statistics
         """
-        pass
+
+        if sumstats_file is None:
+            return
+
+        ss = pd.read_csv(sumstats_file, sep="\s+")
+
+        if ss_type == 'LDSC':
+            # Useful here: https://www.biostars.org/p/319584/
+            pass
+        elif ss_type == 'sbayesr':
+            pass
+
+        self.beta_hats = {}
+        self.z_scores = {}
+        self.se = {}
+        self.p_values = {}
+
+        for c, gt in self.genotypes.items():
+            m_ss = pd.DataFrame({'SNP': gt['G'].snp.values}).reset_index().merge(ss)
+
+            # If the summary statistics file is missing some SNPs, drop those
+            # SNPs from the genotype matrix and associated arrays:
+            if len(m_ss) < gt['G'].shape[1]:
+                self.genotypes[c]['G'] = gt['G'][:, m_ss['index']]
+
+            # Populate the sumstats fields:
+            self.beta_hats[c] = pd.Series(m_ss['BETA'], index=m_ss['SNP'].values)
+            self.z_scores[c] = pd.Series(m_ss['Z'], index=m_ss['SNP'].values)
+            self.se[c] = pd.Series(m_ss['SE'], index=m_ss['SNP'].values)
+            self.p_values[c] = pd.Series(m_ss['PVAL'], index=m_ss['SNP'].values)
 
     def get_ld_boundaries(self):
 
         if self.ld_boundaries is None:
 
+            self.ld_boundaries = {}
+
             if self.verbose:
                 print("> Computing LD boundaries...")
 
-            self.ld_boundaries = {}
-
             for c, gt in tqdm(self.genotypes.items(), disable=not self.verbose):
 
-                if self.regularize_dist == 'cM':
+                _, M = gt['G'].shape
+
+                if not self.shrink_ld:
+
+                    self.ld_boundaries[c] = np.array((np.zeros(M), np.ones(M)*M)).astype(np.int64)
+
+                elif self.shrink_dist == 'cM':
                     cm_dist = gt['G'].cm.values
                     if cm_dist.any():
                         self.ld_boundaries[c] = find_ld_boundaries(cm_dist,
@@ -387,14 +428,15 @@ class GWASDataLoader(object):
                                                                    self.n_threads)
                     else:
                         raise Exception("cM information for SNPs is missing."
-                                        "Make sure to populate it with a reference genetic map")
+                                        "Make sure to populate it with a reference genetic map "
+                                        "or use a pre-specified window size around each SNP.")
                 else:
 
-                    idx = np.arange(gt['G'].shape[1])
+                    idx = np.arange(M)
                     self.ld_boundaries[c] = np.array((idx - self.n_snps_wind,
-                                                      idx + self.n_snps_wind))
+                                                      idx + self.n_snps_wind)).astype(np.int64)
                     self.ld_boundaries[c] = np.clip(self.ld_boundaries[c],
-                                                    0, gt['G'].shape[1])
+                                                    0, M)
 
         return self.ld_boundaries
 
@@ -402,7 +444,7 @@ class GWASDataLoader(object):
 
         self.ld = {}
 
-        if self.regularize_ld:
+        if self.shrink_ld and self.ld_boundaries is None:
             self.get_ld_boundaries()
 
         if self.verbose:
@@ -410,37 +452,73 @@ class GWASDataLoader(object):
 
         for c, g_data in tqdm(self.genotypes.items(), disable=not self.verbose):
 
-            ld_store = os.path.join(self.temp_dir, 'ld', str(c))
+            tmp_ld_store = os.path.join(self.temp_dir, 'tmp_ld', 'chr_' + str(c))
+            fin_ld_store = os.path.join(self.temp_dir, 'ld', 'chr_' + str(c))
 
             g_mat = g_data['G'][self.ld_subset_idx, :]
 
+            # Chunk the array along the SNP-axis:
+            g_mat = g_mat.chunk((None, min(5000, g_mat.shape[1])))
+
             ld_mat = da.dot(g_mat.T, g_mat) / self.N
-            ld_mat = ld_mat.rechunk({0: 'auto', 1: None})
-            ld_mat.to_zarr(ld_store)
+            ld_mat.to_zarr(tmp_ld_store, overwrite=True)
 
-            ld_mat = zarr.open(ld_store)
+            z_ld_mat = zarr.open(tmp_ld_store)
+            z_ld_mat = rechunk_zarr(z_ld_mat,
+                                    ld_mat.rechunk({0: 'auto', 1: None}).chunksize,
+                                    fin_ld_store)
 
-            if self.regularize_ld:
-                ld_mat = sparsify_chunked_matrix(ld_mat, self.ld_boundaries[c])
+            z_ld_mat.attrs['Chromosome'] = c
+            z_ld_mat.attrs['SNPs'] = list(g_mat.snp.values)
+            z_ld_mat.attrs['Shrunk'] = self.shrink_ld
 
-            self.ld[c] = ld_mat
+            if self.shrink_ld:
+                z_ld_mat = sparsify_chunked_matrix(z_ld_mat, self.ld_boundaries[c])
+
+                z_ld_mat.attrs['Shrinkage Distance (units)'] = self.shrink_dist
+
+                if self.shrink_dist == 'cM':
+                    z_ld_mat.attrs['Shrinkage Distance'] = self.max_cm_dist
+                else:
+                    z_ld_mat.attrs['Shrinkage Distance'] = self.n_snps_wind
+
+                z_ld_mat = zarr_to_ragged(z_ld_mat, self.ld_boundaries[c])
+
+            self.ld[c] = z_ld_mat
 
     def get_ld_matrices(self, ld_store_files=None):
 
-        if ld_store_files is None:
-            self.compute_ld()
-        else:
+        """
+        TODO: Look into Zarr LRUStoreCache to speed up computations
+        :param ld_store_files:
+        :return:
+        """
 
-            if self.verbose:
-                print("> Reading LD matrices...")
+        if self.ld is None:
 
-            if not iterable(ld_store_files):
-                ld_store_files = [ld_store_files]
+            self.get_ld_boundaries()
 
-            self.ld = {}
+            if ld_store_files is None:
+                self.compute_ld()
+            else:
 
-            for c, f in zip(self.genotype_index, ld_store_files):
-                self.ld[c] = zarr.open(f)
+                if self.verbose:
+                    print("> Reading LD matrices...")
+
+                if not iterable(ld_store_files):
+                    ld_store_files = get_filenames(ld_store_files, extension='.zarr')
+
+                self.ld = {}
+
+                for f in ld_store_files:
+                    z = zarr.open(f)
+                    c = z.attrs['Chromosome']
+                    if z.attrs['Shrunk']:
+                        self.ld[c] = zarr_to_ragged(z, self.ld_boundaries[c])
+                    else:
+                        self.ld[c] = z
+
+        return self.ld
 
     def get_snp_variances(self):
 
@@ -453,7 +531,14 @@ class GWASDataLoader(object):
 
         return self.snp_var
 
-    def get_beta_hats(self):
+    def perform_gwas(self):
+
+        self.compute_beta_hats()
+        self.compute_standard_errors()
+        self.compute_z_scores()
+        self.compute_p_values()
+
+    def compute_beta_hats(self):
 
         self.beta_hats = {c: pd.Series((da.dot(gt['G'][self.train_idx, :].T,
                                                self.phenotypes[self.train_idx]) / self.N).compute(),
@@ -462,7 +547,7 @@ class GWASDataLoader(object):
 
         return self.beta_hats
 
-    def get_standard_errors(self):
+    def compute_standard_errors(self):
 
         self.se = {}
 
@@ -473,12 +558,12 @@ class GWASDataLoader(object):
 
         return self.se
 
-    def get_z_scores(self):
+    def compute_z_scores(self):
         self.z_scores = {i: b_hat / self.se[i]
                          for i, b_hat in self.beta_hats.items()}
         return self.z_scores
 
-    def get_p_values(self, log10=False):
+    def compute_p_values(self, log10=False):
         self.p_values = {i: pd.Series(2.*stats.norm.sf(abs(z_sc)),
                                       index=z_sc.index)
                          for i, z_sc in self.z_scores.items()}
@@ -487,19 +572,6 @@ class GWASDataLoader(object):
             self.p_values = {i: np.log10(pval) for i, pval in self.p_values.items()}
 
         return self.p_values
-
-    def iter_sumstats(self, w_annots=False):
-
-        assert self.beta_hats is not None
-
-        for gidx in range(len(self.beta_hats)):
-            bh = self.beta_hats[gidx]
-            for bidx in range(0, len(bh), self.batch_size):
-                if w_annots and self.annotations is not None:
-                    yield (self.annotations[gidx][bidx:bidx + self.batch_size, :].compute(),
-                           bh[bidx:bidx + self.batch_size].compute())
-                else:
-                    yield bh[bidx:min(bidx + self.batch_size, len(bh))].compute()
 
     def to_phenotype_table(self):
 
@@ -518,23 +590,18 @@ class GWASDataLoader(object):
 
         ss_tables = []
 
-        beta_hat = self.get_beta_hats()
-        z_score = self.get_z_scores()
-        pval = self.get_p_values()
-        se = self.get_standard_errors()
-
         for k, v in self.genotypes.items():
             ss_df = pd.DataFrame({
                 'CHR': v['G'].chrom.values,
                 'POS': v['G'].pos.values,
                 'SNP': v['G'].snp.values,
-                'BETA': beta_hat[k],
-                'Z': z_score[k],
-                'SE': se[k],
-                'PVAL': pval[k],
-                'MAF': v['G'].MAF.values,
                 'A1': v['G'].a0.values,
-                'A2': v['G'].a1.values
+                'A2': v['G'].a1.values,
+                'MAF': v['G'].MAF.values,
+                'BETA': self.beta_hats[k],
+                'Z': self.z_scores[k],
+                'SE': self.se[k],
+                'PVAL': self.p_values[k]
             })
 
             ss_df['N'] = len(self.train_idx)

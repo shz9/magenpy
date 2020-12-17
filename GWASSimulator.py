@@ -54,6 +54,22 @@ class GWASSimulator(GWASDataLoader):
 
         self.N = n
 
+    def get_causal_status(self):
+
+        assert self.mixture_assignment is not None
+
+        try:
+            zero_index = list(self.gammas).index(0)
+        except ValueError:
+            raise Exception("All SNPs are causal.")
+
+        causal_status = {}
+
+        for c, mix_a in self.mixture_assignment.items():
+            causal_status[c] = np.where(mix_a)[1] != zero_index
+
+        return causal_status
+
     def simulate_mixture_assignment(self):
 
         self.mixture_assignment = {}
@@ -121,7 +137,7 @@ class GWASSimulator(GWASDataLoader):
             self.simulate_betas()
 
         self.simulate_phenotypes()
-        self.compute_summary_statistics()
+        self.perform_gwas()
 
         if phenotype_id is not None:
             self.phenotype_id = phenotype_id
