@@ -3,6 +3,7 @@ from rechunker import rechunk
 import scipy.sparse as ss
 import sparse
 import dask.array as da
+import pandas as pd
 import numpy as np
 import zarr
 import numcodecs
@@ -49,6 +50,40 @@ def iterable(arg):
         isinstance(arg, collections.Iterable)
         and not isinstance(arg, six.string_types)
     )
+
+
+def shrink_ld_matrix(arr, cm_dist, genmap_Ne, genmap_sample_size, shrinkage_cutoff=1e-3):
+
+    # The multiplicative factor for the shrinkage estimator
+    mult_factor = 2.*genmap_Ne / genmap_sample_size
+
+    def update_prev_chunk(j):
+        chunk_start = (j - 1) - (j - 1) % chunk_size
+        chunk_end = chunk_start + chunk_size
+        arr[chunk_start:chunk_end] = chunk
+
+    chunk_size = arr.chunks[0]
+    chunk = None
+
+    for j in range(arr.shape[0]):
+
+        if j % chunk_size == 0:
+            if j > 0:
+                update_prev_chunk(j)
+
+            chunk = arr[j: j + chunk_size]
+
+        # Compute the shrinkage factor the entries in row j
+        shrink_mult = np.exp(-mult_factor * np.abs(cm_dist - cm_dist[j]))
+        # Set any shrinkage factor below the cutoff value to zero:
+        shrink_mult[shrink_mult < shrinkage_cutoff] = 0.
+
+        # Shrink the entries of the LD matrix:
+        chunk[j % chunk_size] *= shrink_mult
+
+    update_prev_chunk(j)
+
+    return arr
 
 
 def sparsify_chunked_matrix(arr, bounds):
@@ -109,30 +144,76 @@ def rechunk_zarr(arr, target_chunks, target_store, intermediate_store='temp/inte
     return zarr.open(target_store)
 
 
-def zarr_to_ragged(z, bounds):
+def estimate_row_chunk_size(rows, cols, dtype=np.float64, chunk_size=100):
     """
-    TODO: Figure out a way to automatically reconfigure the chunking of the
-    ragged array to optimize performance (Maybe aim for ~50-100MB per chunk).
-    rough idea: approximate size of new data structure would be :
 
-    n_rows * avg(n_cols) * dtype / 8 / 1024. ** sizes[out]
-    https://gist.github.com/dimalik/f4609661fb83e3b5d22e7550c1776b90
+    :param rows: Number of rows.
+    :param cols: Number of columns. If a ragged array, provide average size of arrays
+    :param dtype: data type
+    :param chunk_size: chunk size in MB
+    :return:
+    """
 
-    divide by pre-specified chunk MB size to obtain # of the chunks.
+    matrix_size = rows * cols * np.dtype(dtype).itemsize / 1024 ** 2
+    n_chunks = matrix_size // chunk_size
 
-    NOTE: May need to re-write this method if we change chunk size.
+    if n_chunks < 1:
+        return None, None
+    else:
+        return int(rows / n_chunks), None
 
-    :param z:
-    :param bounds:
+
+def zarr_to_ragged(z, keep_snps=None, bounds=None, rechunk=True):
+    """
+    This function takes a chunked Zarr matrix (e.g. sparse LD matrix)
+    and returns a ragged array.
+    The function allows filtering down the original matrix by passing
+    a list of SNPs to keep. It also allows the user to re-chunk
+    the ragged array for optimized read/write performance.
+
+    :param z: the original Zarr matrix (implementation assumes 2D matrix)
+    :param keep_snps: A list of SNP IDs to keep.
+    :param rechunk: Whether to re-chunk the ragged array (for optimized read/write performance)
     :return:
     """
 
     dir_store = os.path.join(os.path.dirname(z.chunk_store.path) + '_ragged',
                              os.path.basename(z.chunk_store.path))
 
+    if keep_snps is None:
+        n_rows = z.shape[0]
+
+        idx_map = pd.DataFrame({'SNP': z.attrs['SNPs']}).reset_index()
+        idx_map.columns = ['index_x', 'SNP']
+        idx_map['index_y'] = idx_map['index_x']
+
+    else:
+        idx_map = pd.DataFrame({'SNP': keep_snps}).reset_index().merge(
+            pd.DataFrame({'SNP': z.attrs['SNPs']}).reset_index(),
+            on='SNP',
+            suffixes=('_y', '_x')
+        )
+        idx_map['chunk_x'] = (idx_map['index_x'] // z.chunks[0]).astype(int)
+        n_rows = len(keep_snps)
+
+    idx_map['chunk_x'] = (idx_map['index_x'] // z.chunks[0]).astype(int)
+
+    if bounds is None:
+        bounds = np.array(z.attrs['LD Boundaries'])
+
+    if rechunk:
+        avg_ncol = int((bounds[1, :] - bounds[0, :]).mean())
+        n_chunks = estimate_row_chunk_size(n_rows, avg_ncol)
+    else:
+        n_chunks = z.chunks
+
     z_rag = zarr.open(dir_store, mode='w',
-                      shape=z.shape[0], chunks=z.chunks[:1], dtype=object,
+                      shape=n_rows,
+                      chunks=n_chunks[:1],
+                      dtype=object,
                       object_codec=numcodecs.VLenArray(float))
+
+    z_rag_mem = z_rag[:]
 
     chunk_size = z.chunks[0]
 
@@ -142,14 +223,19 @@ def zarr_to_ragged(z, bounds):
         end = min((i + 1) * chunk_size, z.shape[0])
 
         z_chunk = z[start: end]
-        r_chunk = z_rag[start: end]
 
-        for j in range(z_chunk.shape[0]):
-            r_chunk[j] = z_chunk[j][bounds[0, start + j]:bounds[1, start + j]]
+        for _, (k, _, j, _) in idx_map.loc[idx_map['chunk_x'] == i].iterrows():
+            if keep_snps is None:
+                z_rag_mem[k] = z_chunk[j - start][bounds[0, j]:bounds[1, j]]
+            else:
+                z_rag_mem[k] = z_chunk[j - start, idx_map['index_x']][bounds[0, k]:bounds[1, k]]
 
-        z_rag[start: end] = r_chunk
-
+    z_rag[:] = z_rag_mem
     z_rag.attrs.update(z.attrs.asdict())
+
+    if keep_snps is not None:
+        z_rag.attrs['SNPs'] = list(keep_snps)
+        z_rag.attrs['LD Boundaries'] = bounds.tolist()
 
     return z_rag
 

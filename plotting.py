@@ -5,6 +5,8 @@ import seaborn as sns
 
 
 def plot_manhattan(gdl,
+                   y=None,
+                   y_label=None,
                    title=None,
                    output_fname=None,
                    snp_color='#d0d0d0',
@@ -23,13 +25,16 @@ def plot_manhattan(gdl,
 
     plt.figure(figsize=(12, 6))
 
-    if add_bonf_line:
-        # Add bonferroni significance threshold line:
-        plt.axhline(-np.log10(0.05 / gdl.M), ls='--', zorder=1,
-                    color='#263640')
+    if y is None:
+        if add_bonf_line:
+            # Add bonferroni significance threshold line:
+            plt.axhline(-np.log10(0.05 / gdl.M), ls='--', zorder=1,
+                        color='#263640')
+
+        y = {c: -np.log10(pval) for c, pval in gdl.p_values.items()}
+        y_label = "$-log_{10}(p-value)$"
 
     unique_chr = gdl.genotype_index
-    p_values = {c: -np.log10(pval) for c, pval in gdl.p_values.items()}
 
     for i, c in enumerate(unique_chr):
 
@@ -44,12 +49,12 @@ def plot_manhattan(gdl,
         # TODO: Fix tick positioning
         ticks.append((xmin + xmax) / 2)
 
-        plt.scatter(pos + starting_pos, p_values[c],
+        plt.scatter(pos + starting_pos, y[c],
                     c=snp_color, alpha=snp_alpha, label=None,
                     marker=snp_marker)
 
         if hl_snps is not None:
-            plt.scatter((pos + starting_pos)[hl_snps[c]], p_values[c][hl_snps[c]],
+            plt.scatter((pos + starting_pos)[hl_snps[c]], y[c][hl_snps[c]],
                         c=hl_snp_color, alpha=snp_alpha, label=hl_snp_label,
                         marker=hl_snp_marker)
 
@@ -58,7 +63,7 @@ def plot_manhattan(gdl,
     plt.xticks(ticks, unique_chr)
 
     plt.xlabel("Genomic Position")
-    plt.ylabel("$-log_{10}(p-value)$")
+    plt.ylabel(y_label)
 
     if title is not None:
         plt.title(title)
@@ -92,3 +97,13 @@ def plot_qq(gdl, quantity='p_value'):
 
     else:
         raise ValueError(f"No QQ plot can be generated for this quantity: {quantity}")
+
+
+def plot_ld_matrix(ld, title=None):
+    plt.figure(figsize=(10, 10))
+    plt.imshow(ld)
+    plt.colorbar()
+    if title is not None:
+        plt.title(title)
+    plt.show()
+    plt.close()
