@@ -14,8 +14,6 @@ import glob
 import collections
 import six
 
-from c_utils import zarr_islice
-
 
 def makedir(cdir):
     try:

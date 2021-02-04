@@ -3,11 +3,6 @@ Author: Shadi Zabad
 Date: December 2020
 """
 
-import os
-import numpy as np
-import pandas as pd
-import dask.array as da
-import zarr
 from tqdm import tqdm
 
 from pandas_plink import read_plink1_bin
@@ -15,7 +10,7 @@ from itertools import zip_longest
 
 from scipy import stats
 
-from .c_utils import find_windowed_ld_boundaries, find_shrinkage_ld_boundaries
+from prs.src.c_utils import find_windowed_ld_boundaries, find_shrinkage_ld_boundaries
 from .utils import *
 
 
