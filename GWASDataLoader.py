@@ -10,7 +10,8 @@ from itertools import zip_longest
 
 from scipy import stats
 
-from prs.src.c_utils import find_windowed_ld_boundaries, find_shrinkage_ld_boundaries
+from .LDWrapper import LDWrapper
+from .c_utils import find_windowed_ld_boundaries, find_shrinkage_ld_boundaries
 from .utils import *
 
 
@@ -18,6 +19,7 @@ class GWASDataLoader(object):
 
     def __init__(self, bed_files,
                  standardize_genotype=True,
+                 phenotype_likelihood='gaussian',
                  phenotype_file=None,
                  phenotype_header=None,
                  phenotype_col=2,
@@ -44,6 +46,7 @@ class GWASDataLoader(object):
                  window_unit='cM',
                  cm_window_cutoff=3.,
                  window_size_cutoff=2000,
+                 use_plink=False,
                  batch_size=200,
                  temp_dir='temp',
                  output_dir=None,
@@ -59,13 +62,15 @@ class GWASDataLoader(object):
 
         makedir(temp_dir)
 
-        self.bed_files = bed_files
+        self.use_plink = use_plink
+        self.bed_files = None
         self.temp_dir = temp_dir
         self.output_dir = output_dir
         self.batch_size = batch_size
 
         # ------- General parameters -------
 
+        self.phenotype_likelihood = phenotype_likelihood
         self.phenotype_id = None  # Name or ID of the phenotype
         self.N = None  # Number of individuals
         self.M = None  # Total number of SNPs
@@ -179,6 +184,10 @@ class GWASDataLoader(object):
             return self.genotypes.keys()
 
     @property
+    def shapes(self):
+        return {c: gt['G'].shape[1] for c, gt in self.genotypes.items()}
+
+    @property
     def chromosomes(self):
         if self.genotypes is None:
             return None
@@ -281,6 +290,7 @@ class GWASDataLoader(object):
 
         self.M = 0
         self.genotypes = {}
+        self.bed_files = {}
 
         for i, (bfile, ldb_file) in tqdm(enumerate(zip_longest(genotype_files, ld_block_files)),
                                          disable=not self.verbose):
@@ -327,6 +337,9 @@ class GWASDataLoader(object):
 
             # Obtain information about current chromosome:
             chr_id, (chr_n, chr_p) = int(gt_ac.chrom.values[0]), gt_ac.shape
+
+            # Add filename to the bedfiles dictionary:
+            self.bed_files[chr_id] = bfile
 
             if i == 0:
                 self.N = chr_n
@@ -432,7 +445,6 @@ class GWASDataLoader(object):
     def read_ld(self, ld_store_files=None):
 
         """
-        TODO: Look into Zarr LRUStoreCache to speed up computations
         :param ld_store_files:
         :return:
         """
@@ -451,9 +463,18 @@ class GWASDataLoader(object):
 
             for f in ld_store_files:
 
-                z = zarr.open(f)
-                c = z.attrs['Chromosome']
-                self.ld[c] = z
+                z = LDWrapper(zarr.open(f))
+                self.ld[z.chromosome] = z
+
+    def load_ld(self):
+        if self.ld is not None:
+            for ld in self.ld.values():
+                ld.load()
+
+    def release_ld(self):
+        if self.ld is not None:
+            for ld in self.ld.values():
+                ld.release()
 
     def compute_ld_boundaries(self):
 
@@ -559,7 +580,7 @@ class GWASDataLoader(object):
             if self.sparse_ld and self.ld_estimator in ('shrinkage', 'windowed'):
                 z_ld_mat = zarr_to_ragged(z_ld_mat, bounds=self.ld_boundaries[c])
 
-            self.ld[c] = z_ld_mat
+            self.ld[c] = LDWrapper(z_ld_mat)
 
     def get_ld_matrices(self):
         return self.ld
@@ -568,7 +589,7 @@ class GWASDataLoader(object):
         if self.ld is None:
             return None
 
-        return {c: np.array(ld.attrs['LD Boundaries']) for c, ld in self.ld.items()}
+        return {c: np.array(ld.ld_boundaries) for c, ld in self.ld.items()}
 
     def transform_ld_matrices(self, recompute_boundaries=False):
 
@@ -577,10 +598,10 @@ class GWASDataLoader(object):
 
         for c, snps in self.snps.items():
             print(self.ld[c].path)
-            ld_snps = self.ld[c].attrs['SNPs']
+            ld_snps = self.ld[c].snps
             if len(snps) != len(ld_snps) or any(snps != ld_snps):
                 self.ld[c] = zarr_to_ragged(self.ld[c], keep_snps=snps, bounds=self.ld_boundaries[c])
-            elif self.ld[c].attrs['Shrunk']:
+            elif self.sparse_ld:
                 self.ld[c] = zarr_to_ragged(self.ld[c], bounds=self.ld_boundaries[c])
 
     def get_snp_variances(self):
@@ -621,7 +642,7 @@ class GWASDataLoader(object):
 
             # Harmonize SNPs in LD store and genotype matrix:
             if self.ld is not None:
-                ld_snps = self.ld[c].attrs['SNPs']
+                ld_snps = self.ld[c].snps
 
                 snps = pd.DataFrame({'SNP': snps}).merge(
                     pd.DataFrame({'SNP': ld_snps})
@@ -638,12 +659,56 @@ class GWASDataLoader(object):
 
         self.transform_ld_matrices(recompute_boundaries=update_ld)
 
+    def perform_gwas_plink(self):
+
+        phe_fname = os.path.join(self.temp_dir, "tmp_pheno.txt")
+
+        phe_table = self.to_phenotype_table()
+        phe_table.to_csv(phe_fname, sep="\t", index=False, header=False)
+
+        plink_reg_type = ['linear', 'logistic'][self.phenotype_likelihood == 'binomial']
+
+        self.beta_hats = {}
+        self.se = {}
+        self.z_scores = {}
+        self.p_values = {}
+
+        for c, bf in self.bed_files.items():
+
+            plink_output = os.path.join(self.temp_dir, f"tmp_pheno_{c}")
+
+            cmd = ["plink",
+                   f"--bfile {bf.replace('.bed', '')}",
+                   f"--{plink_reg_type}",
+                   "--hide-covar",
+                   "--allow-no-sex",
+                   f"--pheno {phe_fname}",
+                   f"--out {plink_output}"
+            ]
+
+            run_shell_script(cmd)
+            res = pd.read_csv(plink_output + f".assoc.{plink_reg_type}", sep="\s+")
+
+            print(res)
+
+            self.beta_hats[c] = pd.Series(res['BETA'], index=res['SNP'])
+            self.z_scores[c] = pd.Series(res['STAT'], index=res['SNP'])
+            self.se[c] = self.beta_hats[c] / self.z_scores[c]
+            self.p_values[c] = pd.Series(res['P'], index=res['SNP'])
+
+            #delete_temp_files(plink_output)
+
+        delete_temp_files(phe_fname)
+
     def perform_gwas(self):
 
-        self.compute_beta_hats()
-        self.compute_standard_errors()
-        self.compute_z_scores()
-        self.compute_p_values()
+        if self.use_plink:
+            self.perform_gwas_plink()
+        else:
+            self.compute_beta_hats()
+            self.compute_standard_errors()
+            self.compute_z_scores()
+            self.compute_p_values()
 
     def compute_beta_hats(self):
 
@@ -653,6 +718,15 @@ class GWASDataLoader(object):
                           for c, gt in self.genotypes.items()}
 
         return self.beta_hats
+
+    def compute_yy_per_snp(self):
+        """
+        Computes (yTy)j following SBayesR and Yang et al. (2012)
+        :return:
+        """
+        self.yy = {c: (self.N - 2)*self.se[c]**2 + b_hat**2
+                   for c, b_hat in self.beta_hats.items()}
+        return self.yy
 
     def compute_standard_errors(self):
 
@@ -666,17 +740,17 @@ class GWASDataLoader(object):
         return self.se
 
     def compute_z_scores(self):
-        self.z_scores = {i: b_hat / self.se[i]
-                         for i, b_hat in self.beta_hats.items()}
+        self.z_scores = {c: b_hat / self.se[c]
+                         for c, b_hat in self.beta_hats.items()}
         return self.z_scores
 
     def compute_p_values(self, log10=False):
-        self.p_values = {i: pd.Series(2.*stats.norm.sf(abs(z_sc)),
+        self.p_values = {c: pd.Series(2.*stats.norm.sf(abs(z_sc)),
                                       index=z_sc.index)
-                         for i, z_sc in self.z_scores.items()}
+                         for c, z_sc in self.z_scores.items()}
 
         if log10:
-            self.p_values = {i: np.log10(pval) for i, pval in self.p_values.items()}
+            self.p_values = {c: np.log10(pval) for c, pval in self.p_values.items()}
 
         return self.p_values
 

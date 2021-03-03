@@ -43,7 +43,7 @@ cpdef find_windowed_ld_boundaries(double[:] cm_dist, double max_dist, int n_thre
 
         for j in range(i, 0, -1):
             if cm_dist[i] - cm_dist[j] > max_dist:
-                v_min[i] = j
+                v_min[i] = j + 1
                 break
 
     return np.array((v_min, v_max))
@@ -75,7 +75,7 @@ cpdef find_shrinkage_ld_boundaries(double[:] cm_dist,
 
         for j in range(i, 0, -1):
             if exp(-mult_factor*(cm_dist[i] - cm_dist[j])) < cutoff:
-                v_min[i] = j
+                v_min[i] = j + 1
                 break
 
     return np.array((v_min, v_max))

@@ -19,4 +19,7 @@ setup(name="c_utils", cmdclass={"build_ext": build_ext},
       ext_modules=ext_modules,
       include_dirs=[np.get_include()],
       compiler_directives={'boundscheck': False, 'wraparound': False,
-                           'nonecheck': False, 'cdivision': True})
+                           'nonecheck': False, 'cdivision': True},
+      script_args=["build_ext"],
+      options={'build_ext': {'inplace': True, 'force': True}}
+      )

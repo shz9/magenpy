@@ -10,6 +10,7 @@ import numcodecs
 import psutil
 import errno
 import os
+import subprocess
 import glob
 import collections
 import six
@@ -263,3 +264,25 @@ def sparse_cholesky(A):
         return LU.L.dot(ss.diags(LU.U.diagonal() ** 0.5))
     else:
         raise Exception('Matrix is not positive definite')
+
+
+def run_shell_script(cmd):
+
+    result = subprocess.run(cmd, shell=True, capture_output=True)
+
+    if result.stderr:
+        raise subprocess.CalledProcessError(
+            returncode=result.returncode,
+            cmd=result.args,
+            stderr=result.stderr
+        )
+
+    return result
+
+
+def delete_temp_files(prefix):
+    for f in glob.glob(f"{prefix}*"):
+        try:
+            os.remove(f)
+        except Exception as e:
+            continue

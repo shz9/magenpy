@@ -1,67 +1,55 @@
+"""
+Author: Shadi Zabad
+Date: March 2021
+"""
+
 import numpy as np
 import dask.array as da
-from xarray import DataArray
 
 from .GWASDataLoader import GWASDataLoader
 
 
 class GWASSimulator(GWASDataLoader):
 
-    def __init__(self, bed_files, h2g=0.2, pis=(0.9, 0.1), gammas=(0., 1.), **kwargs):
+    def __init__(self, bed_files,
+                 h2g=0.2,
+                 pis=(0.9, 0.1),
+                 gammas=(0., 1.),
+                 binomial_threshold=0.,
+                 standardize=True,
+                 **kwargs):
 
         super().__init__(bed_files, **kwargs)
 
         self.h2g = h2g
         self.pis = pis
+
+        assert 0. <= self.h2g <= 1.
+        assert sum(self.pis) == 1.
+
         self.gammas = np.array(gammas)
+        self.binomial_threshold = binomial_threshold
+        self.standardize = standardize
 
         self.annotation_weights = None
 
         self.betas = None
         self.mixture_assignment = None
 
-    def simulate_genotypes(self, n):
-
-        self.sample_ids = 'HG' + np.arange(1, n+1).astype(str).astype(np.object)
-        self.train_idx = self.test_idx = self.ld_subset_idx = np.arange(n)
-
-        for i, ld_fac_list in self.ld_cholesky_factors.items():
-
-            gen = None
-            var_coords = self.genotypes[i]['G'].variant.coords
-
-            for j, ld_fac in enumerate(ld_fac_list):
-
-                _, p = ld_fac.shape
-
-                ng_mat = da.array(ld_fac.dot(da.random.normal(size=(n, p)).T).T)
-                ng_mat -= da.mean(ng_mat, axis=0)
-                ng_mat /= da.std(ng_mat, axis=0)
-
-                if j > 0:
-                    gen = da.concatenate([gen, ng_mat], axis=1)
-                else:
-                    gen = ng_mat
-
-            g = DataArray(gen, dims=["sample", "variant"], coords=[self.sample_ids, var_coords['variant'].values])
-            sample = {'iid': ("sample", self.sample_ids),
-                      'fid': ("sample", self.sample_ids)}
-            g = g.assign_coords(**sample)
-            g = g.assign_coords(var_coords)
-            g.name = "genotype"
-
-            self.genotypes[i]['G'] = g
-
-        self.N = n
-
     def get_causal_status(self):
+        """
+        This method returns a dictionary of binary vectors
+        indicating which snps are causal for each chromosome
+        :return:
+        """
 
         assert self.mixture_assignment is not None
 
         try:
             zero_index = list(self.gammas).index(0)
         except ValueError:
-            raise Exception("All SNPs are causal.")
+            # If all SNPs are causal:
+            return {c: np.repeat(True, c_size) for c, c_size in self.shapes.items()}
 
         causal_status = {}
 
@@ -70,17 +58,37 @@ class GWASSimulator(GWASDataLoader):
 
         return causal_status
 
+    def update_mixture_assignment(self, new_assignment):
+        self.mixture_assignment = new_assignment
+
+    def update_betas(self, new_betas):
+        self.betas = new_betas
+
     def simulate_mixture_assignment(self):
+        """
+        Simulate assigning SNPs to the various mixture components
+        with probabilities self.pis
+        :return:
+        """
 
         self.mixture_assignment = {}
 
-        for i, g_data in self.genotypes.items():
-            _, p = g_data['G'].shape
-            self.mixture_assignment[i] = np.random.multinomial(1, self.pis, size=p)
+        for c, c_size in self.shapes.items():
+            if all([(i < 1.) for i in self.pis]):
+                self.mixture_assignment[c] = np.random.multinomial(1, self.pis, size=c_size)
+            else:
+                # if all snps are assigned to one mixture (e.g. all snps are causal)
+                assign = np.zeros(len(self.pis), dtype=np.int)
+                assign[self.pis.index(1)] = 1
+                self.mixture_assignment[c] = np.repeat(np.array([assign]), c_size, axis=0)
 
         return self.mixture_assignment
 
     def simulate_betas(self):
+        """
+        Simulate the causal effect size for the snps
+        :return:
+        """
 
         self.betas = {}
 
@@ -100,45 +108,72 @@ class GWASSimulator(GWASDataLoader):
             self.betas[i] = betas
 
     def simulate_annotation_weights(self):
+        """
+        Simulate annotation weights, which would influence the variance in causal effect size
+        :return:
+        """
         if self.C is not None:
             self.annotation_weights = np.random.normal(scale=1./self.M, size=self.C)
 
     def simulate_phenotypes(self):
+        """
+        Simulate the phenotype for N individuals
+        :return:
+        """
 
         g_comp = da.zeros(shape=self.N)
 
         for chrom_id in self.genotypes:
             g_comp += da.dot(self.genotypes[chrom_id]['G'], self.betas[chrom_id])
 
+        # Estimate the genetic variance
         g_var = np.var(g_comp, ddof=1)
-        e_var = g_var * ((1.0 / self.h2g) - 1.0)
 
+        # If genetic variance > 0., assign environmental variance such that
+        # ratio of genetic variance to total phenotypic variance is h2g
+        if g_var > 0.:
+            e_var = g_var * ((1.0 / self.h2g) - 1.0)
+        else:
+            e_var = 1.
+
+        # Compute the environmental component:
         e = da.random.normal(0, np.sqrt(e_var), self.N)
 
+        # Compute the simulated phenotype:
         y = g_comp + e
-        y -= y.mean()
-        y /= y.std()
+
+        if self.standardize or self.phenotype_likelihood == 'binomial':
+            # Standardize if the trait is binary:
+            y -= y.mean()
+            y /= y.std()
+
+        if self.phenotype_likelihood == 'binomial':
+            y[y > self.binomial_threshold] = 1.
+            y[y <= self.binomial_threshold] = 0.
 
         self.phenotypes = y.compute()
-        self.phenotype_id = 'Simulated_' + str(np.random.randint(1, 1000))
 
         return self.phenotypes
 
-    def simulate(self, n=None, reset_beta=False, phenotype_id=None):
-
-        if n is not None:
-            if self.ld_cholesky_factors is None:
-                self.compute_cholesky_factors()
-            self.simulate_genotypes(n)
+    def simulate(self, reset_beta=False, perform_gwas=True, phenotype_id=None):
 
         if self.betas is None or reset_beta:
             self.simulate_mixture_assignment()
             self.simulate_annotation_weights()
             self.simulate_betas()
 
+        # Simulate the phenotype
         self.simulate_phenotypes()
-        self.perform_gwas()
+
+        if perform_gwas:
+            # Perform GWAS
+            if self.use_plink:
+                self.perform_gwas_plink()
+            else:
+                self.perform_gwas()
 
         if phenotype_id is not None:
             self.phenotype_id = phenotype_id
+        else:
+            self.phenotype_id = 'Simulated_1'
 
