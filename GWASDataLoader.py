@@ -72,8 +72,6 @@ class GWASDataLoader(object):
 
         self.phenotype_likelihood = phenotype_likelihood
         self.phenotype_id = None  # Name or ID of the phenotype
-        self.N = None  # Number of individuals
-        self.M = None  # Total number of SNPs
         self.C = None  # Number of annotations
 
         # ------- LD computation options -------
@@ -172,6 +170,14 @@ class GWASDataLoader(object):
             return len(self.train_idx)
 
     @property
+    def N(self):
+        return len(self.sample_ids)
+
+    @property
+    def M(self):
+        return sum([len(s) for s in self.snps.values()])
+
+    @property
     def snps(self):
         return {c: gt['G'].variant.values
                 for c, gt in self.genotypes.items()}
@@ -201,7 +207,7 @@ class GWASDataLoader(object):
             return
 
         try:
-            keep_list = pd.read_csv(file, sep="\t").values[:, 0]
+            keep_list = pd.read_csv(file, sep="\t", header=None).values[:, 0]
         except Exception as e:
             raise e
 
@@ -237,6 +243,19 @@ class GWASDataLoader(object):
 
     def sample_index_to_ids(self, idx):
         return self.sample_ids[idx]
+
+    def filter_snps(self, keep_snps):
+        """
+        SNP list to keep
+        :param snp_list:
+        :return:
+        """
+
+        for c, gt in self.genotypes.items():
+            common_snps = pd.DataFrame({'SNP': gt['G'].variant.values}).merge(
+                pd.DataFrame({'SNP': keep_snps})
+            )['SNP'].values
+            self.genotypes[c]['G'] = gt['G'].sel(variant=common_snps)
 
     def read_annotations(self, annot_files):
         """
@@ -288,7 +307,6 @@ class GWASDataLoader(object):
         if not iterable(ld_block_files):
             ld_block_files = [ld_block_files]
 
-        self.M = 0
         self.genotypes = {}
         self.bed_files = {}
 
@@ -342,10 +360,7 @@ class GWASDataLoader(object):
             self.bed_files[chr_id] = bfile
 
             if i == 0:
-                self.N = chr_n
                 self.sample_ids = gt_ac.sample.values
-
-            self.M += chr_p
 
             # TODO: Harmonize the code given the updated keys (using chrom_id now).
             self.genotypes[chr_id] = {

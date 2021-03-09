@@ -16,6 +16,7 @@ class LDWrapper(object):
     def __init__(self, ld_zarr_store):
 
         self.store = ld_zarr_store
+        self.in_memory = False
         self.data = None
 
     @property
@@ -62,10 +63,13 @@ class LDWrapper(object):
             return None
 
     def load(self):
-        self.data = self.store[:]
+        if not self.in_memory:
+            self.data = self.store[:]
+            self.in_memory = True
 
     def release(self):
         self.data = None
+        self.in_memory = False
 
     def iterate(self):
         if self.data is None:
