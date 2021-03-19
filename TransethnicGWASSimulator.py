@@ -98,7 +98,10 @@ class TransethnicGWASSimulator(GWASDataLoader):
 
             # Find all SNPs that are invariant within any of the clusters:
             for ch, gt in self.genotypes.items():
-                invar_snps += self.snps[ch][np.where(gt['G'].sel(sample=c_members.values).var(axis=0) == 0.)]
+                # Note: Checking for invariant sites using var(col) == 0. can be unstable
+                # numerically. Therefore, we use min(col) == max(col) instead.
+                filt_subset = gt['G'].sel(sample=c_members.values)
+                invar_snps += list(self.snps[ch][np.where(filt_subset.min(axis=0) == filt_subset.max(axis=0))[0]])
 
             c_members.to_csv(
                 f_name, index=False, header=False
