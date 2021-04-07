@@ -1,8 +1,4 @@
-from scipy.sparse import linalg as splinalg
 from rechunker import rechunk
-import scipy.sparse as ss
-import sparse
-import dask.array as da
 import pandas as pd
 import numpy as np
 import zarr
@@ -237,33 +233,6 @@ def zarr_to_ragged(z, keep_snps=None, bounds=None, rechunk=True):
         z_rag.attrs['LD Boundaries'] = bounds.tolist()
 
     return z_rag
-
-
-def zarr_to_sparse(mat, to_csr=True):
-
-    d_mat = da.from_zarr(mat)
-    sp_mat = d_mat.map_blocks(sparse.COO).compute()
-
-    if to_csr:
-        return sp_mat.tocsr()
-    else:
-        return sp_mat
-
-
-def sparse_cholesky(A):
-    """
-    from: https://gist.github.com/omitakahiro/c49e5168d04438c5b20c921b928f1f5d
-    """
-
-    n = A.shape[0]
-    LU = splinalg.splu(A, diag_pivot_thresh=0)  # sparse LU decomposition
-
-    # check the matrix A is positive definite.
-
-    if (LU.perm_r == np.arange(n)).all() and (LU.U.diagonal() > 0).all():
-        return LU.L.dot(ss.diags(LU.U.diagonal() ** 0.5))
-    else:
-        raise Exception('Matrix is not positive definite')
 
 
 def run_shell_script(cmd):
