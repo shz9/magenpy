@@ -5,6 +5,7 @@ Date: December 2020
 
 from tqdm import tqdm
 
+import dask.array as da
 from pandas_plink import read_plink1_bin
 from itertools import zip_longest
 
@@ -315,18 +316,13 @@ class GWASDataLoader(object):
 
             # Read plink file:
             try:
-                gt_ac = read_plink1_bin(bfile + ".bed", verbose=False)
+                gt_ac = read_plink1_bin(bfile + ".bed", ref="a0", verbose=False)
             except ValueError:
-                gt_ac = read_plink1_bin(bfile, verbose=False)
+                gt_ac = read_plink1_bin(bfile, ref="a0", verbose=False)
             except Exception as e:
                 self.genotypes = None
                 self.sample_ids = None
                 raise e
-
-            # TODO: Figure out a more efficient way to update gt_ac and select reference allele
-            # plink-pandas assumes A1 is reference allele by default
-            # In our case, A0 is reference allele, so we reverse status:
-            gt_ac = abs(gt_ac - 2)
 
             gt_ac = gt_ac.set_index(variant='snp')
 
@@ -345,7 +341,7 @@ class GWASDataLoader(object):
                 gt_ac = gt_ac.sel(variant=common_snps)
 
             maf = gt_ac.sum(axis=0) / (2. * gt_ac.shape[0])
-            maf = np.round(np.where(maf > .5, 1. - maf, maf), 6)
+            #maf = np.round(np.where(maf > .5, 1. - maf, maf), 6)
             gt_ac = gt_ac.assign_coords({"MAF": ("variant", maf)})
 
             # Standardize genotype matrix:
@@ -554,9 +550,6 @@ class GWASDataLoader(object):
             fin_ld_store = os.path.join(self.temp_dir, 'ld', 'chr_' + str(c))
 
             g_mat = g_data['G'][self.ld_subset_idx, :]
-
-            # Chunk the array along the SNP-axis:
-            g_mat = g_mat.chunk((None, min(5000, g_mat.shape[1])))
 
             ld_mat = (da.dot(g_mat.T, g_mat) / self.N).astype(np.float64)
             ld_mat.to_zarr(tmp_ld_store, overwrite=True)

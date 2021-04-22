@@ -121,10 +121,10 @@ class GWASSimulator(GWASDataLoader):
         :return:
         """
 
-        g_comp = da.zeros(shape=self.N)
+        g_comp = np.zeros(shape=self.N)
 
         for chrom_id in self.genotypes:
-            g_comp += da.dot(self.genotypes[chrom_id]['G'], self.betas[chrom_id])
+            g_comp += da.dot(self.genotypes[chrom_id]['G'], self.betas[chrom_id]).compute()
 
         # Estimate the genetic variance
         g_var = np.var(g_comp, ddof=1)
@@ -137,7 +137,7 @@ class GWASSimulator(GWASDataLoader):
             e_var = 1.
 
         # Compute the environmental component:
-        e = da.random.normal(0, np.sqrt(e_var), self.N)
+        e = np.random.normal(0, np.sqrt(e_var), self.N)
 
         # Compute the simulated phenotype:
         y = g_comp + e
@@ -151,7 +151,7 @@ class GWASSimulator(GWASDataLoader):
             y[y > self.binomial_threshold] = 1.
             y[y <= self.binomial_threshold] = 0.
 
-        self.phenotypes = y.compute()
+        self.phenotypes = y
 
         return self.phenotypes
 
