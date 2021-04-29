@@ -348,6 +348,9 @@ class GWASDataLoader(object):
             if standardize:
                 gt_ac = (gt_ac - gt_ac.mean(axis=0)) / gt_ac.std(axis=0)
                 self.standardized_genotype = standardize
+                gt_ac = gt_ac.fillna(0.)
+            else:
+                gt_ac = gt_ac.fillna(maf)
 
             # Obtain information about current chromosome:
             chr_id, (chr_n, chr_p) = int(gt_ac.chrom.values[0]), gt_ac.shape
