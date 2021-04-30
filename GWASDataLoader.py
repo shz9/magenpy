@@ -96,8 +96,15 @@ class GWASDataLoader(object):
         self.window_size_cutoff = window_size_cutoff
 
         # ------- Filter data -------
-        self.keep_individuals = read_individual_filter_file(keep_individuals)
-        self.keep_snps = read_snp_filter_file(keep_snps)
+        try:
+            self.keep_individuals = read_individual_filter_file(keep_individuals)
+        except ValueError:
+            self.keep_individuals = None
+
+        try:
+            self.keep_snps = read_snp_filter_file(keep_snps)
+        except ValueError:
+            self.keep_snps = None
 
         # ------- Genotype data -------
 
