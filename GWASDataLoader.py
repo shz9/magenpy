@@ -96,8 +96,8 @@ class GWASDataLoader(object):
         self.window_size_cutoff = window_size_cutoff
 
         # ------- Filter data -------
-        self.keep_individuals = self.read_filter_files(keep_individuals)
-        self.keep_snps = self.read_filter_files(keep_snps)
+        self.keep_individuals = read_individual_filter_file(keep_individuals)
+        self.keep_snps = read_snp_filter_file(keep_snps)
 
         # ------- Genotype data -------
 
@@ -200,19 +200,6 @@ class GWASDataLoader(object):
             return None
         else:
             return [g['CHR'] for g in self.genotypes.values()]
-
-    @staticmethod
-    def read_filter_files(file):
-
-        if file is None:
-            return
-
-        try:
-            keep_list = pd.read_csv(file, sep="\t", header=None).values[:, 0]
-        except Exception as e:
-            raise e
-
-        return keep_list
 
     def set_training_samples(self, train_idx=None, train_samples=None):
 
