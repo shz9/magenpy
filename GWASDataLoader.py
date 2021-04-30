@@ -322,9 +322,11 @@ class GWASDataLoader(object):
 
             # Filter individuals:
             if self.keep_individuals is not None:
+
                 common_samples = pd.DataFrame({'Sample': gt_ac.sample.values}).merge(
-                    pd.DataFrame({'Sample': self.keep_individuals})
+                    pd.DataFrame({'Sample': self.keep_individuals}, dtype=type(gt_ac.sample.values[0]))
                 )['Sample'].values
+
                 gt_ac = gt_ac.sel(sample=common_samples)
 
             # Filter SNPs:
