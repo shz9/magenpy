@@ -422,7 +422,7 @@ class GWASDataLoader(object):
 
         self.perform_gwas()
 
-    def read_summary_stats(self, sumstats_file, ss_type='VEM'):
+    def read_summary_stats(self, sumstats_file, ss_type='plink'):
         """
         TODO: implement reading functions for summary statistics
         """
@@ -437,6 +437,10 @@ class GWASDataLoader(object):
             pass
         elif ss_type == 'sbayesr':
             pass
+        elif ss_type == 'plink':
+            ss['SNP'] = ss['ID']
+            ss['PVAL'] = ss['P']
+            ss['Z'] = ss['BETA'] / ss['SE']
 
         self.beta_hats = {}
         self.z_scores = {}
@@ -550,6 +554,10 @@ class GWASDataLoader(object):
 
             g_mat = g_data['G'][self.ld_subset_idx, :]
 
+            # Chunk the array along the SNP-axis:
+            g_mat = g_mat.chunk((min(1000, g_mat.shape[0]),
+                                 min(5000, g_mat.shape[1])))
+
             ld_mat = (da.dot(g_mat.T, g_mat) / self.N).astype(np.float64)
             ld_mat.to_zarr(tmp_ld_store, overwrite=True)
 
@@ -604,12 +612,15 @@ class GWASDataLoader(object):
             self.compute_ld_boundaries()
 
         for c, snps in self.snps.items():
-            print(self.ld[c].path)
             ld_snps = self.ld[c].snps
             if len(snps) != len(ld_snps) or any(snps != ld_snps):
-                self.ld[c] = zarr_to_ragged(self.ld[c], keep_snps=snps, bounds=self.ld_boundaries[c])
+                self.ld[c] = LDWrapper(zarr_to_ragged(self.ld[c]._store,
+                                                      keep_snps=snps,
+                                                      bounds=self.ld_boundaries[c])
+                                       )
             elif self.sparse_ld:
-                self.ld[c] = zarr_to_ragged(self.ld[c], bounds=self.ld_boundaries[c])
+                self.ld[c] = LDWrapper(zarr_to_ragged(self.ld[c]._store,
+                                                      bounds=self.ld_boundaries[c]))
 
     def get_snp_variances(self):
 
@@ -664,7 +675,8 @@ class GWASDataLoader(object):
             for ss in sum_stats:
                 ss[c] = ss[c][snps]
 
-        self.transform_ld_matrices(recompute_boundaries=update_ld)
+        if update_ld:
+            self.transform_ld_matrices(recompute_boundaries=True)
 
     def perform_gwas_plink(self):
 

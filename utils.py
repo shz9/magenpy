@@ -223,7 +223,7 @@ def estimate_row_chunk_size(rows, cols, dtype=np.float64, chunk_size=100):
 def zarr_to_ragged(z, keep_snps=None, bounds=None, rechunk=True):
     """
     This function takes a chunked Zarr matrix (e.g. sparse LD matrix)
-    and returns a ragged array.
+    and returns a ragged array matrix.
     The function allows filtering down the original matrix by passing
     a list of SNPs to keep. It also allows the user to re-chunk
     the ragged array for optimized read/write performance.
