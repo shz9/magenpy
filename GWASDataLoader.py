@@ -451,10 +451,10 @@ class GWASDataLoader(object):
             m_ss = pd.DataFrame({'SNP': snp}).reset_index().merge(ss)
 
             # Populate the sumstats fields:
-            self.beta_hats[c] = pd.Series(m_ss['BETA'], index=m_ss['SNP'].values)
-            self.z_scores[c] = pd.Series(m_ss['Z'], index=m_ss['SNP'].values)
-            self.se[c] = pd.Series(m_ss['SE'], index=m_ss['SNP'].values)
-            self.p_values[c] = pd.Series(m_ss['PVAL'], index=m_ss['SNP'].values)
+            self.beta_hats[c] = pd.Series(m_ss['BETA'].values, index=m_ss['SNP'].values)
+            self.z_scores[c] = pd.Series(m_ss['Z'].values, index=m_ss['SNP'].values)
+            self.se[c] = pd.Series(m_ss['SE'].values, index=m_ss['SNP'].values)
+            self.p_values[c] = pd.Series(m_ss['PVAL'].values, index=m_ss['SNP'].values)
 
     def read_ld(self, ld_store_files=None):
 
