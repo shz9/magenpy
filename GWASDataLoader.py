@@ -751,10 +751,13 @@ class GWASDataLoader(object):
 
         self.se = {}
 
+        sigma_y = np.var(self.phenotypes, ddof=1)
+
         for c, gt in self.genotypes.items():
-            # maf = gt['G'].MAF.values
-            # 2.*maf*(1. - maf)*self.sample_size
-            self.se[c] = 1./np.sqrt(self.sample_size)
+
+            xtx = self.sample_size*gt['G'].var(axis=0).compute()
+            self.se[c] = pd.Series(np.sqrt(sigma_y/xtx.values),
+                                   index=gt['G'].variant.values)
 
         return self.se
 
