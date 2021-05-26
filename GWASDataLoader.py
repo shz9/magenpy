@@ -110,6 +110,7 @@ class GWASDataLoader(object):
 
         self.standardized_genotype = standardize_genotype
         self.genotypes = None
+        self.n_per_snp = None  # Sample size per SNP
         self.snp_var = None
         self.sample_ids = None
         self.annotations = None
@@ -302,6 +303,7 @@ class GWASDataLoader(object):
         if not iterable(ld_block_files):
             ld_block_files = [ld_block_files]
 
+        self.n_per_snp = {}
         self.genotypes = {}
         self.bed_files = {}
 
@@ -336,7 +338,14 @@ class GWASDataLoader(object):
                 )['SNP'].values
                 gt_ac = gt_ac.sel(variant=common_snps)
 
-            maf = gt_ac.sum(axis=0) / (2. * gt_ac.shape[0])
+            # Obtain information about current chromosome:
+            chr_id, (chr_n, chr_p) = int(gt_ac.chrom.values[0]), gt_ac.shape
+
+            # Assign the number of samples per SNP
+            # This accounts for missing data
+            self.n_per_snp[chr_id] = gt_ac.shape[0] - gt_ac.isnull().sum(axis=0).compute().values
+
+            maf = gt_ac.sum(axis=0) / (2. * self.n_per_snp[chr_id])
             #maf = np.round(np.where(maf > .5, 1. - maf, maf), 6)
             gt_ac = gt_ac.assign_coords({"MAF": ("variant", maf)})
 
@@ -345,11 +354,6 @@ class GWASDataLoader(object):
                 gt_ac = (gt_ac - gt_ac.mean(axis=0)) / gt_ac.std(axis=0)
                 self.standardized_genotype = standardize
                 gt_ac = gt_ac.fillna(0.)
-            else:
-                gt_ac = gt_ac.fillna(maf)
-
-            # Obtain information about current chromosome:
-            chr_id, (chr_n, chr_p) = int(gt_ac.chrom.values[0]), gt_ac.shape
 
             # Add filename to the bedfiles dictionary:
             self.bed_files[chr_id] = bfile
@@ -622,7 +626,7 @@ class GWASDataLoader(object):
                 self.ld[c] = LDWrapper(zarr_to_ragged(self.ld[c]._store,
                                                       bounds=self.ld_boundaries[c]))
 
-    def get_snp_variances(self):
+    def compute_allele_frequency_variance(self):
 
         if self.snp_var is None:
 
@@ -732,7 +736,7 @@ class GWASDataLoader(object):
     def compute_beta_hats(self):
 
         self.beta_hats = {c: pd.Series((da.dot(gt['G'][self.train_idx, :].T,
-                                               self.phenotypes[self.train_idx]) / self.N).compute(),
+                                               self.phenotypes[self.train_idx]) / self.n_per_snp[c]).compute(),
                                        index=gt['G'].variant.values)
                           for c, gt in self.genotypes.items()}
 
@@ -743,7 +747,7 @@ class GWASDataLoader(object):
         Computes (yTy)j following SBayesR and Yang et al. (2012)
         :return:
         """
-        self.yy = {c: (self.N - 2)*self.se[c]**2 + b_hat**2
+        self.yy = {c: (self.n_per_snp[c] - 2)*self.se[c]**2 + b_hat**2
                    for c, b_hat in self.beta_hats.items()}
         return self.yy
 
@@ -751,11 +755,11 @@ class GWASDataLoader(object):
 
         self.se = {}
 
-        sigma_y = np.var(self.phenotypes, ddof=1)
+        sigma_y = np.var(self.phenotypes)
 
         for c, gt in self.genotypes.items():
 
-            xtx = self.sample_size*gt['G'].var(axis=0).compute()
+            xtx = self.n_per_snp[c]*gt['G'].var(axis=0).compute()
             self.se[c] = pd.Series(np.sqrt(sigma_y/xtx.values),
                                    index=gt['G'].variant.values)
 
@@ -791,27 +795,26 @@ class GWASDataLoader(object):
 
     def to_sumstats_table(self, per_chromosome=False):
 
-        ss_tables = []
+        ss_tables = {}
 
-        for k, v in self.genotypes.items():
+        for c, gt in self.genotypes.items():
             ss_df = pd.DataFrame({
-                'CHR': v['G'].chrom.values,
-                'POS': v['G'].pos.values,
-                'SNP': v['G'].variant.values,
-                'A1': v['G'].a0.values,
-                'A2': v['G'].a1.values,
-                'MAF': v['G'].MAF.values,
-                'BETA': self.beta_hats[k],
-                'Z': self.z_scores[k],
-                'SE': self.se[k],
-                'PVAL': self.p_values[k]
+                'CHR': gt['G'].chrom.values,
+                'POS': gt['G'].pos.values,
+                'SNP': gt['G'].variant.values,
+                'A1': gt['G'].a0.values,
+                'A2': gt['G'].a1.values,
+                'MAF': gt['G'].MAF.values,
+                'N': self.n_per_snp[c],
+                'BETA': self.beta_hats[c],
+                'Z': self.z_scores[c],
+                'SE': self.se[c],
+                'PVAL': self.p_values[c]
             })
 
-            ss_df['N'] = len(self.train_idx)
-
-            ss_tables.append(ss_df)
+            ss_tables[c] = ss_df
 
         if per_chromosome:
             return ss_tables
         else:
-            return pd.concat(ss_tables)
+            return pd.concat(list(ss_tables.values))
