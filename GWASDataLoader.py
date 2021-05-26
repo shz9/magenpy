@@ -426,7 +426,7 @@ class GWASDataLoader(object):
 
         self.perform_gwas()
 
-    def read_summary_stats(self, sumstats_file, ss_type='plink'):
+    def read_summary_stats(self, sumstats_file, ss_type='statgenpy'):
         """
         TODO: implement reading functions for summary statistics
         """
