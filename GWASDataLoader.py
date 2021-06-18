@@ -551,6 +551,8 @@ class GWASDataLoader(object):
         if self.verbose:
             print("> Computing LD matrices...")
 
+        from datetime import datetime
+
         for c, g_data in tqdm(self.genotypes.items(), disable=not self.verbose):
 
             tmp_ld_store = os.path.join(self.temp_dir, 'tmp_ld', 'chr_' + str(c))
@@ -558,23 +560,28 @@ class GWASDataLoader(object):
 
             g_mat = g_data['G'][self.ld_subset_idx, :]
 
+            print("> Start rechunking...", datetime.now())
             # Chunk the array along the SNP-axis:
             g_mat = g_mat.chunk((min(1000, g_mat.shape[0]),
-                                 min(5000, g_mat.shape[1])))
+                                 min(1000, g_mat.shape[1])))
 
+            print("> Compute and store...", datetime.now())
             ld_mat = (da.dot(g_mat.T, g_mat) / self.N).astype(np.float64)
             ld_mat.to_zarr(tmp_ld_store, overwrite=True)
 
+            print("> Re-chunk...", datetime.now())
             z_ld_mat = zarr.open(tmp_ld_store)
             z_ld_mat = rechunk_zarr(z_ld_mat,
                                     ld_mat.rechunk({0: 'auto', 1: None}).chunksize,
-                                    fin_ld_store)
+                                    fin_ld_store,
+                                    tmp_ld_store + "_intermediate")
 
             z_ld_mat.attrs['Chromosome'] = c
             z_ld_mat.attrs['SNPs'] = list(g_mat.variant.values)
             z_ld_mat.attrs['LD Estimator'] = self.ld_estimator
             z_ld_mat.attrs['LD Boundaries'] = self.ld_boundaries[c].tolist()
 
+            print("> Shrink/Sparsify...", datetime.now())
             if self.ld_estimator == 'shrinkage':
 
                 z_ld_mat = shrink_ld_matrix(z_ld_mat, g_data['G'].cm.values,
@@ -596,6 +603,7 @@ class GWASDataLoader(object):
                 else:
                     z_ld_mat.attrs['Window Cutoff'] = self.window_size_cutoff
 
+            print("> to ragged...", datetime.now())
             if self.sparse_ld and self.ld_estimator in ('shrinkage', 'windowed'):
                 z_ld_mat = zarr_to_ragged(z_ld_mat, bounds=self.ld_boundaries[c])
 

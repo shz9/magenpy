@@ -174,7 +174,7 @@ def sparsify_chunked_matrix(arr, bounds):
     return arr
 
 
-def rechunk_zarr(arr, target_chunks, target_store, intermediate_store='temp/intermediate_ld_rechunk.zarr', **kwargs):
+def rechunk_zarr(arr, target_chunks, target_store, intermediate_store, **kwargs):
 
     if os.path.isdir(target_store):
         try:
