@@ -187,7 +187,7 @@ def rechunk_zarr(arr, target_chunks, target_store, intermediate_store, **kwargs)
                         target_chunks=target_chunks,
                         target_store=target_store,
                         temp_store=intermediate_store,
-                        max_mem=psutil.virtual_memory().available / psutil.cpu_count(),
+                        max_mem="128MiB",
                         **kwargs)
 
     try:
@@ -201,7 +201,7 @@ def rechunk_zarr(arr, target_chunks, target_store, intermediate_store, **kwargs)
     return zarr.open(target_store)
 
 
-def estimate_row_chunk_size(rows, cols, dtype=np.float64, chunk_size=100):
+def estimate_row_chunk_size(rows, cols, dtype=np.float64, chunk_size=128):
     """
 
     :param rows: Number of rows.

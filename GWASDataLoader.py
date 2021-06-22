@@ -240,18 +240,34 @@ class GWASDataLoader(object):
     def sample_index_to_ids(self, idx):
         return self.sample_ids[idx]
 
+    def update_sample_information(self):
+        self.sample_ids = None
+
+        for c, gt in self.genotypes.items():
+
+            if self.sample_ids is None:
+                self.sample_ids = gt['G'].sample.values
+
+            self.n_per_snp[c] = gt['G'].shape[0] - gt['G'].isnull().sum(axis=0).compute().values
+
     def filter_snps(self, keep_snps):
-        """
-        SNP list to keep
-        :param snp_list:
-        :return:
-        """
 
         for c, gt in self.genotypes.items():
             common_snps = pd.DataFrame({'SNP': gt['G'].variant.values}).merge(
                 pd.DataFrame({'SNP': keep_snps})
             )['SNP'].values
             self.genotypes[c]['G'] = gt['G'].sel(variant=common_snps)
+
+    def filter_samples(self, keep_samples):
+
+        common_samples = pd.DataFrame({'Sample': self.sample_ids}).merge(
+            pd.DataFrame({'Sample': keep_samples})
+        )['Sample'].values
+
+        for c, gt in self.genotypes.items():
+            self.genotypes[c]['G'] = gt['G'].sel(sample=common_samples)
+
+        self.update_sample_information()
 
     def read_annotations(self, annot_files):
         """
@@ -346,7 +362,6 @@ class GWASDataLoader(object):
             self.n_per_snp[chr_id] = gt_ac.shape[0] - gt_ac.isnull().sum(axis=0).compute().values
 
             maf = gt_ac.sum(axis=0) / (2. * self.n_per_snp[chr_id])
-            #maf = np.round(np.where(maf > .5, 1. - maf, maf), 6)
             gt_ac = gt_ac.assign_coords({"MAF": ("variant", maf)})
 
             # Standardize genotype matrix:
@@ -393,7 +408,9 @@ class GWASDataLoader(object):
                 self.genotypes[i]['LD Blocks'] = ld_blocks
 
     def read_phenotypes(self, phenotype_file, header=None,
-                        phenotype_col=2, standardize=True, phenotype_id=None):
+                        phenotype_col=2, standardize=True,
+                        phenotype_id=None,
+                        filter_na=True):
 
         if phenotype_file is None:
             return
@@ -403,17 +420,21 @@ class GWASDataLoader(object):
 
         try:
             phe = pd.read_csv(phenotype_file, sep="\s+", header=header)
-            phe.columns = ['FID', 'IID'] + list(phe.columns[2:])
+            phe = phe.iloc[:, [0, 1, phenotype_col]]
+            phe.columns = ['FID', 'IID', 'phenotype']
             phe['IID'] = phe['IID'].astype(type(self.sample_ids[0]))
-            phe.set_index('IID', inplace=True)
         except Exception as e:
             raise e
 
-        self.phenotypes = phe.loc[self.sample_ids, :].iloc[:, phenotype_col - 1].values
+        phe = pd.DataFrame({'IID': self.sample_ids}).merge(phe)
 
-        if len(self.phenotypes) < len(self.sample_ids):
-            raise Exception(f"Some samples do not have recorded phenotypes!"
-                            f"Check the phenotype file: {phenotype_file}")
+        # Filter individuals with missing phenotypes:
+        # TODO: Add functionality to filter on other values (e.g. -9)
+        if filter_na:
+            phe = phe.dropna(subset=['phenotype'])
+            self.filter_samples(phe['IID'].values)
+
+        self.phenotypes = phe['phenotype'].values
 
         if standardize:
             self.phenotypes -= self.phenotypes.mean()
@@ -743,8 +764,8 @@ class GWASDataLoader(object):
 
     def compute_beta_hats(self):
 
-        self.beta_hats = {c: pd.Series((da.dot(gt['G'][self.train_idx, :].T,
-                                               self.phenotypes[self.train_idx]) / self.n_per_snp[c]).compute(),
+        self.beta_hats = {c: pd.Series((da.dot(gt['G'].T,
+                                               self.phenotypes) / self.n_per_snp[c]).compute(),
                                        index=gt['G'].variant.values)
                           for c, gt in self.genotypes.items()}
 
