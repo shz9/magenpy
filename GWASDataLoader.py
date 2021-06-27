@@ -445,8 +445,6 @@ class GWASDataLoader(object):
         else:
             self.phenotype_id = phenotype_id
 
-        self.perform_gwas()
-
     def read_summary_stats(self, sumstats_file, ss_type='statgenpy'):
         """
         TODO: implement reading functions for summary statistics
