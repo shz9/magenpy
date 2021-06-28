@@ -165,7 +165,8 @@ class GWASDataLoader(object):
 
     @classmethod
     def from_sumstats(cls, sum_stats_file, ld_store_files):
-
+        # TODO: Allow user to initizlie model with summary statistics
+        # and ld store files...
         cls.read_summary_stats(sum_stats_file)
         cls.get_ld_matrices(ld_store_files)
 
@@ -189,6 +190,16 @@ class GWASDataLoader(object):
     @property
     def snps(self):
         return {c: gt['G'].variant.values
+                for c, gt in self.genotypes.items()}
+
+    @property
+    def ref_alleles(self):
+        return {c: gt['G'].a0.values
+                for c, gt in self.genotypes.items()}
+
+    @property
+    def alt_alleles(self):
+        return {c: gt['G'].a1.values
                 for c, gt in self.genotypes.items()}
 
     @property
@@ -824,8 +835,8 @@ class GWASDataLoader(object):
                 'CHR': gt['G'].chrom.values,
                 'POS': gt['G'].pos.values,
                 'SNP': gt['G'].variant.values,
-                'A1': gt['G'].a0.values,
-                'A2': gt['G'].a1.values,
+                'A1': gt['G'].a1.values,
+                'A2': gt['G'].a0.values,
                 'MAF': gt['G'].MAF.values,
                 'N': self.n_per_snp[c],
                 'BETA': self.beta_hats[c],
