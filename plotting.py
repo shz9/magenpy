@@ -38,7 +38,7 @@ def plot_manhattan(gdl,
 
     for i, c in enumerate(unique_chr):
 
-        pos = gdl.genotypes[c]['G'].pos.values
+        pos = gdl.genotypes[c].pos.values
         max_pos = pos.max()
 
         xmin = starting_pos #- (chrom_spacing / 2)

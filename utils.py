@@ -4,6 +4,7 @@ import numpy as np
 import zarr
 import numcodecs
 import psutil
+import dask.array as da
 import errno
 import os
 import subprocess
@@ -30,6 +31,16 @@ def read_individual_filter_file(filename, iid_col=1):
         raise e
 
     return keep_list
+
+
+def standardize_genotype_matrix(g_mat, fill_na=True):
+
+    sg_mat = (g_mat - g_mat.mean(axis=0)) / g_mat.std(axis=0)
+
+    if fill_na:
+        sg_mat = sg_mat.fillna(0.)
+
+    return sg_mat
 
 
 def get_shared_distance_matrix(tree, tips=None):
@@ -199,6 +210,24 @@ def rechunk_zarr(arr, target_chunks, target_store, intermediate_store, **kwargs)
         raise e
 
     return zarr.open(target_store)
+
+
+def optimize_chunks_for_memory(chunked_array, cpus=None, max_mem=None):
+    """
+    Modified from: Sergio Hleap
+    Determine optimal chunks that fit in max_mem. Max_mem should be numerical in GiB
+    """
+
+    if cpus is None:
+        cpus = psutil.cpu_count()
+
+    if max_mem is None:
+        max_mem = psutil.virtual_memory().available / (1024.0 ** 3)
+
+    chunk_mem = max_mem / cpus
+    chunks = da.core.normalize_chunks(f"{chunk_mem}GiB", shape=chunked_array.shape, dtype=chunked_array.dtype)
+
+    return chunked_array.chunk(chunks)
 
 
 def estimate_row_chunk_size(rows, cols, dtype=np.float64, chunk_size=128):

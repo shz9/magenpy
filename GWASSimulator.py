@@ -4,8 +4,6 @@ Date: March 2021
 """
 
 import numpy as np
-import dask.array as da
-
 from .GWASDataLoader import GWASDataLoader
 
 
@@ -94,7 +92,7 @@ class GWASSimulator(GWASDataLoader):
 
         for i, g_data in self.genotypes.items():
 
-            _, p = g_data['G'].shape
+            _, p = g_data.shape
 
             if self.annotation_weights is not None:
                 std_beta = np.sqrt(np.absolute(np.dot(self.annotations[i], self.annotation_weights)))
@@ -121,13 +119,10 @@ class GWASSimulator(GWASDataLoader):
         :return:
         """
 
-        g_comp = np.zeros(shape=self.N)
-
-        for chrom_id in self.genotypes:
-            g_comp += da.dot(self.genotypes[chrom_id]['G'], self.betas[chrom_id]).compute()
+        pgs = self.predict(self.betas)
 
         # Estimate the genetic variance
-        g_var = np.var(g_comp, ddof=1)
+        g_var = np.var(pgs, ddof=1)
 
         # If genetic variance > 0., assign environmental variance such that
         # ratio of genetic variance to total phenotypic variance is h2g
@@ -140,7 +135,7 @@ class GWASSimulator(GWASDataLoader):
         e = np.random.normal(0, np.sqrt(e_var), self.N)
 
         # Compute the simulated phenotype:
-        y = g_comp + e
+        y = pgs + e
 
         if self.standardize or self.phenotype_likelihood == 'binomial':
             # Standardize if the trait is binary:
