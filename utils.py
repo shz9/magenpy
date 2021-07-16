@@ -43,6 +43,28 @@ def standardize_genotype_matrix(g_mat, fill_na=True):
     return sg_mat
 
 
+def intersect_arrays(arr1, arr2, return_index=False):
+    """
+    This utility function takes two arrays and returns the shared
+    elements (intersection) between them. If return_index is set to True,
+    it returns the index of shared elements in the first array.
+
+    :param arr1: The first array
+    :param arr2: The second array
+    :param return_index: Return the index of shared elements in the first array
+    :return:
+    """
+
+    common_elements = pd.DataFrame({'ID': arr1}).reset_index().merge(
+        pd.DataFrame({'ID': arr2}, dtype=arr1.dtype)
+    )
+
+    if return_index:
+        return common_elements['index'].values
+    else:
+        return common_elements['ID'].values
+
+
 def get_shared_distance_matrix(tree, tips=None):
     """
     This function takes a Biopython tree and returns the
@@ -85,12 +107,26 @@ def tree_to_rho(tree, min_corr):
     return tree.root.branch_length + get_shared_distance_matrix(tree)
 
 
-def makedir(cdir):
+def makedir(dirs):
+
+    if isinstance(dirs, str):
+        dirs = [dirs]
+
+    for dir in dirs:
+        try:
+            os.makedirs(dir)
+        except OSError as e:
+            if e.errno != errno.EEXIST:
+                raise
+
+
+def delete_ld_store(z_arr):
+
     try:
-        os.makedirs(cdir)
-    except OSError as e:
-        if e.errno != errno.EEXIST:
-            raise
+        path = z_arr.store.path
+        z_arr.store.rmdir()
+    except Exception as e:
+        print(e)
 
 
 def get_filenames(path, extension=None):
@@ -203,11 +239,12 @@ def rechunk_zarr(arr, target_chunks, target_store, intermediate_store, **kwargs)
 
     try:
         rechunked.execute()
-        # Delete the older stores:
-        zarr.open(intermediate_store).store.rmdir()
-        arr.store.rmdir()
     except Exception as e:
         raise e
+
+    # Delete the older/intermediate stores:
+    delete_ld_store(zarr.open(intermediate_store))
+    delete_ld_store(arr)
 
     return zarr.open(target_store)
 
@@ -249,7 +286,12 @@ def estimate_row_chunk_size(rows, cols, dtype=np.float64, chunk_size=128):
         return int(rows / n_chunks), None
 
 
-def zarr_to_ragged(z, keep_snps=None, bounds=None, rechunk=True):
+def zarr_array_to_ragged(z,
+                         dir_store,
+                         keep_snps=None,
+                         bounds=None,
+                         rechunk=True,
+                         delete_original=False):
     """
     This function takes a chunked Zarr matrix (e.g. sparse LD matrix)
     and returns a ragged array matrix.
@@ -260,22 +302,21 @@ def zarr_to_ragged(z, keep_snps=None, bounds=None, rechunk=True):
     :param z: the original Zarr matrix (implementation assumes 2D matrix)
     :param keep_snps: A list of SNP IDs to keep.
     :param rechunk: Whether to re-chunk the ragged array (for optimized read/write performance)
+    :param dir_store: The path to the new Zarr matrix store
+    :param delete_original: Delete the original store after transformation.
     :return:
     """
-
-    dir_store = os.path.join(os.path.dirname(z.chunk_store.path) + '_ragged',
-                             os.path.basename(z.chunk_store.path))
 
     if keep_snps is None:
         n_rows = z.shape[0]
 
-        idx_map = pd.DataFrame({'SNP': z.attrs['SNPs']}).reset_index()
+        idx_map = pd.DataFrame({'SNP': z.attrs['SNP']}).reset_index()
         idx_map.columns = ['index_x', 'SNP']
         idx_map['index_y'] = idx_map['index_x']
 
     else:
         idx_map = pd.DataFrame({'SNP': keep_snps}).reset_index().merge(
-            pd.DataFrame({'SNP': z.attrs['SNPs']}).reset_index(),
+            pd.DataFrame({'SNP': z.attrs['SNP']}).reset_index(),
             on='SNP',
             suffixes=('_y', '_x')
         )
@@ -285,7 +326,9 @@ def zarr_to_ragged(z, keep_snps=None, bounds=None, rechunk=True):
     idx_map['chunk_x'] = (idx_map['index_x'] // z.chunks[0]).astype(int)
 
     if bounds is None:
-        bounds = np.array(z.attrs['LD Boundaries'])
+        orig_bounds = bounds = z.attrs['LD boundaries']
+    else:
+        orig_bounds = z.attrs['LD boundaries']
 
     if rechunk:
         avg_ncol = int((bounds[1, :] - bounds[0, :]).mean())
@@ -300,7 +343,7 @@ def zarr_to_ragged(z, keep_snps=None, bounds=None, rechunk=True):
                       object_codec=numcodecs.VLenArray(float))
 
     z_rag_mem = z_rag[:]
-
+    idx_x = idx_map['index_x'].values
     chunk_size = z.chunks[0]
 
     for i in range(int(np.ceil(z.shape[0] / chunk_size))):
@@ -314,14 +357,22 @@ def zarr_to_ragged(z, keep_snps=None, bounds=None, rechunk=True):
             if keep_snps is None:
                 z_rag_mem[k] = z_chunk[j - start][bounds[0, j]:bounds[1, j]]
             else:
-                z_rag_mem[k] = z_chunk[j - start, idx_map['index_x']][bounds[0, k]:bounds[1, k]]
+                # Find the index of SNPs in the original LD matrix that
+                # remain after matching with the `keep_snps` variable.
+                orig_idx = idx_x[(orig_bounds[0, j] <= idx_x) & (idx_x < orig_bounds[1, j])] - orig_bounds[0, j]
+                z_rag_mem[k] = z_chunk[j - start][orig_idx]
 
     z_rag[:] = z_rag_mem
     z_rag.attrs.update(z.attrs.asdict())
 
     if keep_snps is not None:
-        z_rag.attrs['SNPs'] = list(keep_snps)
-        z_rag.attrs['LD Boundaries'] = bounds.tolist()
+        z_rag.attrs['SNP'] = list(keep_snps)
+        z_rag.attrs['LD boundaries'] = bounds.tolist()
+        z_rag.attrs['BP'] = list(map(int, np.array(z.attrs['BP'])[idx_x]))
+        z_rag.attrs['cM'] = list(map(float, np.array(z.attrs['cM'])[idx_x]))
+
+    if delete_original:
+        delete_ld_store(z)
 
     return z_rag
 

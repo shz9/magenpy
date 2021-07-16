@@ -1,3 +1,14 @@
+# cython: linetrace=False
+# cython: profile=False
+# cython: binding=False
+# cython: boundscheck=False
+# cython: wraparound=False
+# cython: initializedcheck=False
+# cython: nonecheck=False
+# cython: language_level=3
+# cython: infer_types=True
+
+
 import numpy as np
 cimport numpy as np
 
@@ -10,10 +21,10 @@ cdef class LDWrapper:
         public list _data
         public unsigned int index, size, chunk_size
 
-    def __init__(self, ld_zarr_store):
+    def __init__(self, ld_zarr_arr):
 
-        self._store = ld_zarr_store
-        self.size = self._store.shape[0]
+        self._zarr = ld_zarr_arr
+        self.size = self._zarr.shape[0]
 
         self._data = None
         self.chunk_size = self.chunks[0]
@@ -21,8 +32,16 @@ cdef class LDWrapper:
         self.index = 0
 
     @property
+    def zarr_store(self):
+        return self._zarr.store
+
+    @property
+    def zarr_array(self):
+        return self._zarr
+
+    @property
     def chunks(self):
-        return self._store.chunks
+        return self._zarr.chunks
 
     @property
     def chromosome(self):
@@ -30,15 +49,31 @@ cdef class LDWrapper:
 
     @property
     def ld_estimator(self):
-        return self.get_store_attr('LD Estimator')
+        return self.get_store_attr('LD estimator')
+
+    @property
+    def estimator_properties(self):
+        return self.get_store_attr('Estimator properties')
 
     @property
     def snps(self):
-        return self.get_store_attr('SNPs')
+        return np.array(self.get_store_attr('SNP'))
 
     @property
     def ld_boundaries(self):
-        return self.get_store_attr('LD Boundaries')
+        return np.array(self.get_store_attr('LD boundaries'))
+
+    @property
+    def sample_size(self):
+        return self.get_store_attr('Sample size')
+
+    def position(self, units='cM'):
+        if units == 'cM':
+            return np.array(self.get_store_attr('cM'))
+        elif units == 'BP':
+            return np.array(self.get_store_attr('BP'))
+        else:
+            raise KeyError(f"Position with {units} units is not available!")
 
     def mem_size(self):
         """
@@ -53,8 +88,9 @@ cdef class LDWrapper:
 
     def get_store_attr(self, attr):
         try:
-            return self._store.attrs[attr]
+            return self._zarr.attrs[attr]
         except KeyError:
+            print(f"Warning: Attribute {attr} is not set!")
             return None
 
     def load(self, start=0, end=None):
@@ -67,7 +103,7 @@ cdef class LDWrapper:
         self._data = []
         cdef double[::1] v
 
-        for d in self._store[start:end]:
+        for d in self._zarr[start:end]:
             v = d.copy()
             self._data.append(v)
 
@@ -93,6 +129,12 @@ cdef class LDWrapper:
                 curr_item = self._data[idx % self.chunk_size]
 
             yield curr_item
+
+    def __getitem__(self, item):
+        if self.in_memory:
+            return self._data[item]
+        else:
+            return self._zarr[item]
 
     def __iter__(self):
         return self

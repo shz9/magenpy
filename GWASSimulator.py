@@ -14,7 +14,6 @@ class GWASSimulator(GWASDataLoader):
                  pis=(0.9, 0.1),
                  gammas=(0., 1.),
                  binomial_threshold=0.,
-                 standardize=True,
                  **kwargs):
 
         super().__init__(bed_files, **kwargs)
@@ -27,7 +26,6 @@ class GWASSimulator(GWASDataLoader):
 
         self.gammas = np.array(gammas)
         self.binomial_threshold = binomial_threshold
-        self.standardize = standardize
 
         self.annotation_weights = None
 
@@ -119,7 +117,10 @@ class GWASSimulator(GWASDataLoader):
         :return:
         """
 
-        pgs = self.predict(self.betas)
+        if self.use_plink:
+            pgs = self.predict_plink(self.betas)
+        else:
+            pgs = self.predict(self.betas)
 
         # Estimate the genetic variance
         g_var = np.var(pgs, ddof=1)
@@ -137,7 +138,7 @@ class GWASSimulator(GWASDataLoader):
         # Compute the simulated phenotype:
         y = pgs + e
 
-        if self.standardize or self.phenotype_likelihood == 'binomial':
+        if self.standardize_phenotype or self.phenotype_likelihood == 'binomial':
             # Standardize if the trait is binary:
             y -= y.mean()
             y /= y.std()
@@ -150,7 +151,7 @@ class GWASSimulator(GWASDataLoader):
 
         return self.phenotypes
 
-    def simulate(self, reset_beta=False, perform_gwas=True, phenotype_id=None):
+    def simulate(self, reset_beta=False, perform_gwas=False, phenotype_id=None):
 
         if self.betas is None or reset_beta:
             self.simulate_mixture_assignment()
@@ -169,6 +170,4 @@ class GWASSimulator(GWASDataLoader):
 
         if phenotype_id is not None:
             self.phenotype_id = phenotype_id
-        else:
-            self.phenotype_id = 'Simulated_1'
 

@@ -185,7 +185,7 @@ class TransethnicGWASSimulator(GWASDataLoader):
             self.simulate_beta()
             self.simulated_betas = True
 
-        self.phenotypes = pd.Series(np.zeros_like(self.sample_ids), index=self.sample_ids)
+        self.phenotypes = pd.Series(np.zeros_like(self._iid), index=self._iid)
 
         for c in self.clusters:
             self.cluster_simulators[c].simulate(reset_beta=False)
