@@ -662,14 +662,14 @@ class GWASDataLoader(object):
                                     tmp_ld_store + '_rechunked',
                                     tmp_ld_store + '_intermediate')
 
+            # Add LD matrix properties:
             z_ld_mat.attrs['Chromosome'] = c
             z_ld_mat.attrs['Sample size'] = g_mat.shape[0]
             z_ld_mat.attrs['SNP'] = list(g_mat.variant.values)
             z_ld_mat.attrs['LD estimator'] = self.ld_estimator
             z_ld_mat.attrs['LD boundaries'] = self.ld_boundaries[c].tolist()
-            z_ld_mat.attrs['BP'] = list(map(int, g_mat.variant.pos.values))
-            z_ld_mat.attrs['cM'] = list(map(float, g_mat.variant.cm.values))
-            z_ld_mat.attrs['MAF'] = list(map(float, self.maf[c]))
+
+            ld_estimator_properties = None
 
             if self.ld_estimator == 'sample':
                 final_sample_store = zarr.open(fin_ld_store)
@@ -684,27 +684,33 @@ class GWASDataLoader(object):
                                             self.genmap_sample_size,
                                             self.shrinkage_cutoff)
 
-                z_ld_mat.attrs['Estimator properties'] = {}
-                z_ld_mat.attrs['Estimator properties']['Genetic map Ne'] = self.genmap_Ne
-                z_ld_mat.attrs['Estimator properties']['Genetic map sample size'] = self.genmap_sample_size
-                z_ld_mat.attrs['Estimator properties']['Cutoff'] = self.shrinkage_cutoff
+                ld_estimator_properties = {
+                    'Genetic map Ne': self.genmap_Ne,
+                    'Genetic map sample size': self.genmap_sample_size,
+                    'Cutoff': self.shrinkage_cutoff
+                }
 
             elif self.ld_estimator == 'windowed':
                 z_ld_mat = sparsify_chunked_matrix(z_ld_mat, self.ld_boundaries[c])
 
-                z_ld_mat.attrs['Estimator properties'] = {}
-                z_ld_mat.attrs['Estimator properties']['Window units'] = self.window_unit
-
-                if self.window_unit == 'cM':
-                    z_ld_mat.attrs['Estimator properties']['Window cutoff'] = self.cm_window_cutoff
-                else:
-                    z_ld_mat.attrs['Estimator properties']['Window cutoff'] = self.window_size_cutoff
+                ld_estimator_properties = {
+                    'Window units': self.window_unit,
+                    'Window cutoff': [self.window_size_cutoff, self.cm_window_cutoff][self.window_unit == 'cM']
+                }
 
             if self.ld_estimator in ('shrinkage', 'windowed'):
                 z_ld_mat = zarr_array_to_ragged(z_ld_mat,
                                                 fin_ld_store,
                                                 bounds=self.ld_boundaries[c],
                                                 delete_original=True)
+
+            # Add detailed LD matrix properties:
+            z_ld_mat.attrs['BP'] = list(map(int, g_mat.variant.pos.values))
+            z_ld_mat.attrs['cM'] = list(map(float, g_mat.variant.cm.values))
+            z_ld_mat.attrs['MAF'] = list(map(float, self.maf[c]))
+
+            if ld_estimator_properties is not None:
+                z_ld_mat.attrs['Estimator properties'] = ld_estimator_properties
 
             self.ld[c] = LDWrapper(z_ld_mat)
 
@@ -783,6 +789,9 @@ class GWASDataLoader(object):
             else:
                 betas = self.beta_hats
 
+        if self.verbose:
+            print("> Generating polygenic scores using PLINK...")
+
         pgs = np.zeros(shape=self.N)
 
         # Create a temporary directory for the score files:
@@ -829,6 +838,9 @@ class GWASDataLoader(object):
                                 " Please provide betas to perform prediction.")
             else:
                 betas = self.beta_hats
+
+        if self.verbose:
+            print("> Generating polygenic scores...")
 
         pgs = np.zeros(shape=self.N)
 
@@ -917,7 +929,7 @@ class GWASDataLoader(object):
 
         self.maf = {}
         for c, gt in self.genotypes.items():
-            self.maf[c] = gt.sum(axis=0) / (2. * self.n_per_snp[c])
+            self.maf[c] = (gt.sum(axis=0) / (2. * self.n_per_snp[c])).compute().values
 
         return self.maf
 
@@ -1071,6 +1083,9 @@ class GWASDataLoader(object):
         Clean up all temporary files and directories
         :return:
         """
+        if self.verbose:
+            print("> Cleaning up workspace.")
+
         for tmpdir in self.cleanup_dir_list:
             tmpdir.cleanup()
 

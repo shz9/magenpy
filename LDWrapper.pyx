@@ -16,7 +16,7 @@ cimport numpy as np
 cdef class LDWrapper:
 
     cdef:
-        public object _store
+        public object _zarr
         bint in_memory
         public list _data
         public unsigned int index, size, chunk_size
@@ -67,6 +67,10 @@ cdef class LDWrapper:
     def sample_size(self):
         return self.get_store_attr('Sample size')
 
+    @property
+    def maf(self):
+        return self.get_store_attr('MAF')
+
     def position(self, units='cM'):
         if units == 'cM':
             return np.array(self.get_store_attr('cM'))
@@ -75,14 +79,21 @@ cdef class LDWrapper:
         else:
             raise KeyError(f"Position with {units} units is not available!")
 
-    def mem_size(self):
+    def store_size(self):
         """
-        Returns an estimate of size of the LD matrix in MB
+        Returns the size of the compressed LD store in MB
+        :return:
+        """
+        return self.zarr_store.getsize() / 1024 ** 2
+
+    def estimate_uncompressed_size(self):
+        """
+        Returns an estimate of size of the uncompressed LD matrix in MB
         """
         ld_bounds = self.ld_boundaries
 
         n_rows = ld_bounds.shape[1]
-        n_cols = np.mean(ld_bounds[:, 1] - ld_bounds[:, 1])
+        n_cols = n_cols = np.mean(ld_bounds[1, :] - ld_bounds[0, :])
 
         return n_rows * n_cols * np.dtype(np.float64).itemsize / 1024 ** 2
 
