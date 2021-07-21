@@ -182,15 +182,20 @@ class GWASDataLoader(object):
         :param agg: Aggregation (max, mean, or None)
         :return:
         """
-        if self.n_per_snp is None:
-            self.compute_n_per_snp()
 
-        if agg is None:
-            return self.n_per_snp
-        elif agg == 'mean':
-            return np.mean([nps.mean() for nps in self.n_per_snp.values()])
-        elif agg == 'max':
-            return max([nps.max() for nps in self.n_per_snp.values()])
+        if agg == 'max':
+            if self.genotypes is not None:
+                return len(self._iid)
+            else:
+                return max([nps.max() for nps in self.n_per_snp.values()])
+        else:
+            if self.n_per_snp is None:
+                self.compute_n_per_snp()
+
+            if agg is None:
+                return self.n_per_snp
+            elif agg == 'mean':
+                return np.mean([nps.mean() for nps in self.n_per_snp.values()])
 
     @property
     def M(self):
@@ -799,7 +804,7 @@ class GWASDataLoader(object):
 
         # Create the samples file:
         keep_file = osp.join(score_tmpdir.name, 'samples.keep')
-        keep_table = self.to_phenotype_table()[['FID', 'IID']]
+        keep_table = self.to_individual_table()
         keep_table.to_csv(keep_file, index=False, header=False, sep="\t")
 
         for c, beta in betas.items():
@@ -1033,18 +1038,27 @@ class GWASDataLoader(object):
 
         return self.p_values
 
-    def to_phenotype_table(self):
+    def to_individual_table(self):
 
-        if self.phenotypes is None:
-            raise Exception("Phenotypes are not set and cannot be exported!")
+        if self.genotypes is None:
+            raise Exception("Individual data is not provided!")
 
         genotype_data = next(iter(self.genotypes.values()))
 
         return pd.DataFrame({
             'FID': genotype_data.sample.fid.values,
-            'IID': genotype_data.sample.iid.values,
-            'Phenotype': self.phenotypes
+            'IID': genotype_data.sample.iid.values
         })
+
+    def to_phenotype_table(self):
+
+        if self.phenotypes is None:
+            print("Warning: Phenotypes are not set! Exporting NaNs")
+
+        pheno_df = self.to_individual_table()
+        pheno_df['phenotype'] = self.phenotypes
+
+        return pheno_df
 
     def to_sumstats_table(self, per_chromosome=False):
 
