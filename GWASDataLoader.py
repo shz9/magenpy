@@ -824,8 +824,12 @@ class GWASDataLoader(object):
                 ]
                 run_shell_script(" ".join(cmd))
 
-                chr_pgs = pd.read_csv(eff_file.replace('.txt', '.sscore'), sep='\s+')
-                chr_pgs = keep_table.merge(chr_pgs)
+                chr_pgs = pd.read_csv(eff_file.replace('.txt', '.sscore'), sep='\s+',
+                                      names=['FID', 'IID', 'NMISS_ALLELE_CT',
+                                             'NAMED_ALLELE_DOSAGE_SUM', 'BETA_AVG', 'BETA_SUM'])
+                # To ensure PRS is ordered correctly, we merge:
+                str_dtype = {'FID': str, 'IID': str}
+                chr_pgs = keep_table.astype(str_dtype).merge(chr_pgs.astype(str_dtype))
 
                 pgs += chr_pgs['BETA_SUM'].values
 
