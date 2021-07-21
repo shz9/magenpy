@@ -824,11 +824,10 @@ class GWASDataLoader(object):
                 ]
                 run_shell_script(" ".join(cmd))
 
-                prs_dtypes = {'FID': str, 'IID': str, 'PRS': np.float64}
                 chr_pgs = pd.read_csv(eff_file.replace('.txt', '.sscore'), sep='\s+',
                                       names=['FID', 'IID', 'PRS'], skiprows=1, usecols=[0, 1, 5],
-                                      dtype=prs_dtypes)
-                chr_pgs = keep_table.astype(prs_dtypes).merge(chr_pgs)
+                                      dtype={'FID': str, 'IID': str, 'PRS': np.float64})
+                chr_pgs = keep_table.astype({'FID': str, 'IID': str}).merge(chr_pgs)
 
                 pgs += chr_pgs['PRS'].values
 
