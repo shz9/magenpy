@@ -29,7 +29,8 @@ class GWASDataLoader(object):
                  phenotype_col=2,
                  phenotype_id=None,
                  standardize_phenotype=True,
-                 sumstats_file=None,
+                 sumstats_files=None,
+                 sumstats_format='pystatgen',
                  keep_individuals=None,
                  keep_snps=None,
                  annotation_files=None,
@@ -115,6 +116,7 @@ class GWASDataLoader(object):
         self._a1 = None  # Minor allele
         self._a2 = None  # Major allele
         self.maf = None  # Minor allele frequency
+        self.xy = None
         self.yy = None
         self.snp_var = None
         self._iid = None
@@ -161,11 +163,11 @@ class GWASDataLoader(object):
         self.read_phenotypes(phenotype_file, phenotype_id=phenotype_id,
                              header=phenotype_header, phenotype_col=phenotype_col,
                              standardize=self.standardize_phenotype)
-        self.read_summary_stats(sumstats_file)
+        self.read_summary_stats(sumstats_files, sumstats_format)
 
         # ------- Harmonize data sources -------
 
-        if ld_store_files is not None or sumstats_file is not None:
+        if ld_store_files is not None or sumstats_files is not None:
             self.harmonize_data()
 
     @property
@@ -454,15 +456,23 @@ class GWASDataLoader(object):
         else:
             self.phenotype_id = phenotype_id
 
-    def read_summary_stats(self, sumstats_file, ss_format='pystatgen'):
+    def read_summary_stats(self, sumstats_files, ss_format='pystatgen'):
         """
         TODO: implement parsers for summary statistics
         """
 
-        if sumstats_file is None:
+        if sumstats_files is None:
             return
 
-        ss = pd.read_csv(sumstats_file, sep="\s+")
+        if not iterable(sumstats_files):
+            ss_files = get_filenames(sumstats_files, extension='.bed')
+
+        ss = []
+
+        for ssf in ss_files:
+            ss.append(pd.read_csv(ssf, sep="\s+"))
+
+        ss = pd.concat(ss)
 
         if ss_format == 'LDSC':
             # Useful here: https://www.biostars.org/p/319584/
@@ -894,7 +904,7 @@ class GWASDataLoader(object):
             ]
 
             if self.standardize_phenotype:
-                cmd.append('--covar-variance-standardize')
+                cmd.append('--variance-standardize')
 
             run_shell_script(" ".join(cmd))
             res = pd.read_csv(plink_output + f".PHENO1.glm.{plink_reg_type}", sep="\s+")
@@ -964,6 +974,21 @@ class GWASDataLoader(object):
             self.n_per_snp[c] = gt.shape[0] - gt.isnull().sum(axis=0).compute().values
 
         return self.n_per_snp
+
+    def compute_xy_per_snp(self):
+        """
+        Computes the X_jTy correlation (standardized beta) per SNP
+        using Equation 15 in Mak et al. 2017
+        :return:
+        """
+
+        if self.verbose:
+            print(">> Computing xTy per SNP...")
+
+        self.xy = {c: zsc / (np.sqrt(self.n_per_snp[c] - 1 + zsc))
+                   for c, zsc in self.z_scores.items()}
+
+        return self.xy
 
     def compute_yy_per_snp(self):
         """
