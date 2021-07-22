@@ -456,7 +456,7 @@ class GWASDataLoader(object):
         else:
             self.phenotype_id = phenotype_id
 
-    def read_summary_stats(self, sumstats_files, ss_format='pystatgen'):
+    def read_summary_stats(self, sumstats_files, sumstats_format='pystatgen'):
         """
         TODO: implement parsers for summary statistics
         """
@@ -465,23 +465,28 @@ class GWASDataLoader(object):
             return
 
         if not iterable(sumstats_files):
-            ss_files = get_filenames(sumstats_files, extension='.bed')
+            sumstats_files = get_filenames(sumstats_files)
 
         ss = []
 
-        for ssf in ss_files:
+        for ssf in sumstats_files:
             ss.append(pd.read_csv(ssf, sep="\s+"))
 
         ss = pd.concat(ss)
 
-        if ss_format == 'LDSC':
+        if sumstats_format == 'LDSC':
             # Useful here: https://www.biostars.org/p/319584/
             pass
-        elif ss_format == 'SBayesR':
+        elif sumstats_format == 'SBayesR':
             pass
-        elif ss_format == 'plink':
-            ss['SNP'] = ss['ID']
-            ss['PVAL'] = ss['P']
+        elif sumstats_format == 'plink':
+            ss.rename(columns={
+                '#CHROM': 'CHR',
+                'ID': 'SNP',
+                'P': 'PVAL',
+                'REF': 'A2',
+                'OBS_CT': 'N'
+            }, inplace=True)
             ss['Z'] = ss['BETA'] / ss['SE']
 
         self.n_per_snp = {}
@@ -667,7 +672,10 @@ class GWASDataLoader(object):
             g_mat = g_mat.chunk((min(1024, g_mat.shape[0]),
                                  min(1024, g_mat.shape[1])))
 
-            g_mat = standardize_genotype_matrix(g_mat)
+            # Standardize the genotype matrix and fill missing data with zeros:
+            g_mat = standardize_genotype_matrix(g_mat).fillna(0.)
+
+            # Compute the LD matrix:
             ld_mat = (da.dot(g_mat.T, g_mat) / self.N).astype(np.float64)
             ld_mat.to_zarr(tmp_ld_store, overwrite=True)
 
@@ -864,7 +872,7 @@ class GWASDataLoader(object):
         for c, gt in self.genotypes.items():
 
             if self.standardize_genotype:
-                pgs += da.dot(standardize_genotype_matrix(gt), betas[c]).compute()
+                pgs += da.dot(standardize_genotype_matrix(gt).fillna(0.), betas[c]).compute()
             else:
                 pgs += da.dot(gt, betas[c]).compute()
 
