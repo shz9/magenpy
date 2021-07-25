@@ -56,8 +56,10 @@ def intersect_arrays(arr1, arr2, return_index=False):
     :return:
     """
 
-    common_elements = pd.DataFrame({'ID': arr1}).reset_index().merge(
-        pd.DataFrame({'ID': arr2}, dtype=arr1.dtype)
+    # NOTE: For best and consistent results, we cast all data types to `str`
+    # for now. May need a smarter solution in the future.
+    common_elements = pd.DataFrame({'ID': arr1}, dtype=str).reset_index().merge(
+        pd.DataFrame({'ID': arr2}, dtype=str)
     )
 
     if return_index:
@@ -103,7 +105,7 @@ def tree_to_rho(tree, min_corr):
     max_depth = max(tree.depths().values())
 
     for c in tree.find_clades():
-        c.branch_length /= (max_depth)
+        c.branch_length /= max_depth
 
     return tree.root.branch_length + get_shared_distance_matrix(tree)
 

@@ -251,10 +251,11 @@ class GWASDataLoader(object):
         :return:
         """
 
-        if self.maf is None:
-            self.compute_allele_frequency()
-
         cond_dict = {}
+
+        if min_mac is not None or min_maf is not None:
+            if self.maf is None:
+                self.compute_allele_frequency()
 
         if min_mac is not None:
             for c, maf in self.maf.items():
@@ -613,7 +614,7 @@ class GWASDataLoader(object):
                                                                                 self.cm_window_cutoff,
                                                                                 self.n_threads)
                         else:
-                            raise Exception("cM information for SNPs is missing."
+                            raise Exception("cM information for SNPs is missing. "
                                             "Make sure to populate it with a reference genetic map "
                                             "or use a pre-specified window size around each SNP.")
                     else:
@@ -632,7 +633,7 @@ class GWASDataLoader(object):
                                                                              self.shrinkage_cutoff,
                                                                              self.n_threads)
                     else:
-                        raise Exception("cM information for SNPs is missing."
+                        raise Exception("cM information for SNPs is missing. "
                                         "Make sure to populate it with a reference genetic map "
                                         "or use a different LD estimator.")
 
