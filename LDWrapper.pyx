@@ -9,6 +9,7 @@
 # cython: infer_types=True
 
 
+import zarr
 import numpy as np
 cimport numpy as np
 
@@ -16,32 +17,43 @@ cimport numpy as np
 cdef class LDWrapper:
 
     cdef:
-        public object _zarr
+        object _zarr
         bint in_memory
-        public list _data
-        public unsigned int index, size, chunk_size
+        list _data
+        unsigned int index
 
     def __init__(self, ld_zarr_arr):
 
         self._zarr = ld_zarr_arr
-        self.size = self._zarr.shape[0]
 
         self._data = None
-        self.chunk_size = self.chunks[0]
         self.in_memory = False
         self.index = 0
 
+    @classmethod
+    def from_path(cls, ld_store_path):
+        ldw = zarr.open(ld_store_path)
+        return cls(ldw)
+
     @property
-    def zarr_store(self):
+    def shape(self):
+        return self._zarr.shape
+
+    @property
+    def store(self):
         return self._zarr.store
 
     @property
-    def zarr_array(self):
+    def z_array(self):
         return self._zarr
 
     @property
     def chunks(self):
         return self._zarr.chunks
+
+    @property
+    def chunk_size(self):
+        return self.chunks[0]
 
     @property
     def chromosome(self):
@@ -71,20 +83,20 @@ cdef class LDWrapper:
     def maf(self):
         return self.get_store_attr('MAF')
 
-    def position(self, units='cM'):
-        if units == 'cM':
-            return np.array(self.get_store_attr('cM'))
-        elif units == 'BP':
-            return np.array(self.get_store_attr('BP'))
-        else:
-            raise KeyError(f"Position with {units} units is not available!")
+    @property
+    def bp_position(self):
+        return np.array(self.get_store_attr('BP'))
+
+    @property
+    def cm_position(self):
+        return np.array(self.get_store_attr('cM'))
 
     def store_size(self):
         """
         Returns the size of the compressed LD store in MB
         :return:
         """
-        return self.zarr_store.getsize() / 1024 ** 2
+        return self.store.getsize() / 1024 ** 2
 
     def estimate_uncompressed_size(self):
         """
@@ -104,10 +116,16 @@ cdef class LDWrapper:
             print(f"Warning: Attribute {attr} is not set!")
             return None
 
+    def set_store_attr(self, attr, value):
+        try:
+            self._zarr.attrs[attr] = value
+        except Exception as e:
+            raise e
+
     def load(self, start=0, end=None):
 
         if end is None:
-            end = self.size
+            end = len(self)
             if start == 0:
                 self.in_memory = True
 
@@ -130,7 +148,7 @@ cdef class LDWrapper:
 
         cdef unsigned int idx
 
-        for idx in range(self.size):
+        for idx in range(len(self)):
             if self.in_memory:
                 curr_item = self._data[idx]
             else:
@@ -140,6 +158,9 @@ cdef class LDWrapper:
                 curr_item = self._data[idx % self.chunk_size]
 
             yield curr_item
+
+    def __len__(self):
+        return self.shape[0]
 
     def __getitem__(self, item):
         if self.in_memory:
@@ -152,7 +173,7 @@ cdef class LDWrapper:
 
     def __next__(self):
 
-        if self.index == self.size:
+        if self.index == len(self):
             self.index = 0
             raise StopIteration
 

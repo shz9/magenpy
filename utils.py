@@ -7,6 +7,7 @@ import psutil
 import dask.array as da
 import errno
 import os
+import shutil
 import subprocess
 import glob
 import collections
@@ -120,10 +121,20 @@ def makedir(dirs):
                 raise
 
 
+def move_ld_store(z_arr, target_path, overwrite=True):
+
+    source_path = z_arr.store.dir_path()
+
+    if overwrite or not any(os.scandir(target_path)):
+        shutil.rmtree(target_path, ignore_errors=True)
+        shutil.move(source_path, target_path)
+
+    return zarr.open(target_path)
+
+
 def delete_ld_store(z_arr):
 
     try:
-        path = z_arr.store.path
         z_arr.store.rmdir()
     except Exception as e:
         print(e)
@@ -326,9 +337,9 @@ def zarr_array_to_ragged(z,
     idx_map['chunk_x'] = (idx_map['index_x'] // z.chunks[0]).astype(int)
 
     if bounds is None:
-        orig_bounds = bounds = z.attrs['LD boundaries']
+        orig_bounds = bounds = np.array(z.attrs['LD boundaries'])
     else:
-        orig_bounds = z.attrs['LD boundaries']
+        orig_bounds = np.array(z.attrs['LD boundaries'])
 
     if rechunk:
         avg_ncol = int((bounds[1, :] - bounds[0, :]).mean())
