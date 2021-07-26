@@ -251,6 +251,9 @@ class GWASDataLoader(object):
             if self.se is not None:
                 self.se[c] = self.se[c][common_idx]
 
+            if self.z_scores is not None:
+                self.z_scores[c] = self.z_scores[c][common_idx]
+
             if self.p_values is not None:
                 self.p_values[c] = self.p_values[c][common_idx]
 
