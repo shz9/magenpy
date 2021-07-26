@@ -183,7 +183,7 @@ class GWASDataLoader(object):
 
     @property
     def M(self):
-        return sum([len(s) for s in self.snps.values()])
+        return sum(self.shapes.values())
 
     @property
     def snps(self):
@@ -230,6 +230,12 @@ class GWASDataLoader(object):
 
             common_idx = intersect_arrays(snps, keep_snps, return_index=True)
 
+            # SNP vectors that must exist in all GDL objects:
+            self._snps[c] = self._snps[c][common_idx]
+            self._a1[c] = self._a1[c][common_idx]
+            self._a2[c] = self._a2[c][common_idx]
+
+            # Optional SNP vectors/matrices:
             if self.genotypes is not None:
                 self.genotypes[c] = self.genotypes[c].isel(variant=common_idx)
 
@@ -239,9 +245,14 @@ class GWASDataLoader(object):
             if self.maf is not None:
                 self.maf[c] = self.maf[c][common_idx]
 
-            self._snps[c] = self._snps[c][common_idx]
-            self._a1[c] = self._a1[c][common_idx]
-            self._a2[c] = self._a2[c][common_idx]
+            if self.beta_hats is not None:
+                self.beta_hats[c] = self.beta_hats[c][common_idx]
+
+            if self.se is not None:
+                self.se[c] = self.se[c][common_idx]
+
+            if self.p_values is not None:
+                self.p_values[c] = self.p_values[c][common_idx]
 
     def filter_by_allele_frequency(self, min_maf=None, min_mac=1):
         """
