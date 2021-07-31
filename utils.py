@@ -169,6 +169,46 @@ def iterable(arg):
     )
 
 
+def clump_snps(ldw, stat, rsq_threshold=.9, extract=True):
+    """
+    This function takes an LDWrapper object and clumps the SNPs based
+    on the `stat` vector (usually p-value) and the provided r-squared threshold.
+    If two SNPs have an r-squared greater than the threshold,
+    the SNP with the higher `stat` value is excluded.
+    :param ldw: LDWrapper object
+    :param stat: A vector of statistics (e.g. p-values) for the SNPs
+    :param rsq_threshold: The r^2 threshold to use for filtering
+    :param extract: if True, return remaining SNPs. If False, return removed SNPs.
+    :return: A list of SNPs passing the specified filter
+    """
+
+    snps = ldw.snps
+    ld_bounds = ldw.ld_boundaries
+    remove_snps = set()
+
+    for idx, ld in enumerate(ldw):
+
+        if snps[idx] in remove_snps:
+            continue
+
+        rsq = np.array(ld)**2
+
+        for s_idx in np.where(rsq > rsq_threshold)[0]:
+            real_idx = s_idx + ld_bounds[0, idx]
+            if idx == real_idx or snps[real_idx] in remove_snps:
+                continue
+
+            if stat[idx] < stat[real_idx]:
+                remove_snps.add(snps[real_idx])
+            else:
+                remove_snps.add(snps[idx])
+
+    if extract:
+        return list(set(snps) - remove_snps)
+    else:
+        return list(remove_snps)
+
+
 def shrink_ld_matrix(arr, cm_dist, genmap_Ne, genmap_sample_size, shrinkage_cutoff=1e-3):
 
     # The multiplicative factor for the shrinkage estimator

@@ -396,8 +396,8 @@ class GWASDataLoader(object):
             self.bed_files[chr_id] = bfile
             # Keep track of the SNPs:
             self._snps[chr_id] = gt_ac.variant.values
-            self._a1[chr_id] = gt_ac.variant.a1.values
-            self._a2[chr_id] = gt_ac.variant.a0.values
+            self._a1[chr_id] = gt_ac.variant.a0.values
+            self._a2[chr_id] = gt_ac.variant.a1.values
 
             if i == 0:
                 self._iid = gt_ac.sample.values
@@ -497,7 +497,8 @@ class GWASDataLoader(object):
                 'ID': 'SNP',
                 'P': 'PVAL',
                 'REF': 'A2',
-                'OBS_CT': 'N'
+                'OBS_CT': 'N',
+                'A1_FREQ': 'MAF'
             }, inplace=True)
             ss['Z'] = ss['BETA'] / ss['SE']
 
@@ -521,6 +522,7 @@ class GWASDataLoader(object):
                 self._a1[c] = m_ss['A1'].values
                 self._a2[c] = m_ss['A2'].values
                 # Populate the sumstats fields:
+                self.maf[c] = m_ss['MAF'].values
                 self.n_per_snp[c] = m_ss['N'].values
                 self.beta_hats[c] = m_ss['BETA'].values
                 self.z_scores[c] = m_ss['Z'].values
@@ -781,6 +783,7 @@ class GWASDataLoader(object):
         """
         This method ensures that all the data sources (reference genotype,
         LD matrices, summary statistics) are aligned.
+        TODO: Add check for strand flipping
         :return:
         """
 
@@ -819,6 +822,7 @@ class GWASDataLoader(object):
 
         # Create a temporary directory for the score files:
         score_tmpdir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix='score_')
+        self.cleanup_dir_list.append(score_tmpdir)
 
         # Create the samples file:
         keep_file = osp.join(score_tmpdir.name, 'samples.keep')
@@ -854,7 +858,6 @@ class GWASDataLoader(object):
             except Exception as e:
                 raise e
 
-        score_tmpdir.cleanup()
         return pgs
 
     def predict(self, betas=None):
@@ -883,9 +886,13 @@ class GWASDataLoader(object):
         return pgs
 
     def perform_gwas_plink(self):
+        """
+        :return:
+        """
 
         # Create a temporary directory for the gwas files:
         gwas_tmpdir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix='gwas_')
+        self.cleanup_dir_list.append(gwas_tmpdir)
 
         # Output the phenotype file:
         phe_fname = osp.join(gwas_tmpdir.name, "pheno.txt")
@@ -895,6 +902,7 @@ class GWASDataLoader(object):
         plink_reg_type = ['linear', 'logistic'][self.phenotype_likelihood == 'binomial']
 
         self.n_per_snp = {}
+        self.maf = {}
         self.beta_hats = {}
         self.se = {}
         self.z_scores = {}
@@ -905,12 +913,18 @@ class GWASDataLoader(object):
                           desc="Performing GWAS using PLINK",
                           disable=not self.verbose):
 
+            # Output a keep file for SNPs:
+            snp_keepfile = osp.join(gwas_tmpdir.name, f"chr_{c}.keep")
+            pd.DataFrame({'SNP': self.snps[c]}).to_csv(snp_keepfile,
+                                                       index=False, header=False)
+
             plink_output = osp.join(gwas_tmpdir.name, f"chr_{c}")
 
             cmd = [
                 "plink2",
                 f"--bfile {bf.replace('.bed', '')}",
-                f"--{plink_reg_type} hide-covar allow-no-covars",
+                f"--extract {snp_keepfile}",
+                f"--{plink_reg_type} hide-covar allow-no-covars cols=chrom,pos,alt1,ref,a1freq,nobs,beta,se,tz,p",
                 f"--pheno {phe_fname}",
                 f"--out {plink_output}"
             ]
@@ -924,12 +938,11 @@ class GWASDataLoader(object):
             res = pd.DataFrame({'ID': self.snps[c]}).merge(res)
 
             self.n_per_snp[c] = res['OBS_CT'].values
+            self.maf[c] = res['A1_FREQ'].values
             self.beta_hats[c] = res['BETA'].values
             self.se[c] = res['SE'].values
             self.z_scores[c] = self.beta_hats[c] / self.se[c]
             self.p_values[c] = res['P'].values
-
-        gwas_tmpdir.cleanup()
 
     def perform_gwas(self):
 
@@ -971,7 +984,7 @@ class GWASDataLoader(object):
 
         for c, maf in tqdm(self.maf.items(),
                            total=len(self.chromosomes),
-                          desc="Computing allele frequency variance",
+                           desc="Computing allele frequency variance",
                            disable=not self.verbose):
             maf_var[c] = 2.*maf*(1. - maf)
 

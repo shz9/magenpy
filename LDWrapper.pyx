@@ -159,6 +159,15 @@ cdef class LDWrapper:
 
             yield curr_item
 
+    def __getstate__(self):
+        return self.store.path, self.in_memory
+
+    def __setstate__(self, state):
+        path, in_mem = state
+        self._zarr = zarr.open(path)
+        if in_mem:
+            self.load()
+
     def __len__(self):
         return self.shape[0]
 
@@ -169,6 +178,7 @@ cdef class LDWrapper:
             return self._zarr[item]
 
     def __iter__(self):
+        self.index = 0
         return self
 
     def __next__(self):
