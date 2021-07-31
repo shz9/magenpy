@@ -502,6 +502,7 @@ class GWASDataLoader(object):
             }, inplace=True)
             ss['Z'] = ss['BETA'] / ss['SE']
 
+        self.maf = {}
         self.n_per_snp = {}
         self.beta_hats = {}
         self.z_scores = {}
