@@ -962,6 +962,34 @@ class GWASDataLoader(object):
                 self.compute_p_values(chrom=c)
                 self.verbose = True
 
+    def estimate_snp_heritability(self, per_chromosome=False):
+        """
+        Estimates SNP heritability using approximate formula
+        from Vilhjálmsson et al. 2015.
+        :param per_chromosome:
+        :return:
+        """
+
+        if self.ld is None or self.z_scores is None:
+            raise Exception("Estimating SNP heritability requires z-scores and LD matrices!")
+
+        chr_h2g = {}
+
+        for c, ldw in tqdm(self.ld.items(),
+                           total=len(self.chromosomes),
+                           desc="Computing LD scores",
+                           disable=not self.verbose):
+            ldsc = ldw.compute_ld_scores()
+            xi_sq = self.z_scores[c]**2
+
+            h2g = (xi_sq.mean() - 1.)*len(ldsc) / (ldsc.mean()*self.N)
+            chr_h2g[c] = h2g
+
+        if per_chromosome:
+            return chr_h2g
+        else:
+            return sum(chr_h2g.values())
+
     def compute_allele_frequency(self):
 
         if self.n_per_snp is None:
@@ -1034,7 +1062,7 @@ class GWASDataLoader(object):
     def compute_beta_hats(self, chrom=None):
 
         if self.phenotypes is None or self.genotypes is None:
-            print("Genotype and phenotype data are needed to compute betas!")
+            raise Exception("Genotype and phenotype data are needed to compute betas!")
 
         if self.maf is None:
             self.compute_allele_frequency()
@@ -1067,7 +1095,7 @@ class GWASDataLoader(object):
     def compute_standard_errors(self, chrom=None):
 
         if self.phenotypes is None or self.genotypes is None:
-            print("Genotype and phenotype data are needed to compute standard errors!")
+            raise Exception("Genotype and phenotype data are needed to compute standard errors!")
 
         if self.n_per_snp is None:
             self.compute_n_per_snp()

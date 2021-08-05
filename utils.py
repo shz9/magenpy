@@ -383,19 +383,27 @@ def zarr_array_to_ragged(z,
     else:
         orig_bounds = np.array(z.attrs['LD boundaries'])
 
+    avg_ncol = int((bounds[1, :] - bounds[0, :]).mean())
+
     if rechunk:
-        avg_ncol = int((bounds[1, :] - bounds[0, :]).mean())
         n_chunks = estimate_row_chunk_size(n_rows, avg_ncol)
     else:
         n_chunks = z.chunks
 
-    z_rag = zarr.open(dir_store, mode='w',
-                      shape=n_rows,
-                      chunks=n_chunks[:1],
-                      dtype=object,
-                      object_codec=numcodecs.VLenArray(float))
+    if avg_ncol == n_rows:
+        z_rag = zarr.open(dir_store,
+                          mode='w',
+                          shape=(n_rows, n_rows),
+                          chunks=n_chunks,
+                          dtype=float)
+    else:
+        z_rag = zarr.open(dir_store,
+                          mode='w',
+                          shape=n_rows,
+                          chunks=n_chunks[:1],
+                          dtype=object,
+                          object_codec=numcodecs.VLenArray(float))
 
-    z_rag_mem = z_rag[:]
     idx_x = idx_map['index_x'].values
     chunk_size = z.chunks[0]
 
@@ -406,16 +414,25 @@ def zarr_array_to_ragged(z,
 
         z_chunk = z[start: end]
 
+        z_rag_index = []
+        z_rag_rows = []
+
         for _, (k, _, j, _) in idx_map.loc[idx_map['chunk_x'] == i].iterrows():
+
+            z_rag_index.append(k)
+
             if keep_snps is None:
-                z_rag_mem[k] = z_chunk[j - start][bounds[0, j]:bounds[1, j]]
+                row_val = z_chunk[j - start][bounds[0, j]:bounds[1, j]]
             else:
                 # Find the index of SNPs in the original LD matrix that
                 # remain after matching with the `keep_snps` variable.
                 orig_idx = idx_x[(orig_bounds[0, j] <= idx_x) & (idx_x < orig_bounds[1, j])] - orig_bounds[0, j]
-                z_rag_mem[k] = z_chunk[j - start][orig_idx]
+                row_val = z_chunk[j - start][orig_idx]
 
-    z_rag[:] = z_rag_mem
+            z_rag_rows.append(row_val)
+
+        z_rag.oindex[z_rag_index] = z_rag_rows
+
     z_rag.attrs.update(z.attrs.asdict())
 
     if keep_snps is not None:
