@@ -6,16 +6,23 @@ Date: December 2020
 import os.path as osp
 import tempfile
 from tqdm import tqdm
-
-import dask.array as da
-from pandas_plink import read_plink1_bin
 from itertools import zip_longest
 
+from pandas_plink import read_plink1_bin
+
+import dask.array as da
+import pandas as pd
+import numpy as np
 from scipy import stats
+import zarr
 
 from .LDWrapper import LDWrapper
 from .c_utils import find_windowed_ld_boundaries, find_shrinkage_ld_boundaries
-from .utils import *
+from .ld_utils import sparsify_ld_matrix, shrink_ld_matrix, zarr_array_to_ragged, rechunk_zarr, move_ld_store
+
+from .model_utils import standardize_genotype_matrix
+from .parsers import read_snp_filter_file, read_individual_filter_file
+from .utils import intersect_arrays, makedir, iterable, get_filenames, run_shell_script
 
 
 class GWASDataLoader(object):
@@ -471,6 +478,7 @@ class GWASDataLoader(object):
     def read_summary_stats(self, sumstats_files, sumstats_format='pystatgen'):
         """
         TODO: implement parsers for summary statistics
+        TODO: Move these parsers to `parsers.py`
         """
 
         if sumstats_files is None:
@@ -721,7 +729,7 @@ class GWASDataLoader(object):
                 }
 
             elif self.ld_estimator == 'windowed':
-                z_ld_mat = sparsify_chunked_matrix(z_ld_mat, self.ld_boundaries[c])
+                z_ld_mat = sparsify_ld_matrix(z_ld_mat, self.ld_boundaries[c])
 
                 ld_estimator_properties = {
                     'Window units': self.window_unit,

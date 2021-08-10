@@ -1,0 +1,9 @@
+Cython==0.29.23
+dask
+scipy==1.6.0
+numpy==1.20.2
+pandas==1.2.3
+pandas-plink==2.2.4
+psutil==5.8.0
+tqdm==4.60.0
+zarr==2.7.1

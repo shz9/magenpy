@@ -12,6 +12,7 @@
 import zarr
 import numpy as np
 cimport numpy as np
+from .c_utils import zarr_islice
 
 
 cdef class LDWrapper:
@@ -125,7 +126,7 @@ cdef class LDWrapper:
         ld_bounds = self.ld_boundaries
 
         n_rows = ld_bounds.shape[1]
-        n_cols = n_cols = np.mean(ld_bounds[1, :] - ld_bounds[0, :])
+        n_cols = np.mean(ld_bounds[1, :] - ld_bounds[0, :])
 
         return n_rows * n_cols * np.dtype(np.float64).itemsize / 1024 ** 2
 
@@ -133,7 +134,7 @@ cdef class LDWrapper:
         try:
             return self._zarr.attrs[attr]
         except KeyError:
-            print(f"Warning: Attribute {attr} is not set!")
+            print(f"Warning: Attribute '{attr}' is not set!")
             return None
 
     def set_store_attr(self, attr, value):
@@ -143,6 +144,10 @@ cdef class LDWrapper:
             raise e
 
     def load(self, start=0, end=None):
+        """
+        TODO: This implementation is not efficient with memory resources
+        Need to re-write.
+        """
 
         if end is None:
             end = len(self)
@@ -152,7 +157,7 @@ cdef class LDWrapper:
         self._data = []
         cdef double[::1] v
 
-        for d in self._zarr[start:end]:
+        for d in zarr_islice(self._zarr, start, end):
             v = d.copy()
             self._data.append(v)
 

@@ -1,7 +1,6 @@
 import matplotlib.pylab as plt
 import numpy as np
 import scipy.stats as stats
-import seaborn as sns
 
 
 def plot_manhattan(gdl,

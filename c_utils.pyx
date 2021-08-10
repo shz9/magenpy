@@ -1,33 +1,52 @@
-# Author: Shadi Zabad
-# Date December 2020
+# cython: linetrace=False
+# cython: profile=False
+# cython: binding=False
+# cython: boundscheck=False
+# cython: wraparound=False
+# cython: initializedcheck=False
+# cython: nonecheck=False
+# cython: language_level=3
+# cython: infer_types=True
 
-cimport cython
 from cython.parallel import prange
 from libc.math cimport exp
 import numpy as np
 cimport numpy as np
 
 
-@cython.cdivision(True)
-@cython.boundscheck(False)
-@cython.wraparound(False)
-@cython.nonecheck(False)
-def zarr_islice(arr):
+def zarr_islice(arr, start=None, end=None):
 
-    cdef unsigned int j, chunk_size = arr.chunks[0], end = arr.shape[0]
+    """
+    This is copied from the official, but not yet released implementation of
+    i_slice from the official Zarr codebase:
+    https://github.com/zarr-developers/zarr-python/blob/e79e75ca8f07c95a5deede51f7074f699aa41149/zarr/core.py#L463
+    :param arr:
+    :param start:
+    :param end:
+    :return:
+    """
+
+    if len(arr.shape) == 0:
+        # Same error as numpy
+        raise TypeError("iteration over a 0-d array")
+    if start is None:
+        start = 0
+    if end is None or end > arr.shape[0]:
+        end = arr.shape[0]
+
+    cdef unsigned int j, chunk_size = arr.chunks[0]
     chunk = None
 
-    for j in range(end):
+    for j in range(start, end):
         if j % chunk_size == 0:
             chunk = arr[j: j + chunk_size]
-
+        elif chunk is None:
+            chunk_start = j - j % chunk_size
+            chunk_end = chunk_start + chunk_size
+            chunk = arr[chunk_start:chunk_end]
         yield chunk[j % chunk_size]
 
 
-@cython.cdivision(True)
-@cython.boundscheck(False)
-@cython.wraparound(False)
-@cython.nonecheck(False)
 cpdef find_windowed_ld_boundaries(double[:] cm_dist, double max_dist, int n_threads):
 
     cdef unsigned int i, j, M = len(cm_dist)
@@ -49,10 +68,6 @@ cpdef find_windowed_ld_boundaries(double[:] cm_dist, double max_dist, int n_thre
     return np.array((v_min, v_max))
 
 
-@cython.cdivision(True)
-@cython.boundscheck(False)
-@cython.wraparound(False)
-@cython.nonecheck(False)
 cpdef find_shrinkage_ld_boundaries(double[:] cm_dist,
                                    double genmap_Ne,
                                    int genmap_sample_size,
