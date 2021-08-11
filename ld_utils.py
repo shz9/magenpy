@@ -213,6 +213,8 @@ def zarr_array_to_ragged(z,
     a list of SNPs to keep. It also allows the user to re-chunk
     the ragged array for optimized read/write performance.
 
+    TODO: Optimize this for large chromosomes/LD matrices!
+
     :param z: the original Zarr matrix (implementation assumes 2D matrix)
     :param keep_snps: A list of SNP IDs to keep.
     :param rechunk: Whether to re-chunk the ragged array (for optimized read/write performance)
@@ -292,7 +294,7 @@ def zarr_array_to_ragged(z,
 
             z_rag_rows.append(row_val)
 
-        z_rag.oindex[z_rag_index] = z_rag_rows
+        z_rag.oindex[z_rag_index] = np.array(z_rag_rows, dtype=[object, float][avg_ncol == n_rows])
 
     z_rag.attrs.update(z.attrs.asdict())
 

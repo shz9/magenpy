@@ -412,6 +412,7 @@ class GWASDataLoader(object):
             self.genotypes[chr_id] = gt_ac
 
             # TODO: Fully implement this functionality!
+            # TODO: Move LD boundaries to LD computation methods instead
             # If an LD block file is provided, then read it,
             # match snps with their corresponding blocks,
             # and create a list of snp coordinates in each block:
@@ -793,6 +794,7 @@ class GWASDataLoader(object):
         This method ensures that all the data sources (reference genotype,
         LD matrices, summary statistics) are aligned.
         TODO: Add check for strand flipping
+        TODO: Add print statements about number of SNPs matched per chromosome
         :return:
         """
 
