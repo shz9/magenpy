@@ -298,9 +298,11 @@ def zarr_array_to_ragged(z,
 
     z_rag.attrs.update(z.attrs.asdict())
 
+    if bounds is not None:
+        z_rag.attrs['LD boundaries'] = bounds.tolist()
+
     if keep_snps is not None:
         z_rag.attrs['SNP'] = list(keep_snps)
-        z_rag.attrs['LD boundaries'] = bounds.tolist()
         z_rag.attrs['BP'] = list(map(int, np.array(z.attrs['BP'])[idx_x]))
         z_rag.attrs['cM'] = list(map(float, np.array(z.attrs['cM'])[idx_x]))
 

@@ -17,11 +17,11 @@ from scipy import stats
 import zarr
 
 from .LDWrapper import LDWrapper
-from .c_utils import find_windowed_ld_boundaries, find_shrinkage_ld_boundaries
+from .c_utils import find_windowed_ld_boundaries, find_shrinkage_ld_boundaries, find_ld_block_boundaries
 from .ld_utils import sparsify_ld_matrix, shrink_ld_matrix, zarr_array_to_ragged, rechunk_zarr, move_ld_store
 
 from .model_utils import standardize_genotype_matrix
-from .parsers import read_snp_filter_file, read_individual_filter_file
+from .parsers import read_snp_filter_file, read_individual_filter_file, parse_ld_block_data
 from .utils import intersect_arrays, makedir, iterable, get_filenames, run_shell_script
 
 
@@ -83,7 +83,14 @@ class GWASDataLoader(object):
         # ------- LD computation options -------
         self.ld_estimator = ld_estimator
 
-        assert self.ld_estimator in ('windowed', 'sample', 'shrinkage')
+        assert self.ld_estimator in ('block', 'windowed', 'sample', 'shrinkage')
+
+        # For the block estimator of the LD matrix:
+        self.ld_blocks = None
+
+        if self.ld_estimator == 'block':
+            assert ld_block_files is not None
+            self.ld_blocks = parse_ld_block_data(ld_block_files)
 
         # For the shrinkage estimator of the LD matrix:
         self.genmap_Ne = genmap_Ne
@@ -138,7 +145,7 @@ class GWASDataLoader(object):
 
         # ------- Read data files -------
 
-        self.read_genotypes(bed_files, ld_block_files)
+        self.read_genotypes(bed_files)
         self.read_annotations(annotation_files)
 
         if self.genotypes is not None:
@@ -348,7 +355,7 @@ class GWASDataLoader(object):
 
             self.annotations.append(da.array(annot_df.values))
 
-    def read_genotypes(self, bed_files, ld_block_files):
+    def read_genotypes(self, bed_files):
         """
         Read the genotype files
         :return:
@@ -360,19 +367,16 @@ class GWASDataLoader(object):
         if not iterable(bed_files):
             bed_files = get_filenames(bed_files, extension='.bed')
 
-        if not iterable(ld_block_files):
-            ld_block_files = [ld_block_files]
-
         self._snps = {}
         self._a1 = {}
         self._a2 = {}
         self.genotypes = {}
         self.bed_files = {}
 
-        for i, (bfile, ldb_file) in tqdm(enumerate(zip_longest(bed_files, ld_block_files)),
-                                         total=len(bed_files),
-                                         desc="Reading genotype files",
-                                         disable=not self.verbose):
+        for i, bfile in tqdm(enumerate(bed_files),
+                             total=len(bed_files),
+                             desc="Reading genotype files",
+                             disable=not self.verbose):
 
             # Read plink file:
             try:
@@ -410,33 +414,6 @@ class GWASDataLoader(object):
                 self._iid = gt_ac.sample.values
 
             self.genotypes[chr_id] = gt_ac
-
-            # TODO: Fully implement this functionality!
-            # TODO: Move LD boundaries to LD computation methods instead
-            # If an LD block file is provided, then read it,
-            # match snps with their corresponding blocks,
-            # and create a list of snp coordinates in each block:
-            if ldb_file is not None:
-
-                # Read LD block file:
-                ldb_df = pd.read_csv(ldb_file, delim_whitespace=True)
-
-                # Create a SNP dataframe with BP position:
-                snp_df = pd.DataFrame({'pos': gt_ac.pos.values})
-
-                # Assign each SNP its appropriate block ID
-                snp_df['block_id'] = snp_df['pos'].apply(
-                    lambda pos: ldb_df.loc[(pos >= ldb_df['start']) &
-                                           (pos < ldb_df['stop'])].index[0])
-
-                ld_blocks = []
-
-                for b_idx in range(len(ldb_df)):
-                    ld_blocks.append(
-                        da.array(snp_df.loc[snp_df['block_id'] == b_idx].index.tolist())
-                    )
-
-                self.genotypes[i]['LD Blocks'] = ld_blocks
 
     def read_phenotypes(self, phenotype_file, header=None,
                         phenotype_col=2, standardize=True,
@@ -602,6 +579,10 @@ class GWASDataLoader(object):
 
                 if estimator == 'sample':
                     self.ld_boundaries[c] = np.array((np.zeros(M), np.ones(M)*M)).astype(np.int64)
+                elif estimator == 'block':
+                    self.ld_boundaries[c] = find_ld_block_boundaries(ld.bp_position[common_idx],
+                                                                     np.array(est_properties['LD blocks'], dtype=int),
+                                                                     self.n_threads)
                 elif estimator == 'windowed':
                     if est_properties['Window units'] == 'cM':
                         self.ld_boundaries[c] = find_windowed_ld_boundaries(ld.cm_position[common_idx],
@@ -631,6 +612,16 @@ class GWASDataLoader(object):
                 if self.ld_estimator == 'sample':
 
                     self.ld_boundaries[c] = np.array((np.zeros(M), np.ones(M)*M)).astype(np.int64)
+
+                elif self.ld_estimator == 'block':
+                    pos_bp = gt.pos.values
+
+                    if pos_bp.any():
+                        self.ld_boundaries[c] = find_ld_block_boundaries(pos_bp.astype(int),
+                                                                         self.ld_blocks[c],
+                                                                         self.n_threads)
+                    else:
+                        raise Exception("SNP position in BP is missing!")
 
                 elif self.ld_estimator == 'windowed':
                     if self.window_unit == 'cM':
@@ -737,7 +728,14 @@ class GWASDataLoader(object):
                     'Window cutoff': [self.window_size_cutoff, self.cm_window_cutoff][self.window_unit == 'cM']
                 }
 
-            if self.ld_estimator in ('shrinkage', 'windowed'):
+            elif self.ld_estimator == 'block':
+                z_ld_mat = sparsify_ld_matrix(z_ld_mat, self.ld_boundaries[c])
+
+                ld_estimator_properties = {
+                    'LD blocks': self.ld_blocks[c].tolist()
+                }
+
+            if self.ld_estimator in ('block', 'shrinkage', 'windowed'):
                 z_ld_mat = zarr_array_to_ragged(z_ld_mat,
                                                 fin_ld_store,
                                                 bounds=self.ld_boundaries[c],
