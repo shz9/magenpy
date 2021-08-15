@@ -294,7 +294,10 @@ def zarr_array_to_ragged(z,
 
             z_rag_rows.append(row_val)
 
-        z_rag.oindex[z_rag_index] = np.array(z_rag_rows, dtype=[object, float][avg_ncol == n_rows])
+        if avg_ncol == n_rows:
+            z_rag.oindex[z_rag_index] = np.array(z_rag_rows)
+        else:
+            z_rag.oindex[z_rag_index] = np.array(z_rag_rows + [None], dtype=object)[:-1]
 
     z_rag.attrs.update(z.attrs.asdict())
 
