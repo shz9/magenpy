@@ -6,7 +6,6 @@ Date: December 2020
 import os.path as osp
 import tempfile
 from tqdm import tqdm
-from itertools import zip_longest
 
 from pandas_plink import read_plink1_bin
 
@@ -467,6 +466,8 @@ class GWASDataLoader(object):
 
         ss = []
 
+        print("> Reading GWAS summary statistics...")
+
         for ssf in sumstats_files:
             ss.append(pd.read_csv(ssf, sep="\s+"))
 
@@ -530,6 +531,8 @@ class GWASDataLoader(object):
 
                     if len(snps) != len(m_ss):
                         self.filter_snps(m_ss['SNP'], chrom=c)
+
+        print(f"> Read summary statistics data for {self.M} SNPs.")
 
     def read_ld(self, ld_store_files):
 
@@ -745,6 +748,7 @@ class GWASDataLoader(object):
             z_ld_mat.attrs['BP'] = list(map(int, g_mat.variant.pos.values))
             z_ld_mat.attrs['cM'] = list(map(float, g_mat.variant.cm.values))
             z_ld_mat.attrs['MAF'] = list(map(float, self.maf[c]))
+            z_ld_mat.attrs['A1'] = list(self._a1[c])
 
             if ld_estimator_properties is not None:
                 z_ld_mat.attrs['Estimator properties'] = ld_estimator_properties
@@ -791,8 +795,6 @@ class GWASDataLoader(object):
         """
         This method ensures that all the data sources (reference genotype,
         LD matrices, summary statistics) are aligned.
-        TODO: Add check for strand flipping
-        TODO: Add print statements about number of SNPs matched per chromosome
         :return:
         """
 
@@ -802,13 +804,41 @@ class GWASDataLoader(object):
         update_ld = False
 
         for c, snps in self.snps.items():
-            # Harmonize SNPs in LD store and genotype matrix:
+            # Harmonize SNPs in LD store and summary statistics/genotype matrix:
             if self.ld is not None:
-                ld_snps = self.ld[c].snps
 
-                if not np.array_equal(snps, ld_snps):
-                    self.filter_snps(ld_snps, chrom=c)
+                ld_snps = self.ld[c].to_snp_table()
+                ld_snps = ld_snps.merge(pd.DataFrame({'SNP': self._snps[c], 'A1': self._a1[c]}), on='SNP')
+
+                print(f"> {len(ld_snps)} ({100.*float(len(ld_snps)) / len(snps):.1f}%) of SNPs "
+                      f"matched with the LD reference panel")
+
+                if len(snps) != len(ld_snps):
+                    self.filter_snps(ld_snps['SNP'].values, chrom=c)
                     update_ld = True
+
+                strand_flipped = np.not_equal(ld_snps['A1_x'].values, ld_snps['A1_y'].values)
+                num_flips = strand_flipped.sum()
+                if num_flips > 0:
+                    print(f"> Detected {num_flips} SNPs with strand flipping. Correcting summary statistics...")
+
+                    # Correct strand information:
+                    self._a1[c] = ld_snps['A1_x'].values
+
+                    # Convert boolean flag to numeric vector:
+                    flip_01 = strand_flipped.astype(int)
+
+                    # Correct MAF:
+                    if self.maf is not None:
+                        self.maf[c] = np.abs(flip_01 - self.maf[c])
+
+                    # Correct BETA:
+                    if self.beta_hats is not None:
+                        self.beta_hats[c] = (-2.*flip_01 + 1.) * self.beta_hats[c]
+
+                    # Correct Z-score:
+                    if self.z_scores is not None:
+                        self.z_scores[c] = (-2.*flip_01 + 1.) * self.z_scores[c]
 
         if update_ld:
             self.realign_ld()

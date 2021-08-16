@@ -12,6 +12,7 @@
 import zarr
 import numpy as np
 cimport numpy as np
+import pandas as pd
 from .c_utils import zarr_islice
 
 
@@ -81,8 +82,12 @@ cdef class LDWrapper:
         return self.get_store_attr('Sample size')
 
     @property
+    def a1(self):
+        return np.array(self.get_store_attr('A1'))
+
+    @property
     def maf(self):
-        return self.get_store_attr('MAF')
+        return np.array(self.get_store_attr('MAF'))
 
     @property
     def bp_position(self):
@@ -91,6 +96,21 @@ cdef class LDWrapper:
     @property
     def cm_position(self):
         return np.array(self.get_store_attr('cM'))
+
+    def to_snp_table(self, include_ld_score=False):
+
+        df = pd.DataFrame({
+            'CHR': self.chromosome,
+            'SNP': self.snps,
+            'POS': self.bp_position,
+            'A1': self.a1,
+            'MAF': self.maf
+        })
+
+        if include_ld_score:
+            df['LDScore'] = self.compute_ld_scores()
+
+        return df
 
     def compute_ld_scores(self, corrected=True):
         """
