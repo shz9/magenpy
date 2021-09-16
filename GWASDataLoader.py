@@ -901,6 +901,9 @@ class GWASDataLoader(object):
 
     def predict(self, betas=None):
 
+        if self.use_plink:
+            return self.predict_plink(betas)
+
         if betas is None:
             if self.beta_hats is None:
                 raise Exception("Neither betas nor beta hats are provided or set."
