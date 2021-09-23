@@ -873,7 +873,7 @@ class GWASDataLoader(object):
                             disable=not self.verbose):
 
             eff_file = osp.join(score_tmpdir.name, f'chr_{c}.txt')
-            df = pd.DataFrame({'SNP': self.snps[c], 'A2': self.ref_alleles[c], 'BETA': betas[c]})
+            df = pd.DataFrame({'SNP': self.snps[c], 'A1': self.alt_alleles[c], 'BETA': betas[c]})
 
             try:
                 df.to_csv(eff_file, index=False, sep="\t")
