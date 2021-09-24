@@ -857,7 +857,19 @@ class GWASDataLoader(object):
             else:
                 betas = self.beta_hats
 
-        pgs = np.zeros(shape=self.N)
+        # Initialize the PGS object with zeros
+        # The construction here accounts for multiple betas per SNP
+
+        try:
+            betas_shape = betas[next(iter(betas))].shape[1]
+            score_col_nums = f"--score-col-nums 3-{3 + betas_shape - 1}"
+        except IndexError:
+            betas_shape = 1
+            for c, b in betas.items():
+                betas[c] = b.reshape(-1, 1)
+            score_col_nums = f"--score-col-nums 3"
+
+        pgs = np.zeros(shape=(self.N, betas_shape))
 
         # Create a temporary directory for the score files:
         score_tmpdir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix='score_')
@@ -873,7 +885,9 @@ class GWASDataLoader(object):
                             disable=not self.verbose):
 
             eff_file = osp.join(score_tmpdir.name, f'chr_{c}.txt')
-            df = pd.DataFrame({'SNP': self.snps[c], 'A1': self.alt_alleles[c], 'BETA': betas[c]})
+            df = pd.DataFrame({'SNP': self.snps[c], 'A1': self.alt_alleles[c]})
+            for i in range(betas_shape):
+                df['BETA' + str(i)] = betas[c][:, i]
 
             try:
                 df.to_csv(eff_file, index=False, sep="\t")
@@ -882,22 +896,32 @@ class GWASDataLoader(object):
                     "plink2",
                     f"--bfile {self.bed_files[c].replace('.bed', '')}",
                     f"--keep {keep_file}",
-                    f"--score {eff_file} 1 2 3 header-read cols=+scoresums variance-standardize",
+                    f"--score {eff_file} 1 2 header-read cols=+scoresums variance-standardize",
+                    score_col_nums,
                     f"--out {eff_file.replace('.txt', '')}"
                 ]
                 run_shell_script(" ".join(cmd))
 
+                dtypes = {'FID': str, 'IID': str}
+                for i in range(betas_shape):
+                    dtypes.update({'PRS' + str(i): np.float64})
+
                 chr_pgs = pd.read_csv(eff_file.replace('.txt', '.sscore'), sep='\s+',
-                                      names=['FID', 'IID', 'PRS'], skiprows=1, usecols=[0, 1, 5],
-                                      dtype={'FID': str, 'IID': str, 'PRS': np.float64})
+                                      names=['FID', 'IID'] + ['PRS' + str(i) for i in range(betas_shape)],
+                                      skiprows=1,
+                                      usecols=[0, 1] + [4 + betas_shape + i for i in range(betas_shape)],
+                                      dtype=dtypes)
                 chr_pgs = keep_table.astype({'FID': str, 'IID': str}).merge(chr_pgs)
 
-                pgs += chr_pgs['PRS'].values
+                pgs += chr_pgs[['PRS' + str(i) for i in range(betas_shape)]].values
 
             except Exception as e:
                 raise e
 
-        return pgs
+        if betas_shape == 1:
+            return pgs.flatten()
+        else:
+            return pgs
 
     def predict(self, betas=None):
 
@@ -914,7 +938,14 @@ class GWASDataLoader(object):
         if not self.standardize_genotype and self.maf is None:
             self.compute_allele_frequency()
 
-        pgs = np.zeros(shape=self.N)
+        try:
+            betas_shape = betas[next(iter(betas))].shape[1]
+        except IndexError:
+            betas_shape = 1
+            for c, b in betas.items():
+                betas[c] = b.reshape(-1, 1)
+
+        pgs = np.zeros(shape=(self.N, betas_shape))
 
         for c, gt in tqdm(self.genotypes.items(), total=len(self.chromosomes),
                           desc="Generating polygenic scores",
@@ -925,7 +956,10 @@ class GWASDataLoader(object):
             else:
                 pgs += da.dot(gt.fillna(self.maf[c]), betas[c]).compute()
 
-        return pgs
+        if betas_shape == 1:
+            return pgs.flatten()
+        else:
+            return pgs
 
     def perform_gwas_plink(self):
         """
