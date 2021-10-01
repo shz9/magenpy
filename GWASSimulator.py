@@ -4,6 +4,7 @@ Date: March 2021
 """
 
 import numpy as np
+from scipy.stats import norm
 from .GWASDataLoader import GWASDataLoader
 
 
@@ -13,19 +14,21 @@ class GWASSimulator(GWASDataLoader):
                  h2g=0.2,
                  pis=(0.9, 0.1),
                  gammas=(0., 1.),
-                 binomial_threshold=0.,
+                 prevalence=0.15,
                  **kwargs):
 
         super().__init__(bed_files, **kwargs)
 
         self.h2g = h2g
         self.pis = pis
+        self.prevalence = prevalence  # Prevalence of binary, case-control phenotype
 
+        # Sanity checks:
         assert 0. <= self.h2g <= 1.
         assert sum(self.pis) == 1.
+        assert 0. < self.prevalence < 1.
 
         self.gammas = np.array(gammas)
-        self.binomial_threshold = binomial_threshold
 
         self.annotation_weights = None
 
@@ -144,8 +147,9 @@ class GWASSimulator(GWASDataLoader):
             y /= y.std()
 
         if self.phenotype_likelihood == 'binomial':
-            y[y > self.binomial_threshold] = 1.
-            y[y <= self.binomial_threshold] = 0.
+            cutoff = norm.ppf(self.prevalence)
+            y[y > cutoff] = 1.
+            y[y <= cutoff] = 0.
 
         self.phenotypes = y
 
