@@ -441,9 +441,17 @@ class GWASDataLoader(object):
             phe = phe.dropna(subset=['phenotype'])
             self.filter_samples(phe['IID'].values)
 
+        if self.phenotype_likelihood == 'binomial':
+            unique_vals = sorted(phe['phenotype'].unique())
+            if unique_vals == [1, 2]:
+                # Plink coding for case/control
+                phe['phenotype'] -= 1
+            elif unique_vals != [0, 1]:
+                raise ValueError(f"Unknown values for binary traits: {unique_vals}")
+
         self.phenotypes = phe['phenotype'].values
 
-        if standardize:
+        if standardize and self.phenotype_likelihood == 'gaussian':
             self.phenotypes -= self.phenotypes.mean()
             self.phenotypes /= self.phenotypes.std()
 
@@ -862,6 +870,8 @@ class GWASDataLoader(object):
 
         try:
             betas_shape = betas[next(iter(betas))].shape[1]
+            if betas_shape == 1:
+                raise IndexError
             score_col_nums = f"--score-col-nums 3-{3 + betas_shape - 1}"
         except IndexError:
             betas_shape = 1
@@ -918,6 +928,10 @@ class GWASDataLoader(object):
             except Exception as e:
                 raise e
 
+        if self.phenotype_likelihood == 'binomial':
+            # apply sigmoid function:
+            pgs = 1./(1. + np.exp(-pgs))
+
         if betas_shape == 1:
             return pgs.flatten()
         else:
@@ -956,6 +970,10 @@ class GWASDataLoader(object):
             else:
                 pgs += da.dot(gt.fillna(self.maf[c]), betas[c]).compute()
 
+        if self.phenotype_likelihood == 'binomial':
+            # apply sigmoid function:
+            pgs = 1./(1. + np.exp(-pgs))
+
         if betas_shape == 1:
             return pgs.flatten()
         else:
@@ -973,6 +991,8 @@ class GWASDataLoader(object):
         # Output the phenotype file:
         phe_fname = osp.join(gwas_tmpdir.name, "pheno.txt")
         phe_table = self.to_phenotype_table()
+        if self.phenotype_likelihood == 'binomial':
+            phe_table['phenotype'] += 1
         phe_table.to_csv(phe_fname, sep="\t", index=False, header=False)
 
         plink_reg_type = ['linear', 'logistic'][self.phenotype_likelihood == 'binomial']
@@ -1009,7 +1029,16 @@ class GWASDataLoader(object):
                 cmd.append('--variance-standardize')
 
             run_shell_script(" ".join(cmd))
-            res = pd.read_csv(plink_output + f".PHENO1.glm.{plink_reg_type}", sep="\s+")
+
+            output_fname = plink_output + f".PHENO1.glm.{plink_reg_type}"
+
+            if not osp.isfile(output_fname):
+                if plink_reg_type == 'logistic' and osp.isfile(output_fname + ".hybrid"):
+                    output_fname += ".hybrid"
+                else:
+                    raise FileNotFoundError
+
+            res = pd.read_csv(output_fname, sep="\s+")
             # Merge to make sure that summary statistics are in order:
             res = pd.DataFrame({'ID': self.snps[c]}).merge(res)
 
@@ -1025,6 +1054,9 @@ class GWASDataLoader(object):
         if self.use_plink:
             self.perform_gwas_plink()
         else:
+
+            if self.phenotype_likelihood == 'binomial':
+                raise Exception("Software does not support GWAS with case/control phenotypes. Use plink instead.")
 
             if self.n_per_snp is None:
                 self.compute_allele_frequency()
@@ -1112,7 +1144,8 @@ class GWASDataLoader(object):
         """
 
         snp_corr = {}
-        for c, zsc in tqdm(self.z_scores.items(), total=len(self.chromosomes),
+        for c, zsc in tqdm(self.z_scores.items(),
+                           total=len(self.chromosomes),
                            desc="Computing SNP-wise correlations",
                            disable=not self.verbose):
             snp_corr[c] = zsc / (np.sqrt(self.n_per_snp[c] - 1 + zsc))
@@ -1128,7 +1161,8 @@ class GWASDataLoader(object):
         yy = {}
 
         for c, b_hat in tqdm(self.beta_hats.items(),
-                             total=len(self.chromosomes), desc="Computing SNP-wise yTy",
+                             total=len(self.chromosomes),
+                             desc="Computing SNP-wise yTy",
                              disable=not self.verbose):
             yy[c] = (self.n_per_snp[c] - 2)*self.se[c]**2 + b_hat**2
 

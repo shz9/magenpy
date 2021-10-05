@@ -147,11 +147,12 @@ class GWASSimulator(GWASDataLoader):
             y /= y.std()
 
         if self.phenotype_likelihood == 'binomial':
-            cutoff = norm.ppf(self.prevalence)
-            y[y > cutoff] = 1.
-            y[y <= cutoff] = 0.
-
-        self.phenotypes = y
+            cutoff = norm.ppf(1. - self.prevalence)
+            new_y = np.zeros_like(y, dtype=int)
+            new_y[y > cutoff] = 1
+            self.phenotypes = new_y
+        else:
+            self.phenotypes = y
 
         return self.phenotypes
 
