@@ -283,6 +283,8 @@ class GWASDataLoader(object):
         if min_mac is not None or min_maf is not None:
             if self.maf is None:
                 self.compute_allele_frequency()
+            if self.n_per_snp is None:
+                self.compute_n_per_snp()
 
         if min_mac is not None:
             for c, maf in self.maf.items():
