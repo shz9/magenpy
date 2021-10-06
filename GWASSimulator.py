@@ -121,9 +121,9 @@ class GWASSimulator(GWASDataLoader):
         """
 
         if self.use_plink:
-            pgs = self.predict_plink(self.betas)
+            pgs = self.score_plink(self.betas)
         else:
-            pgs = self.predict(self.betas)
+            pgs = self.score(self.betas)
 
         # Estimate the genetic variance
         g_var = np.var(pgs, ddof=1)

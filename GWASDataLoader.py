@@ -851,7 +851,7 @@ class GWASDataLoader(object):
         if update_ld:
             self.realign_ld()
 
-    def predict_plink(self, betas=None):
+    def score_plink(self, betas=None):
         """
         Perform linear scoring using PLINK2
         :param betas:
@@ -928,19 +928,15 @@ class GWASDataLoader(object):
             except Exception as e:
                 raise e
 
-        if self.phenotype_likelihood == 'binomial':
-            # apply sigmoid function:
-            pgs = 1./(1. + np.exp(-pgs))
-
         if betas_shape == 1:
-            return pgs.flatten()
-        else:
-            return pgs
+            pgs = pgs.flatten()
 
-    def predict(self, betas=None):
+        return pgs
+
+    def score(self, betas=None):
 
         if self.use_plink:
-            return self.predict_plink(betas)
+            return self.score_plink(betas)
 
         if betas is None:
             if self.beta_hats is None:
@@ -970,14 +966,23 @@ class GWASDataLoader(object):
             else:
                 pgs += da.dot(gt.fillna(self.maf[c]), betas[c]).compute()
 
+        if betas_shape == 1:
+            pgs = pgs.flatten()
+
+        return pgs
+
+    def predict(self, betas=None):
+
+        if self.use_plink:
+            pgs = self.score_plink(betas)
+        else:
+            pgs = self.score(betas)
+
         if self.phenotype_likelihood == 'binomial':
             # apply sigmoid function:
             pgs = 1./(1. + np.exp(-pgs))
 
-        if betas_shape == 1:
-            return pgs.flatten()
-        else:
-            return pgs
+        return pgs
 
     def perform_gwas_plink(self):
         """
@@ -1097,7 +1102,49 @@ class GWASDataLoader(object):
         else:
             return sum(chr_h2g.values())
 
+    def compute_allele_frequency_plink(self):
+
+        # Create a temporary directory for the allele frequency files:
+        freq_tmpdir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix='freq_')
+        self.cleanup_dir_list.append(freq_tmpdir)
+
+        # Create the samples file:
+        keep_file = osp.join(freq_tmpdir.name, 'samples.keep')
+        keep_table = self.to_individual_table()
+        keep_table.to_csv(keep_file, index=False, header=False, sep="\t")
+
+        self.maf = {}
+        for c, bf in tqdm(self.bed_files.items(),
+                          total=len(self.chromosomes),
+                          desc="Computing allele frequencies using PLINK",
+                          disable=not self.verbose):
+
+            snp_keepfile = osp.join(freq_tmpdir.name, f"chr_{c}.keep")
+            pd.DataFrame({'SNP': self.snps[c]}).to_csv(snp_keepfile,
+                                                       index=False, header=False)
+
+            plink_output = osp.join(freq_tmpdir.name, f"chr_{c}")
+
+            cmd = [
+                "plink2",
+                f"--bfile {bf.replace('.bed', '')}",
+                f"--keep {keep_file}",
+                f"--extract {snp_keepfile}",
+                f"--freq",
+                f"--out {plink_output}"
+            ]
+
+            run_shell_script(" ".join(cmd))
+
+            freq_df = pd.read_csv(plink_output + ".afreq", sep="\s+")
+            self.maf[c] = pd.DataFrame({'ID': self.snps[c]}).merge(freq_df)['ALT_FREQS'].values
+
+        return self.maf
+
     def compute_allele_frequency(self):
+
+        if self.use_plink:
+            return self.compute_allele_frequency_plink()
 
         if self.n_per_snp is None:
             self.compute_n_per_snp()
@@ -1126,7 +1173,53 @@ class GWASDataLoader(object):
 
         return maf_var
 
+    def compute_n_per_snp_plink(self):
+
+        # Create a temporary directory for missingness count:
+        miss_tmpdir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix='miss_')
+        self.cleanup_dir_list.append(miss_tmpdir)
+
+        # Create the samples file:
+        keep_file = osp.join(miss_tmpdir.name, 'samples.keep')
+        keep_table = self.to_individual_table()
+        keep_table.to_csv(keep_file, index=False, header=False, sep="\t")
+
+        self.n_per_snp = {}
+
+        for c, bf in tqdm(self.bed_files.items(),
+                          total=len(self.chromosomes),
+                          desc="Computing effective sample size per SNP using PLINK",
+                          disable=not self.verbose):
+
+            snp_keepfile = osp.join(miss_tmpdir.name, f"chr_{c}.keep")
+            pd.DataFrame({'SNP': self.snps[c]}).to_csv(snp_keepfile,
+                                                       index=False, header=False)
+
+            plink_output = osp.join(miss_tmpdir.name, f"chr_{c}")
+
+            cmd = [
+                "plink2",
+                f"--bfile {bf.replace('.bed', '')}",
+                f"--keep {keep_file}",
+                f"--extract {snp_keepfile}",
+                f"--missing variant-only",
+                f"--out {plink_output}"
+            ]
+
+            run_shell_script(" ".join(cmd))
+
+            miss_df = pd.read_csv(plink_output + ".vmiss", sep="\s+")
+            miss_df = pd.DataFrame({'ID': self.snps[c]}).merge(miss_df)
+
+            self.n_per_snp[c] = (miss_df['OBS_CT'] - miss_df['MISSING_CT']).values
+
+        return self.n_per_snp
+
     def compute_n_per_snp(self):
+
+        if self.use_plink:
+            return self.compute_n_per_snp_plink()
+
         self.n_per_snp = {}
 
         for c, gt in tqdm(self.genotypes.items(), total=len(self.chromosomes),
