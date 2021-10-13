@@ -982,6 +982,7 @@ class GWASDataLoader(object):
 
         if self.phenotype_likelihood == 'binomial':
             # apply sigmoid function:
+            # TODO: Check this (maybe convert to probit?)
             pgs = 1./(1. + np.exp(-pgs))
 
         return pgs
