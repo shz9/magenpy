@@ -121,11 +121,13 @@ class GWASDataLoader(object):
         self.standardize_genotype = standardize_genotype
         self.genotypes = None
         self._snps = None
+        # TODO: Add BP and CM positions as properties of the GDL object!
         self.n_per_snp = None  # Sample size per SNP
         self._a1 = None  # Minor allele
         self._a2 = None  # Major allele
         self.maf = None  # Minor allele frequency
-        self._iid = None
+
+        self._iid = None  # Individual IDs
         self.annotations = None
 
         # ------- LD-related data -------
@@ -483,6 +485,8 @@ class GWASDataLoader(object):
 
         ss = pd.concat(ss)
 
+        # ------------- Standardize inputs -------------
+        # TODO: Move this part to parsers.py
         if sumstats_format == 'LDSC':
             # Useful here: https://www.biostars.org/p/319584/
             pass
@@ -493,24 +497,22 @@ class GWASDataLoader(object):
                 '#CHROM': 'CHR',
                 'ID': 'SNP',
                 'P': 'PVAL',
-                'REF': 'A2',
                 'OBS_CT': 'N',
                 'A1_FREQ': 'MAF'
             }, inplace=True)
+            ss['A2'] = ss.apply(lambda x: [x['ALT1'], x['REF']][x['A1'] == x['ALT1']], axis=1)
             ss['Z'] = ss['BETA'] / ss['SE']
 
-        self.maf = {}
-        self.n_per_snp = {}
-        self.beta_hats = {}
-        self.z_scores = {}
-        self.se = {}
-        self.p_values = {}
+        # -------------------------------------------------
 
+        # If SNP list is not set, initialize it using the sumstats table:
         if self.snps is None:
+
+            # Check that the sumstats table has the following columns:
+            assert all([col in ss.columns for col in ('CHR', 'POS', 'SNP', 'A1')])
 
             self._snps = {}
             self._a1 = {}
-            self._a2 = {}
 
             for c in ss['CHR'].unique():
 
@@ -518,29 +520,82 @@ class GWASDataLoader(object):
 
                 self._snps[c] = m_ss['SNP'].values
                 self._a1[c] = m_ss['A1'].values
-                self._a2[c] = m_ss['A2'].values
-                # Populate the sumstats fields:
-                self.maf[c] = m_ss['MAF'].values
-                self.n_per_snp[c] = m_ss['N'].values
-                self.beta_hats[c] = m_ss['BETA'].values
-                self.z_scores[c] = m_ss['Z'].values
-                self.se[c] = m_ss['SE'].values
-                self.p_values[c] = m_ss['PVAL'].values
 
+        # -------------------------------------------------
+        # Prepare the fields for the sumstats provided in the table:
+
+        if 'A1' in ss.columns:
+            update_a1 = True
+            self._a1 = {}
         else:
-            for c, snps in self.snps.items():
-                m_ss = pd.DataFrame({'SNP': snps}).merge(ss)
+            update_a1 = False
 
-                if len(m_ss) > 1:
-                    # Populate the sumstats fields:
+        if 'A2' in ss.columns:
+            update_a2 = True
+            self._a2 = {}
+        else:
+            update_a2 = False
+
+        if 'MAF' in ss.columns:
+            self.maf = {}
+            update_maf = True
+        else:
+            update_maf = False
+
+        if 'N' in ss.columns:
+            self.n_per_snp = {}
+            update_n = True
+        else:
+            update_n = False
+
+        if 'BETA' in ss.columns:
+            self.beta_hats = {}
+            update_beta = True
+        else:
+            update_beta = False
+
+        if 'Z' in ss.columns:
+            self.z_scores = {}
+            update_z = True
+        else:
+            update_z = False
+
+        if 'SE' in ss.columns:
+            self.se = {}
+            update_se = True
+        else:
+            update_se = False
+
+        if 'PVAL' in ss.columns:
+            self.p_values = {}
+            update_pval = True
+        else:
+            update_pval = False
+
+        for c, snps in self.snps.items():
+            m_ss = pd.DataFrame({'SNP': snps}).merge(ss)
+
+            if len(m_ss) > 1:
+                # Populate the sumstats fields:
+                if update_a1:
+                    self._a1[c] = m_ss['A1'].values
+                if update_a2:
+                    self._a2[c] = m_ss['A2'].values
+                if update_maf:
+                    self.maf[c] = m_ss['MAF'].values
+                if update_n:
                     self.n_per_snp[c] = m_ss['N'].values
+                if update_beta:
                     self.beta_hats[c] = m_ss['BETA'].values
+                if update_z:
                     self.z_scores[c] = m_ss['Z'].values
+                if update_se:
                     self.se[c] = m_ss['SE'].values
+                if update_pval:
                     self.p_values[c] = m_ss['PVAL'].values
 
-                    if len(snps) != len(m_ss):
-                        self.filter_snps(m_ss['SNP'], chrom=c)
+                if len(snps) != len(m_ss):
+                    self.filter_snps(m_ss['SNP'], chrom=c)
 
         print(f"> Read summary statistics data for {self.M} SNPs.")
 
@@ -559,9 +614,23 @@ class GWASDataLoader(object):
 
         self.ld = {}
 
+        if self._snps is None:
+            init_snps = True
+            self._snps = {}
+            self._a1 = {}
+            self.maf = {}
+        else:
+            init_snps = False
+
         for f in ld_store_files:
             z = LDWrapper.from_path(f)
             self.ld[z.chromosome] = z
+            # If the SNP list is not set,
+            # initialize it with the SNP list from the LD store:
+            if init_snps:
+                self._snps[z.chromosome] = z.snps
+                self._a1[z.chromosome] = z.a1
+                self.maf[z.chromosome] = z.maf
 
     def load_ld(self):
         if self.ld is not None:
@@ -1239,6 +1308,11 @@ class GWASDataLoader(object):
         :return:
         """
 
+        if self.z_scores is None:
+            raise Exception("Z-scores are not set!")
+        if self.n_per_snp is None:
+            raise Exception("Sample size is not set!")
+
         snp_corr = {}
         for c, zsc in tqdm(self.z_scores.items(),
                            total=len(self.chromosomes),
@@ -1253,6 +1327,13 @@ class GWASDataLoader(object):
         Computes (yTy)j following SBayesR and Yang et al. (2012)
         :return:
         """
+
+        if self.beta_hats is None:
+            raise Exception("Betas are not set!")
+        if self.n_per_snp is None:
+            raise Exception("Sample size is not set!")
+        if self.se is None:
+            raise Exception("Standard errors are not set!")
 
         yy = {}
 
@@ -1407,6 +1488,8 @@ class GWASDataLoader(object):
 
         if self.maf is None:
             self.compute_allele_frequency()
+
+        # TODO: Allow exporting sumstats tables without directly depending on genotype objects
 
         for c, gt in self.genotypes.items():
             ss_df = pd.DataFrame({
