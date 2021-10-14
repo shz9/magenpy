@@ -529,7 +529,6 @@ class GWASDataLoader(object):
 
         if 'A1' in ss.columns:
             update_a1 = True
-            self._a1 = {}
         else:
             update_a1 = False
 
