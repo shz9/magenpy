@@ -248,28 +248,31 @@ class GWASDataLoader(object):
             # SNP vectors that must exist in all GDL objects:
             self._snps[c] = self._snps[c][common_idx]
             self._a1[c] = self._a1[c][common_idx]
-            self._a2[c] = self._a2[c][common_idx]
 
             # Optional SNP vectors/matrices:
-            if self.genotypes is not None:
+
+            if self._a2 is not None and c in self._a2:
+                self._a2[c] = self._a2[c][common_idx]
+
+            if self.genotypes is not None and c in self.genotypes:
                 self.genotypes[c] = self.genotypes[c].isel(variant=common_idx)
 
-            if self.n_per_snp is not None:
+            if self.n_per_snp is not None and c in self.n_per_snp:
                 self.n_per_snp[c] = self.n_per_snp[c][common_idx]
 
-            if self.maf is not None:
+            if self.maf is not None and c in self.maf:
                 self.maf[c] = self.maf[c][common_idx]
 
-            if self.beta_hats is not None:
+            if self.beta_hats is not None and c in self.beta_hats:
                 self.beta_hats[c] = self.beta_hats[c][common_idx]
 
-            if self.se is not None:
+            if self.se is not None and c in self.se:
                 self.se[c] = self.se[c][common_idx]
 
-            if self.z_scores is not None:
+            if self.z_scores is not None and c in self.z_scores:
                 self.z_scores[c] = self.z_scores[c][common_idx]
 
-            if self.p_values is not None:
+            if self.p_values is not None and c in self.p_values:
                 self.p_values[c] = self.p_values[c][common_idx]
 
     def filter_by_allele_frequency(self, min_maf=None, min_mac=1):
@@ -576,6 +579,11 @@ class GWASDataLoader(object):
             m_ss = pd.DataFrame({'SNP': snps}).merge(ss)
 
             if len(m_ss) > 1:
+
+                # Filter the SNP list first!
+                if len(snps) != len(m_ss):
+                    self.filter_snps(m_ss['SNP'], chrom=c)
+
                 # Populate the sumstats fields:
                 if update_a1:
                     self._a1[c] = m_ss['A1'].values
@@ -593,9 +601,6 @@ class GWASDataLoader(object):
                     self.se[c] = m_ss['SE'].values
                 if update_pval:
                     self.p_values[c] = m_ss['PVAL'].values
-
-                if len(snps) != len(m_ss):
-                    self.filter_snps(m_ss['SNP'], chrom=c)
 
         print(f"> Read summary statistics data for {self.M} SNPs.")
 
