@@ -939,7 +939,7 @@ class GWASDataLoader(object):
                 raise Exception("Neither betas nor beta hats are provided or set."
                                 " Please provide betas to perform prediction.")
             else:
-                betas = self.beta_hats
+                betas = {c: b for c, b in self.beta_hats.items()}
 
         # Initialize the PGS object with zeros
         # The construction here accounts for multiple betas per SNP
@@ -1019,7 +1019,7 @@ class GWASDataLoader(object):
                 raise Exception("Neither betas nor beta hats are provided or set."
                                 " Please provide betas to perform prediction.")
             else:
-                betas = self.beta_hats
+                betas = {c: b for c, b in self.beta_hats.items()}
 
         if not self.standardize_genotype and self.maf is None:
             self.compute_allele_frequency()
