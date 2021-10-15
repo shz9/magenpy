@@ -891,22 +891,23 @@ class GWASDataLoader(object):
             if self.ld is not None:
 
                 ld_snps = self.ld[c].to_snp_table()
-                ld_snps = ld_snps.merge(pd.DataFrame({'SNP': self._snps[c], 'A1': self._a1[c]}), on='SNP')
+                matched_snps = ld_snps.merge(pd.DataFrame({'SNP': self._snps[c], 'A1': self._a1[c]}), on='SNP')
 
-                print(f"> {len(ld_snps)} ({100.*float(len(ld_snps)) / len(snps):.1f}%) of SNPs "
-                      f"matched with the LD reference panel")
-
-                if len(snps) != len(ld_snps):
-                    self.filter_snps(ld_snps['SNP'].values, chrom=c)
+                # If the SNP list doesn't align with the matched SNPs,
+                # then filter the SNP list
+                if len(snps) != len(matched_snps):
+                    self.filter_snps(matched_snps['SNP'].values, chrom=c)
+                    update_ld = True
+                elif len(matched_snps) != len(ld_snps):
                     update_ld = True
 
-                strand_flipped = np.not_equal(ld_snps['A1_x'].values, ld_snps['A1_y'].values)
+                strand_flipped = np.not_equal(matched_snps['A1_x'].values, matched_snps['A1_y'].values)
                 num_flips = strand_flipped.sum()
                 if num_flips > 0:
                     print(f"> Detected {num_flips} SNPs with strand flipping. Correcting summary statistics...")
 
                     # Correct strand information:
-                    self._a1[c] = ld_snps['A1_x'].values
+                    self._a1[c] = matched_snps['A1_x'].values
 
                     # Convert boolean flag to numeric vector:
                     flip_01 = strand_flipped.astype(int)
