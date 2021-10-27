@@ -179,7 +179,6 @@ class GWASDataLoader(object):
         """
         The number of samples
         :param agg: Aggregation (max, mean, or None)
-        :return:
         """
 
         if agg == 'max':
@@ -230,7 +229,6 @@ class GWASDataLoader(object):
         """
         :param keep_snps:
         :param chrom:
-        :return:
         """
 
         if chrom is None:
@@ -280,7 +278,6 @@ class GWASDataLoader(object):
         Filter SNPs by minimum allele frequency or allele count
         :param min_maf: Minimum allele frequency
         :param min_mac: Minimum allele count (1 by default)
-        :return:
         """
 
         cond_dict = {}
@@ -326,7 +323,6 @@ class GWASDataLoader(object):
     def read_annotations(self, annot_files):
         """
         Read the annotation files
-        :return:
         """
 
         if annot_files is None:
@@ -364,7 +360,6 @@ class GWASDataLoader(object):
     def read_genotypes(self, bed_files):
         """
         Read the genotype files
-        :return:
         """
 
         if bed_files is None:
@@ -604,10 +599,8 @@ class GWASDataLoader(object):
         print(f"> Read summary statistics data for {self.M} SNPs.")
 
     def read_ld(self, ld_store_files):
-
         """
         :param ld_store_files:
-        :return:
         """
 
         if self.verbose:
@@ -851,7 +844,6 @@ class GWASDataLoader(object):
         """
         This method realigns a pre-computed LD matrix with the
         current genotype matrix and/or summary statistics.
-        :return:
         """
 
         if self.ld is None:
@@ -878,7 +870,6 @@ class GWASDataLoader(object):
         """
         This method ensures that all the data sources (reference genotype,
         LD matrices, summary statistics) are aligned.
-        :return:
         """
 
         if self.verbose:
@@ -931,7 +922,6 @@ class GWASDataLoader(object):
         """
         Perform linear scoring using PLINK2
         :param betas:
-        :return:
         """
 
         if betas is None:
@@ -1049,10 +1039,7 @@ class GWASDataLoader(object):
 
     def predict(self, betas=None):
 
-        if self.use_plink:
-            pgs = self.score_plink(betas)
-        else:
-            pgs = self.score(betas)
+        pgs = self.score(betas)
 
         if self.phenotype_likelihood == 'binomial':
             # apply sigmoid function:
@@ -1063,7 +1050,7 @@ class GWASDataLoader(object):
 
     def perform_gwas_plink(self):
         """
-        :return:
+        Perform GWAS using PLINK
         """
 
         # Create a temporary directory for the gwas files:
@@ -1132,6 +1119,10 @@ class GWASDataLoader(object):
             self.p_values[c] = res['P'].values
 
     def perform_gwas(self):
+        """
+        Peform GWAS using closed form solutions.
+        (Only applicable to quantitative traits)
+        """
 
         if self.use_plink:
             self.perform_gwas_plink()
@@ -1155,8 +1146,7 @@ class GWASDataLoader(object):
         """
         Estimates SNP heritability using approximate formula
         from Vilhjálmsson et al. 2015.
-        :param per_chromosome:
-        :return:
+        :param per_chromosome: Estimate heritability per chromosome
         """
 
         if self.ld is None or self.z_scores is None:
@@ -1310,7 +1300,7 @@ class GWASDataLoader(object):
         """
         Computes the X_jTy correlation (standardized beta) per SNP
         using Equation 15 in Mak et al. 2017
-        :return:
+        TODO: Change the name of this method
         """
 
         if self.z_scores is None:
@@ -1330,7 +1320,6 @@ class GWASDataLoader(object):
     def compute_yy_per_snp(self):
         """
         Computes (yTy)j following SBayesR and Yang et al. (2012)
-        :return:
         """
 
         if self.beta_hats is None:
