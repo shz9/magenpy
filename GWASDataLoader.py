@@ -570,7 +570,7 @@ class GWASDataLoader(object):
             update_pval = False
 
         for c, snps in self.snps.items():
-            m_ss = pd.DataFrame({'SNP': snps}).merge(ss)
+            m_ss = pd.DataFrame({'SNP': snps}).merge(ss).drop_duplicates(subset=['SNP'])
 
             if len(m_ss) > 1:
 
