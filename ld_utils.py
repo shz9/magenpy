@@ -294,6 +294,9 @@ def zarr_array_to_ragged(z,
 
             z_rag_rows.append(row_val)
 
+        if len(z_rag_index) == 0:
+            continue
+
         if avg_ncol == n_rows:
             z_rag.oindex[z_rag_index] = np.array(z_rag_rows)
         else:
