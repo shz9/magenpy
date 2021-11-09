@@ -121,7 +121,8 @@ class GWASDataLoader(object):
         self.standardize_genotype = standardize_genotype
         self.genotypes = None
         self._snps = None
-        # TODO: Add BP and CM positions as properties of the GDL object!
+        self._bp_pos = None  # SNP position in BP
+        self._cm_pos = None  # SNP position in cM
         self.n_per_snp = None  # Sample size per SNP
         self._a1 = None  # Minor allele
         self._a2 = None  # Major allele
@@ -170,6 +171,47 @@ class GWASDataLoader(object):
         if ld_store_files is not None or sumstats_files is not None:
             self.harmonize_data()
 
+    @classmethod
+    def from_table(cls, table):
+        """
+        Initialize a GDL object from table.
+        :param table: A pandas dataframe with at leat 4 column defined: `CHR`, `SNP`, `A1`, `POS`
+        Other column names that will be parsed from this table are:
+        A2, MAF, N
+        """
+
+        assert all([col in table.columns for col in ('CHR', 'SNP', 'A1', 'POS')])
+
+        gdl = cls()
+
+        gdl._snps = {}
+        gdl._bp_pos = {}
+        gdl._a1 = {}
+
+        for c in table['CHR'].unique():
+            chrom_table = table.loc[table['CHR'] == c].sort_values('POS')
+
+            gdl._snps[c] = chrom_table['SNP'].values
+            gdl._a1[c] = chrom_table['A1'].values
+            gdl._bp_pos[c] = chrom_table['POS'].values
+
+            if 'A2' in chrom_table.columns:
+                if gdl._a2 is None:
+                    gdl._a2 = {}
+                gdl._a2[c] = chrom_table['A2'].values
+
+            if 'MAF' in chrom_table.columns:
+                if gdl.maf is None:
+                    gdl.maf = {}
+                gdl.maf[c] = chrom_table['MAF'].values
+
+            if 'N' in chrom_table.columns:
+                if gdl.n_per_snp is None:
+                    gdl.n_per_snp = {}
+                gdl.n_per_snp[c] = chrom_table['N'].values
+
+        return gdl
+
     @property
     def sample_size(self):
         return self.N
@@ -185,6 +227,8 @@ class GWASDataLoader(object):
             if self.genotypes is not None:
                 return len(self._iid)
             else:
+                if self.n_per_snp is None:
+                    return None
                 return max([nps.max() for nps in self.n_per_snp.values()])
         else:
             if self.n_per_snp is None:
@@ -202,6 +246,14 @@ class GWASDataLoader(object):
     @property
     def snps(self):
         return self._snps
+
+    @property
+    def bp_pos(self):
+        return self._bp_pos
+
+    @property
+    def cm_pos(self):
+        return self._cm_pos
 
     @property
     def ref_alleles(self):
@@ -248,6 +300,11 @@ class GWASDataLoader(object):
             self._a1[c] = self._a1[c][common_idx]
 
             # Optional SNP vectors/matrices:
+            if self._bp_pos is not None and c in self._bp_pos:
+                self._bp_pos[c] = self._bp_pos[c][common_idx]
+
+            if self._cm_pos is not None and c in self._cm_pos:
+                self._cm_pos[c] = self._cm_pos[c][common_idx]
 
             if self._a2 is not None and c in self._a2:
                 self._a2[c] = self._a2[c][common_idx]
@@ -371,6 +428,8 @@ class GWASDataLoader(object):
         self._snps = {}
         self._a1 = {}
         self._a2 = {}
+        self._cm_pos = {}
+        self._bp_pos = {}
         self.genotypes = {}
         self.bed_files = {}
 
@@ -410,6 +469,8 @@ class GWASDataLoader(object):
             self._snps[chr_id] = gt_ac.variant.values
             self._a1[chr_id] = gt_ac.variant.a0.values
             self._a2[chr_id] = gt_ac.variant.a1.values
+            self._bp_pos[chr_id] = gt_ac.variant.pos.values
+            self._cm_pos[chr_id] = gt_ac.variant.cm.values
 
             if i == 0:
                 self._iid = gt_ac.sample.values
@@ -511,6 +572,7 @@ class GWASDataLoader(object):
 
             self._snps = {}
             self._a1 = {}
+            self._bp_pos = {}
 
             for c in ss['CHR'].unique():
 
@@ -518,6 +580,7 @@ class GWASDataLoader(object):
 
                 self._snps[c] = m_ss['SNP'].values
                 self._a1[c] = m_ss['A1'].values
+                self._bp_pos[c] = m_ss['POS'].values
 
         # -------------------------------------------------
         # Prepare the fields for the sumstats provided in the table:
@@ -526,6 +589,11 @@ class GWASDataLoader(object):
             update_a1 = True
         else:
             update_a1 = False
+
+        if 'POS' in ss.columns:
+            update_pos = True
+        else:
+            update_pos = False
 
         if 'A2' in ss.columns:
             update_a2 = True
@@ -581,6 +649,8 @@ class GWASDataLoader(object):
                 # Populate the sumstats fields:
                 if update_a1:
                     self._a1[c] = m_ss['A1'].values
+                if update_pos:
+                    self._bp_pos[c] = m_ss['POS'].values
                 if update_a2:
                     self._a2[c] = m_ss['A2'].values
                 if update_maf:
@@ -615,6 +685,7 @@ class GWASDataLoader(object):
             init_snps = True
             self._snps = {}
             self._a1 = {}
+            self._bp_pos = {}
             self.maf = {}
         else:
             init_snps = False
@@ -627,6 +698,7 @@ class GWASDataLoader(object):
             if init_snps:
                 self._snps[z.chromosome] = z.snps
                 self._a1[z.chromosome] = z.a1
+                self._bp_pos[z.chromosome] = z.bp_position
                 self.maf[z.chromosome] = z.maf
 
     def load_ld(self):
@@ -736,6 +808,11 @@ class GWASDataLoader(object):
         return self.ld_boundaries
 
     def compute_ld(self):
+        """
+        TODO: Explore options to do this with PLINK:
+        https://www.cog-genomics.org/plink/1.9/ld
+        :return:
+        """
 
         if self.maf is None:
             self.compute_allele_frequency()
@@ -821,7 +898,7 @@ class GWASDataLoader(object):
                                                 delete_original=True)
 
             # Add detailed LD matrix properties:
-            z_ld_mat.attrs['BP'] = list(map(int, g_mat.variant.pos.values))
+            z_ld_mat.attrs['BP'] = list(map(int, self.bp_pos[c]))
             z_ld_mat.attrs['cM'] = list(map(float, g_mat.variant.cm.values))
             z_ld_mat.attrs['MAF'] = list(map(float, self.maf[c]))
             z_ld_mat.attrs['A1'] = list(self._a1[c])
@@ -1473,44 +1550,47 @@ class GWASDataLoader(object):
 
         return pheno_df
 
-    def to_sumstats_table(self, per_chromosome=False):
+    def to_snp_table(self, per_chromosome=False, col_subset=None):
 
-        ss_tables = {}
+        if col_subset is None:
+            col_subset = ['CHR', 'SNP', 'POS', 'A1', 'A2', 'MAF', 'N', 'BETA', 'Z', 'SE', 'PVAL']
 
-        if self.genotypes is None:
-            raise Exception('Cannot generate summary statistics without genotype data.')
+        snp_tables = {}
 
-        if self.maf is None:
-            self.compute_allele_frequency()
+        for c in self.chromosomes:
 
-        # TODO: Allow exporting sumstats tables without directly depending on genotype objects
+            ss_df = pd.DataFrame({'SNP': self.snps[c], 'A1': self.alt_alleles[c]})
 
-        for c, gt in self.genotypes.items():
-            ss_df = pd.DataFrame({
-                'CHR': gt.chrom.values,
-                'POS': gt.pos.values,
-                'SNP': self.snps[c],
-                'A1': self.alt_alleles[c],
-                'A2': self.ref_alleles[c],
-                'MAF': self.maf[c],
-                'N': self.n_per_snp[c],
-                'BETA': self.beta_hats[c],
-                'Z': self.z_scores[c],
-                'SE': self.se[c],
-                'PVAL': self.p_values[c]
-            })
+            for col in col_subset:
+                if col == 'CHR':
+                    ss_df['CHR'] = c
+                if col == 'POS' and self.bp_pos is not None:
+                    ss_df['POS'] = self.bp_pos[c]
+                if col == 'A2' and self.ref_alleles is not None:
+                    ss_df['A2'] = self.ref_alleles[c]
+                if col == 'MAF' and self.maf is not None:
+                    ss_df['MAF'] = self.maf[c]
+                if col == 'N' and self.n_per_snp is not None:
+                    ss_df['N'] = self.n_per_snp[c]
+                if col == 'BETA' and self.beta_hats is not None:
+                    ss_df['BETA'] = self.beta_hats[c]
+                if col == 'Z' and self.z_scores is not None:
+                    ss_df['Z'] = self.z_scores[c]
+                if col == 'SE' and self.se is not None:
+                    ss_df['SE'] = self.se[c]
+                if col == 'PVAL' and self.p_values is not None:
+                    ss_df['PVAL'] = self.p_values[c]
 
-            ss_tables[c] = ss_df
+            snp_tables[c] = ss_df[list(col_subset)]
 
         if per_chromosome:
-            return ss_tables
+            return snp_tables
         else:
-            return pd.concat(list(ss_tables.values()))
+            return pd.concat(list(snp_tables.values()))
 
     def cleanup(self):
         """
         Clean up all temporary files and directories
-        :return:
         """
         if self.verbose:
             print("> Cleaning up workspace.")
