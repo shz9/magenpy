@@ -8,7 +8,6 @@
 # cython: language_level=3
 # cython: infer_types=True
 
-from cython.parallel import prange
 from libc.math cimport exp
 import numpy as np
 cimport numpy as np
@@ -47,13 +46,13 @@ def zarr_islice(arr, start=None, end=None):
         yield chunk[j % chunk_size]
 
 
-cpdef find_ld_block_boundaries(long[:] pos, long[:, :] block_boundaries, int n_threads):
+cpdef find_ld_block_boundaries(long[:] pos, long[:, :] block_boundaries):
 
     cdef unsigned int i, j, ldb_idx, block_start, block_end, B = len(block_boundaries), M = len(pos)
     cdef long[:] v_min = np.zeros_like(pos, dtype=np.int)
     cdef long[:] v_max = M*np.ones_like(pos, dtype=np.int)
 
-    for i in prange(M, nogil=True, schedule='static', num_threads=n_threads):
+    for i in range(M):
 
         # Find the positional boundaries for SNP i:
         for ldb_idx in range(B):
@@ -74,13 +73,13 @@ cpdef find_ld_block_boundaries(long[:] pos, long[:, :] block_boundaries, int n_t
     return np.array((v_min, v_max))
 
 
-cpdef find_windowed_ld_boundaries(double[:] cm_dist, double max_dist, int n_threads):
+cpdef find_windowed_ld_boundaries(double[:] cm_dist, double max_dist):
 
     cdef unsigned int i, j, M = len(cm_dist)
     cdef long[:] v_min = np.zeros_like(cm_dist, dtype=np.int)
     cdef long[:] v_max = M*np.ones_like(cm_dist, dtype=np.int)
 
-    for i in prange(M, nogil=True, schedule='static', num_threads=n_threads):
+    for i in range(M):
 
         for j in range(i, M):
             if cm_dist[j] - cm_dist[i] > max_dist:
@@ -98,8 +97,7 @@ cpdef find_windowed_ld_boundaries(double[:] cm_dist, double max_dist, int n_thre
 cpdef find_shrinkage_ld_boundaries(double[:] cm_dist,
                                    double genmap_Ne,
                                    int genmap_sample_size,
-                                   double cutoff,
-                                   int n_threads):
+                                   double cutoff):
 
     cdef unsigned int i, j, M = len(cm_dist)
     cdef long[:] v_min = np.zeros_like(cm_dist, dtype=np.int)
@@ -108,7 +106,7 @@ cpdef find_shrinkage_ld_boundaries(double[:] cm_dist,
     # The multiplicative factor for the shrinkage estimator
     cdef double mult_factor = 2. * genmap_Ne / genmap_sample_size
 
-    for i in prange(M, nogil=True, schedule='static', num_threads=n_threads):
+    for i in range(M):
 
         for j in range(i, M):
             if exp(-mult_factor*(cm_dist[j] - cm_dist[i])) < cutoff:

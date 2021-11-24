@@ -732,13 +732,11 @@ class GWASDataLoader(object):
                     self.ld_boundaries[c] = np.array((np.zeros(M), np.ones(M)*M)).astype(np.int64)
                 elif estimator == 'block':
                     self.ld_boundaries[c] = find_ld_block_boundaries(ld.bp_position[common_idx],
-                                                                     np.array(est_properties['LD blocks'], dtype=int),
-                                                                     self.n_threads)
+                                                                     np.array(est_properties['LD blocks'], dtype=int))
                 elif estimator == 'windowed':
                     if est_properties['Window units'] == 'cM':
                         self.ld_boundaries[c] = find_windowed_ld_boundaries(ld.cm_position[common_idx],
-                                                                            est_properties['Window cutoff'],
-                                                                            self.n_threads)
+                                                                            est_properties['Window cutoff'])
                     else:
                         idx = np.arange(M)
                         self.ld_boundaries[c] = np.array((idx - est_properties['Window cutoff'],
@@ -748,8 +746,7 @@ class GWASDataLoader(object):
                     self.ld_boundaries[c] = find_shrinkage_ld_boundaries(ld.cm_position[common_idx],
                                                                          est_properties['Genetic map Ne'],
                                                                          est_properties['Genetic map sample size'],
-                                                                         est_properties['Cutoff'],
-                                                                         self.n_threads)
+                                                                         est_properties['Cutoff'])
 
         else:
 
@@ -769,8 +766,7 @@ class GWASDataLoader(object):
 
                     if pos_bp.any():
                         self.ld_boundaries[c] = find_ld_block_boundaries(pos_bp.astype(int),
-                                                                         self.ld_blocks[c],
-                                                                         self.n_threads)
+                                                                         self.ld_blocks[c])
                     else:
                         raise Exception("SNP position in BP is missing!")
 
@@ -779,8 +775,7 @@ class GWASDataLoader(object):
                         cm_dist = gt.cm.values
                         if cm_dist.any():
                             self.ld_boundaries[c] = find_windowed_ld_boundaries(cm_dist,
-                                                                                self.cm_window_cutoff,
-                                                                                self.n_threads)
+                                                                                self.cm_window_cutoff)
                         else:
                             raise Exception("cM information for SNPs is missing. "
                                             "Make sure to populate it with a reference genetic map "
@@ -798,8 +793,7 @@ class GWASDataLoader(object):
                         self.ld_boundaries[c] = find_shrinkage_ld_boundaries(cm_dist,
                                                                              self.genmap_Ne,
                                                                              self.genmap_sample_size,
-                                                                             self.shrinkage_cutoff,
-                                                                             self.n_threads)
+                                                                             self.shrinkage_cutoff)
                     else:
                         raise Exception("cM information for SNPs is missing. "
                                         "Make sure to populate it with a reference genetic map "
