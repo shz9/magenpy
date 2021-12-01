@@ -3,6 +3,7 @@ Author: Shadi Zabad
 Date: December 2020
 """
 
+import configparser
 import os.path as osp
 import tempfile
 from tqdm import tqdm
@@ -76,6 +77,15 @@ class GWASDataLoader(object):
         self.output_dir = output_dir
         self.cleanup_dir_list = []  # Directories to clean up after execution.
         self.batch_size = batch_size
+
+        # Access the configuration file:
+        config = configparser.ConfigParser()
+        config.read(osp.join(osp.dirname(__file__), 'config.ini'))
+
+        try:
+            self.config = config['USER']
+        except KeyError:
+            self.config = config['DEFAULT']
 
         # ------- General parameters -------
 
@@ -843,7 +853,7 @@ class GWASDataLoader(object):
             plink_output = osp.join(tmp_ld_dir.name, f"chr_{c}")
 
             cmd = [
-                "plink",
+                self.config.get('plink1.9_path'),
                 f"--bfile {b_file.replace('.bed', '')}",
                 f"--keep {keep_file}",
                 f"--extract {snp_keepfile}",
@@ -1175,7 +1185,7 @@ class GWASDataLoader(object):
                 df.to_csv(eff_file, index=False, sep="\t")
 
                 cmd = [
-                    "plink2",
+                    self.config.get('plink2_path'),
                     f"--bfile {self.bed_files[c].replace('.bed', '')}",
                     f"--keep {keep_file}",
                     f"--score {eff_file} 1 2 header-read cols=+scoresums variance-standardize",
@@ -1292,7 +1302,7 @@ class GWASDataLoader(object):
             plink_output = osp.join(gwas_tmpdir.name, f"chr_{c}")
 
             cmd = [
-                "plink2",
+                self.config.get('plink2_path'),
                 f"--bfile {bf.replace('.bed', '')}",
                 f"--extract {snp_keepfile}",
                 f"--{plink_reg_type} hide-covar allow-no-covars cols=chrom,pos,alt1,ref,a1freq,nobs,beta,se,tz,p",
@@ -1399,7 +1409,7 @@ class GWASDataLoader(object):
             plink_output = osp.join(freq_tmpdir.name, f"chr_{c}")
 
             cmd = [
-                "plink2",
+                self.config.get('plink2_path'),
                 f"--bfile {bf.replace('.bed', '')}",
                 f"--keep {keep_file}",
                 f"--extract {snp_keepfile}",
@@ -1471,7 +1481,7 @@ class GWASDataLoader(object):
             plink_output = osp.join(miss_tmpdir.name, f"chr_{c}")
 
             cmd = [
-                "plink2",
+                self.config.get('plink2_path'),
                 f"--bfile {bf.replace('.bed', '')}",
                 f"--keep {keep_file}",
                 f"--extract {snp_keepfile}",
