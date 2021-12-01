@@ -17,7 +17,12 @@ import zarr
 
 from .LDWrapper import LDWrapper
 from .c_utils import find_windowed_ld_boundaries, find_shrinkage_ld_boundaries, find_ld_block_boundaries
-from .ld_utils import sparsify_ld_matrix, shrink_ld_matrix, zarr_array_to_ragged, rechunk_zarr, move_ld_store
+from .ld_utils import (from_plink_ld_bin_to_zarr,
+                       from_plink_ld_table_to_zarr,
+                       shrink_ld_matrix,
+                       zarr_array_to_ragged,
+                       rechunk_zarr,
+                       move_ld_store)
 
 from .model_utils import standardize_genotype_matrix
 from .parsers import read_snp_filter_file, read_individual_filter_file, parse_ld_block_data
@@ -347,8 +352,8 @@ class GWASDataLoader(object):
 
         if min_mac is not None:
             for c, maf in self.maf.items():
-                mac = 2.*maf*self.n_per_snp[c]
-                cond_dict[c] = (mac >= min_mac) & ((self.n_per_snp[c]) - mac >= min_mac)
+                mac = (2.*maf*self.n_per_snp[c]).astype(np.int64)
+                cond_dict[c] = (mac >= min_mac) & ((self.n_per_snp[c] - mac) >= min_mac)
 
         if min_maf is not None:
 
@@ -361,13 +366,20 @@ class GWASDataLoader(object):
 
         if len(cond_dict) > 0:
 
+            filt_count = 0
+
             for c, snps in tqdm(self.snps.items(),
                                 total=len(self.chromosomes),
                                 desc="Filtering SNPs by allele frequency/count",
                                 disable=not self.verbose):
                 keep_snps = snps[cond_dict[c]]
                 if len(keep_snps) != len(snps):
+                    filt_count += len(snps) - len(keep_snps)
                     self.filter_snps(keep_snps, chrom=c)
+
+            if filt_count > 0:
+                if self.verbose:
+                    print(f"> Filtered {filt_count} SNPs due to MAC/MAF thresholds.")
 
     def filter_samples(self, keep_samples):
 
@@ -801,12 +813,137 @@ class GWASDataLoader(object):
 
         return self.ld_boundaries
 
+    def compute_ld_plink(self):
+        """
+        Compute the Linkage-Disequilibrium (LD) matrix between SNPs using plink1.9
+        """
+
+        if self.ld_boundaries is None:
+            self.compute_ld_boundaries()
+
+        tmp_ld_dir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix='ld_')
+        self.cleanup_dir_list.append(tmp_ld_dir)
+
+        # Create the samples file:
+        keep_file = osp.join(tmp_ld_dir.name, 'samples.keep')
+        keep_table = self.to_individual_table()
+        keep_table.to_csv(keep_file, index=False, header=False, sep="\t")
+
+        self.ld = {}
+
+        for c, b_file in tqdm(self.bed_files.items(),
+                              total=len(self.chromosomes),
+                              desc="Computing LD matrices using plink",
+                              disable=not self.verbose):
+
+            snp_keepfile = osp.join(tmp_ld_dir.name, f"chr_{c}.keep")
+            pd.DataFrame({'SNP': self.snps[c]}).to_csv(snp_keepfile,
+                                                       index=False, header=False)
+
+            plink_output = osp.join(tmp_ld_dir.name, f"chr_{c}")
+
+            cmd = [
+                "plink",
+                f"--bfile {b_file.replace('.bed', '')}",
+                f"--keep {keep_file}",
+                f"--extract {snp_keepfile}",
+                f"--out {plink_output}"
+            ]
+
+            # For the block and shrinkage estimators, ask plink to compute
+            # LD between focal SNP and max(window_size) around it.
+            # Then, once we have a square matrix out of that, we can apply
+            # a per-SNP filter:
+
+            max_window_size = (self.ld_boundaries[c][1, :] - self.ld_boundaries[c][0, :]).max() + 1
+            max_kb = round(.001*(self.bp_pos[c].max() - self.bp_pos[c].min()))
+
+            if self.ld_estimator in ('shrinkage', 'block'):
+                cmd.append("--r")
+                cmd.append(f"--ld-window {max_window_size} "
+                           f"--ld-window-kb {max_kb}")
+            elif self.ld_estimator == 'windowed':
+                cmd.append("--r")
+                cmd.append(f"--ld-window {len(self.snps[c]) + 1} "
+                           f"--ld-window-kb {max_kb} "
+                           f"--ld-window-cm {self.cm_window_cutoff}")
+            else:
+                cmd.append("--r bin")
+                cmd.append(f"--ld-window {len(self.snps[c]) + 1} "
+                           f"--ld-window-kb {max_kb} ")
+
+            run_shell_script(" ".join(cmd))
+
+            # Convert from PLINK LD files to Zarr:
+            fin_ld_store = osp.join(self.output_dir, 'ld', 'chr_' + str(c))
+
+            if self.ld_estimator == 'sample':
+                z_ld_mat = from_plink_ld_bin_to_zarr(f"{plink_output}.ld.bin",
+                                                     fin_ld_store,
+                                                     self.ld_boundaries[c])
+            else:
+                z_ld_mat = from_plink_ld_table_to_zarr(f"{plink_output}.ld",
+                                                       fin_ld_store,
+                                                       self.ld_boundaries[c],
+                                                       self.snps[c])
+
+            # Add LD matrix properties:
+            z_ld_mat.attrs['Chromosome'] = c
+            z_ld_mat.attrs['Sample size'] = self.sample_size
+            z_ld_mat.attrs['SNP'] = list(self.snps[c])
+            z_ld_mat.attrs['LD estimator'] = self.ld_estimator
+            z_ld_mat.attrs['LD boundaries'] = self.ld_boundaries[c].tolist()
+
+            ld_estimator_properties = None
+
+            if self.ld_estimator == 'shrinkage':
+
+                z_ld_mat = shrink_ld_matrix(z_ld_mat,
+                                            self.cm_pos[c],
+                                            self.genmap_Ne,
+                                            self.genmap_sample_size,
+                                            self.shrinkage_cutoff,
+                                            ld_boundaries=self.ld_boundaries[c])
+
+                ld_estimator_properties = {
+                    'Genetic map Ne': self.genmap_Ne,
+                    'Genetic map sample size': self.genmap_sample_size,
+                    'Cutoff': self.shrinkage_cutoff
+                }
+
+            elif self.ld_estimator == 'windowed':
+                ld_estimator_properties = {
+                    'Window units': self.window_unit,
+                    'Window cutoff': [self.window_size_cutoff, self.cm_window_cutoff][self.window_unit == 'cM']
+                }
+
+            elif self.ld_estimator == 'block':
+                ld_estimator_properties = {
+                    'LD blocks': self.ld_blocks[c].tolist()
+                }
+
+            # Add detailed LD matrix properties:
+            z_ld_mat.attrs['BP'] = list(map(int, self.bp_pos[c]))
+            z_ld_mat.attrs['cM'] = list(map(float, self.cm_pos[c]))
+            z_ld_mat.attrs['MAF'] = list(map(float, self.maf[c]))
+            z_ld_mat.attrs['A1'] = list(self._a1[c])
+
+            if ld_estimator_properties is not None:
+                z_ld_mat.attrs['Estimator properties'] = ld_estimator_properties
+
+            self.ld[c] = LDWrapper(z_ld_mat)
+
     def compute_ld(self):
         """
-        TODO: Explore options to do this with PLINK:
-        https://www.cog-genomics.org/plink/1.9/ld
-        :return:
+        Compute the Linkage-Disequilibrium (LD) matrix between SNPs.
+        This function only considers correlations between SNPs on the same chromosome.
+        The function involves computing X'X and then applying transformations to it,
+        according to the estimator that the user specifies.
         """
+
+        if self.use_plink:
+            self.compute_ld_plink()
+            return
 
         if self.maf is None:
             self.compute_allele_frequency()
@@ -846,8 +983,8 @@ class GWASDataLoader(object):
 
             # Add LD matrix properties:
             z_ld_mat.attrs['Chromosome'] = c
-            z_ld_mat.attrs['Sample size'] = g_mat.shape[0]
-            z_ld_mat.attrs['SNP'] = list(g_mat.variant.values)
+            z_ld_mat.attrs['Sample size'] = self.sample_size
+            z_ld_mat.attrs['SNP'] = list(self.snps[c])
             z_ld_mat.attrs['LD estimator'] = self.ld_estimator
             z_ld_mat.attrs['LD boundaries'] = self.ld_boundaries[c].tolist()
 
@@ -859,7 +996,7 @@ class GWASDataLoader(object):
             if self.ld_estimator == 'shrinkage':
 
                 z_ld_mat = shrink_ld_matrix(z_ld_mat,
-                                            g_data.cm.values,
+                                            self.cm_pos[c],
                                             self.genmap_Ne,
                                             self.genmap_sample_size,
                                             self.shrinkage_cutoff)
@@ -871,7 +1008,6 @@ class GWASDataLoader(object):
                 }
 
             elif self.ld_estimator == 'windowed':
-                z_ld_mat = sparsify_ld_matrix(z_ld_mat, self.ld_boundaries[c])
 
                 ld_estimator_properties = {
                     'Window units': self.window_unit,
@@ -879,7 +1015,6 @@ class GWASDataLoader(object):
                 }
 
             elif self.ld_estimator == 'block':
-                z_ld_mat = sparsify_ld_matrix(z_ld_mat, self.ld_boundaries[c])
 
                 ld_estimator_properties = {
                     'LD blocks': self.ld_blocks[c].tolist()
@@ -893,7 +1028,7 @@ class GWASDataLoader(object):
 
             # Add detailed LD matrix properties:
             z_ld_mat.attrs['BP'] = list(map(int, self.bp_pos[c]))
-            z_ld_mat.attrs['cM'] = list(map(float, g_mat.variant.cm.values))
+            z_ld_mat.attrs['cM'] = list(map(float, self.cm_pos[c]))
             z_ld_mat.attrs['MAF'] = list(map(float, self.maf[c]))
             z_ld_mat.attrs['A1'] = list(self._a1[c])
 

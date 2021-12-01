@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import errno
 import os
@@ -5,6 +6,32 @@ import subprocess
 import glob
 import collections
 import six
+
+
+def generate_slice_dictionary(vec):
+    """
+    This utility function takes a sorted vector (e.g. numpy array),
+    identifies the unique elements and generates a dictionary of slices
+    delineating the start and end positions of each element in the vector.
+
+    :param vec: A numpy array
+    """
+
+    vals, idx = np.unique(vec, return_index=True)
+    idx_sort = np.argsort(idx)
+
+    vals = vals[idx_sort]
+    idx = idx[idx_sort]
+
+    d = {}
+
+    for i in range(len(idx)):
+        try:
+            d[vals[i]] = slice(idx[i], idx[i + 1])
+        except IndexError:
+            d[vals[i]] = slice(idx[i], len(vec))
+
+    return d
 
 
 def intersect_arrays(arr1, arr2, return_index=False):

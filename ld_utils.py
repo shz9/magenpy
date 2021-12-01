@@ -8,6 +8,8 @@ import dask.array as da
 import numcodecs
 import zarr
 
+from .utils import generate_slice_dictionary
+
 
 def move_ld_store(z_arr, target_path, overwrite=True):
 
@@ -26,6 +28,126 @@ def delete_ld_store(z_arr):
         z_arr.store.rmdir()
     except Exception as e:
         print(e)
+
+
+def from_plink_ld_bin_to_zarr(bin_file, dir_store, ld_boundaries):
+    """
+    This method takes an LD binary file from PLINK and converts it to
+    a chunked Zarr matrix
+    :param bin_file: The path to the LD binary file
+    :param dir_store: The directory store where the Zarr array will be stored
+    :param ld_boundaries: The boundaries for the desired LD matrix.
+    """
+
+    n_rows = ld_boundaries.shape[1]
+    avg_ncol = int((ld_boundaries[1, :] - ld_boundaries[0, :]).mean())
+
+    n_chunks = estimate_row_chunk_size(n_rows, avg_ncol)
+
+    if avg_ncol == n_rows:
+        z_rag = zarr.open(dir_store,
+                          mode='w',
+                          shape=(n_rows, n_rows),
+                          chunks=n_chunks,
+                          dtype=float)
+    else:
+        z_rag = zarr.open(dir_store,
+                          mode='w',
+                          shape=n_rows,
+                          chunks=n_chunks[:1],
+                          dtype=object,
+                          object_codec=numcodecs.VLenArray(float))
+
+    chunk_size = z_rag.chunks[0]
+
+    for i in range(int(np.ceil(z_rag.shape[0] / chunk_size))):
+
+        n_chunk_rows = min(chunk_size, n_rows - i*chunk_size)
+        ld_chunk = np.fromfile(bin_file,
+                               offset=i*chunk_size*n_rows,
+                               count=n_chunk_rows*n_rows).reshape(n_chunk_rows, n_rows)
+
+        for j, ld in enumerate(ld_chunk):
+            idx = i*chunk_size + j
+            start, end = ld_boundaries[:, idx]
+            ld_chunk[j] = ld_chunk[j][start: end]
+
+        z_rag[i*chunk_size:(i+1)*chunk_size] = ld_chunk
+
+    return z_rag
+
+
+def from_plink_ld_table_to_zarr(ld_file, dir_store, ld_boundaries=None, snps=None):
+    """
+    Transform a PLINK LD table to Zarr ragged array.
+    PLINK LD tables are of the format:
+    CHR_A   BP_A   SNP_A  CHR_B   BP_B  SNP_B  R
+    :param dir_store: A path to the new Zarr store
+    :param ld_file: A path to the plink LD table
+    :param ld_boundaries: LD boundaries matrix
+    :param snps: A list of SNPs
+    """
+
+    ld_df = pd.read_csv(ld_file,
+                        delim_whitespace=True,
+                        usecols=['BP_A', 'SNP_A', 'BP_B', 'SNP_B', 'R'],
+                        engine='c')
+
+    # Assume that PLINK's table is already sorted by BP_A, BP_B:
+    a_snps_slice = generate_slice_dictionary(ld_df.SNP_A.values)
+    r_a = ld_df.R.values
+
+    ld_sort_b = ld_df.sort_values(['BP_B', 'BP_A'])
+    b_snps_slice = generate_slice_dictionary(ld_sort_b.SNP_B.values)
+    r_b = ld_sort_b.R.values
+
+    if snps is None:
+        snp_df = pd.DataFrame(np.concatenate([ld_df[['SNP_A', 'BP_A']].drop_duplicates().values,
+                                              ld_df[['SNP_B', 'BP_B']].drop_duplicates().values]),
+                              columns=['SNP', 'BP'])
+        snps = snp_df.drop_duplicates().sort_values('BP')['SNP'].values
+
+    if ld_boundaries is None:
+        before_bound = np.repeat([None], len(snps))
+        after_bound = np.repeat([None], len(snps))
+    else:
+        before_bound = ld_boundaries[0, :] - np.arange(ld_boundaries.shape[1])
+        after_bound = ld_boundaries[1, :] - np.arange(ld_boundaries.shape[1]) - 1
+
+    ld_array = []
+    avg_ncol = 0
+
+    for i, snp in enumerate(snps):
+
+        try:
+            if before_bound[i] < 0:
+                before = r_b[b_snps_slice[snp]][before_bound[i]:]
+            else:
+                before = []
+        except KeyError:
+            before = []
+
+        try:
+            after = r_a[a_snps_slice[snp]][:after_bound[i]]
+        except KeyError:
+            after = []
+
+        ld_array.append(np.concatenate([before, [1.], after]))
+
+        avg_ncol += (len(ld_array[-1]) - avg_ncol) / (i + 1)
+
+    n_chunks = estimate_row_chunk_size(len(ld_array), int(avg_ncol))
+
+    z_arr = zarr.open(dir_store,
+                      mode='w',
+                      shape=len(ld_array),
+                      chunks=n_chunks[:1],
+                      dtype=object,
+                      object_codec=numcodecs.VLenArray(float))
+
+    z_arr[:] = np.array(ld_array, dtype=object)
+
+    return z_arr
 
 
 def clump_snps(ldw, stat, rsq_threshold=.9, extract=True):
@@ -68,7 +190,10 @@ def clump_snps(ldw, stat, rsq_threshold=.9, extract=True):
         return list(remove_snps)
 
 
-def shrink_ld_matrix(arr, cm_dist, genmap_Ne, genmap_sample_size, shrinkage_cutoff=1e-3):
+def shrink_ld_matrix(arr, cm_dist, genmap_Ne, genmap_sample_size, shrinkage_cutoff=1e-3, ld_boundaries=None):
+
+    if ld_boundaries is None:
+        ld_boundaries = np.array([np.repeat(None, arr.shape[0]), np.repeat(None, arr.shape[0])])
 
     # The multiplicative factor for the shrinkage estimator
     mult_factor = 2.*genmap_Ne / genmap_sample_size
@@ -90,12 +215,18 @@ def shrink_ld_matrix(arr, cm_dist, genmap_Ne, genmap_sample_size, shrinkage_cuto
             chunk = arr[j: j + chunk_size]
 
         # Compute the shrinkage factor the entries in row j
-        shrink_mult = np.exp(-mult_factor * np.abs(cm_dist - cm_dist[j]))
+        shrink_mult = np.exp(-mult_factor * np.abs(cm_dist - cm_dist[j])[ld_boundaries[0, j]: ld_boundaries[1, j]])
         # Set any shrinkage factor below the cutoff value to zero:
         shrink_mult[shrink_mult < shrinkage_cutoff] = 0.
 
         # Shrink the entries of the LD matrix:
-        chunk[j % chunk_size] *= shrink_mult
+        try:
+            chunk[j % chunk_size] = chunk[j % chunk_size]*shrink_mult
+        except ValueError:
+            print(j)
+            print(shrink_mult)
+            print(chunk[j % chunk_size])
+            raise ValueError
 
     update_prev_chunk(j)
 
@@ -220,7 +351,6 @@ def zarr_array_to_ragged(z,
     :param rechunk: Whether to re-chunk the ragged array (for optimized read/write performance)
     :param dir_store: The path to the new Zarr matrix store
     :param delete_original: Delete the original store after transformation.
-    :return:
     """
 
     if keep_snps is None:

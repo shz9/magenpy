@@ -13,7 +13,7 @@ class GWASSimulator(GWASDataLoader):
     def __init__(self, bed_files,
                  h2g=0.2,
                  pis=(0.9, 0.1),
-                 gammas=(0., 1.),
+                 sigma_sq=(0., 1.),
                  prevalence=0.15,
                  **kwargs):
 
@@ -25,10 +25,10 @@ class GWASSimulator(GWASDataLoader):
 
         # Sanity checks:
         assert 0. <= self.h2g <= 1.
-        assert sum(self.pis) == 1.
+        assert round(sum(self.pis), 1) == 1.
         assert 0. < self.prevalence < 1.
 
-        self.gammas = np.array(gammas)
+        self.sigma_sq = np.array(sigma_sq)
 
         self.annotation_weights = None
 
@@ -45,7 +45,7 @@ class GWASSimulator(GWASDataLoader):
         assert self.mixture_assignment is not None
 
         try:
-            zero_index = list(self.gammas).index(0)
+            zero_index = list(self.sigma_sq).index(0)
         except ValueError:
             # If all SNPs are causal:
             return {c: np.repeat(True, c_size) for c, c_size in self.shapes.items()}
@@ -101,7 +101,7 @@ class GWASSimulator(GWASDataLoader):
                 std_beta = 1.
 
             betas = np.random.normal(loc=0.0,
-                                     scale=self.gammas[np.where(self.mixture_assignment[i])[1]]*std_beta,
+                                     scale=np.sqrt(self.sigma_sq[np.where(self.mixture_assignment[i])[1]]*std_beta),
                                      size=p)
 
             self.betas[i] = betas
