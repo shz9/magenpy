@@ -25,7 +25,7 @@ from .ld_utils import (from_plink_ld_bin_to_zarr,
                        rechunk_zarr,
                        move_ld_store)
 
-from .model_utils import standardize_genotype_matrix
+from .model_utils import standardize_genotype_matrix, merge_snp_tables
 from .parsers import read_snp_filter_file, read_individual_filter_file, parse_ld_block_data
 from .utils import intersect_arrays, makedir, iterable, get_filenames, run_shell_script
 
@@ -47,6 +47,7 @@ class GWASDataLoader(object):
                  keep_snps=None,
                  min_maf=None,
                  min_mac=1,
+                 remove_duplicated=True,
                  annotation_files=None,
                  genmap_Ne=None,
                  genmap_sample_size=None,
@@ -166,6 +167,10 @@ class GWASDataLoader(object):
         self.read_annotations(annotation_files)
 
         if self.genotypes is not None:
+
+            if remove_duplicated:
+                self.filter_duplicated_snps()
+
             self.filter_by_allele_frequency(min_maf=min_maf, min_mac=min_mac)
 
         # ------- Compute LD matrices -------
@@ -182,6 +187,9 @@ class GWASDataLoader(object):
         self.read_summary_stats(sumstats_files, sumstats_format)
 
         # ------- Harmonize data sources -------
+
+        if self.genotypes is None and remove_duplicated:
+            self.filter_duplicated_snps()
 
         if ld_store_files is not None or sumstats_files is not None:
             self.harmonize_data()
@@ -390,6 +398,19 @@ class GWASDataLoader(object):
             if filt_count > 0:
                 if self.verbose:
                     print(f"> Filtered {filt_count} SNPs due to MAC/MAF thresholds.")
+
+    def filter_duplicated_snps(self):
+        """
+        This method filters all duplicated SNPs.
+        TODO: Add options to keep at least one of the duplicated snps.
+        :return:
+        """
+
+        for c, snps in self.snps.items():
+            u_snps, counts = np.unique(snps, return_counts=True)
+            if len(u_snps) < len(snps):
+                # Keep only SNPs which occur once in the sequence:
+                self.filter_snps(u_snps[counts == 1], chrom=c)
 
     def filter_samples(self, keep_samples):
 
@@ -660,7 +681,7 @@ class GWASDataLoader(object):
             update_pval = False
 
         for c, snps in self.snps.items():
-            m_ss = pd.DataFrame({'SNP': snps}).merge(ss).drop_duplicates(subset=['SNP'])
+            m_ss = merge_snp_tables(pd.DataFrame({'SNP': snps, 'A1': self._a1[c]}), ss)
 
             if len(m_ss) > 1:
 
@@ -843,7 +864,7 @@ class GWASDataLoader(object):
 
         for c, b_file in tqdm(self.bed_files.items(),
                               total=len(self.chromosomes),
-                              desc="Computing LD matrices using plink",
+                              desc="Computing LD matrices using PLINK",
                               disable=not self.verbose):
 
             snp_keepfile = osp.join(tmp_ld_dir.name, f"chr_{c}.keep")
@@ -1092,13 +1113,14 @@ class GWASDataLoader(object):
             print("> Harmonizing data...")
 
         update_ld = False
+        sumstats_tables = self.to_snp_table(per_chromosome=True, col_subset=['SNP', 'A1', 'MAF', 'BETA', 'Z'])
 
         for c, snps in self.snps.items():
             # Harmonize SNPs in LD store and summary statistics/genotype matrix:
             if self.ld is not None:
 
                 ld_snps = self.ld[c].to_snp_table()
-                matched_snps = ld_snps.merge(pd.DataFrame({'SNP': self._snps[c], 'A1': self._a1[c]}), on='SNP')
+                matched_snps = merge_snp_tables(ld_snps, sumstats_tables[c])
 
                 # If the SNP list doesn't align with the matched SNPs,
                 # then filter the SNP list
@@ -1108,28 +1130,26 @@ class GWASDataLoader(object):
                 elif len(matched_snps) != len(ld_snps):
                     update_ld = True
 
-                strand_flipped = np.not_equal(matched_snps['A1_x'].values, matched_snps['A1_y'].values)
-                num_flips = strand_flipped.sum()
+                flip_01 = matched_snps['flip'].values
+                num_flips = flip_01.sum()
+
                 if num_flips > 0:
                     print(f"> Detected {num_flips} SNPs with strand flipping. Correcting summary statistics...")
 
                     # Correct strand information:
-                    self._a1[c] = matched_snps['A1_x'].values
-
-                    # Convert boolean flag to numeric vector:
-                    flip_01 = strand_flipped.astype(int)
+                    self._a1[c] = matched_snps['A1'].values
 
                     # Correct MAF:
                     if self.maf is not None:
-                        self.maf[c] = np.abs(flip_01 - self.maf[c])
+                        self.maf[c] = matched_snps['MAF'].values
 
                     # Correct BETA:
                     if self.beta_hats is not None:
-                        self.beta_hats[c] = (-2.*flip_01 + 1.) * self.beta_hats[c]
+                        self.beta_hats[c] = matched_snps['BETA'].values
 
                     # Correct Z-score:
                     if self.z_scores is not None:
-                        self.z_scores[c] = (-2.*flip_01 + 1.) * self.z_scores[c]
+                        self.z_scores[c] = matched_snps['Z'].values
 
         if update_ld:
             self.realign_ld()
@@ -1323,16 +1343,27 @@ class GWASDataLoader(object):
                 else:
                     raise FileNotFoundError
 
-            res = pd.read_csv(output_fname, sep="\s+")
-            # Merge to make sure that summary statistics are in order:
-            res = pd.DataFrame({'ID': self.snps[c]}).merge(res)
+            res = pd.read_csv(output_fname, delim_whitespace=True)
+            res.rename(columns={
+                '#CHROM': 'CHR',
+                'ID': 'SNP',
+                'P': 'PVAL',
+                'OBS_CT': 'N',
+                'A1_FREQ': 'MAF'
+            }, inplace=True)
 
-            self.n_per_snp[c] = res['OBS_CT'].values
-            self.maf[c] = res['A1_FREQ'].values
+            # Merge to make sure that summary statistics are in order:
+            res = merge_snp_tables(pd.DataFrame({'SNP': self.snps[c], 'A1': self._a1[c]}), res)
+
+            if len(res) != len(self.snps[c]):
+                raise ValueError("Length of GWAS table does not match number of SNPs.")
+
+            self.n_per_snp[c] = res['N'].values
+            self.maf[c] = res['MAF'].values
             self.beta_hats[c] = res['BETA'].values
             self.se[c] = res['SE'].values
             self.z_scores[c] = self.beta_hats[c] / self.se[c]
-            self.p_values[c] = res['P'].values
+            self.p_values[c] = res['PVAL'].values
 
     def perform_gwas(self):
         """
@@ -1419,8 +1450,14 @@ class GWASDataLoader(object):
 
             run_shell_script(" ".join(cmd))
 
-            freq_df = pd.read_csv(plink_output + ".afreq", sep="\s+")
-            self.maf[c] = pd.DataFrame({'ID': self.snps[c]}).merge(freq_df)['ALT_FREQS'].values
+            freq_df = pd.read_csv(plink_output + ".afreq", delim_whitespace=True)
+            freq_df.rename(columns={'ID': 'SNP', 'ALT': 'A1', 'ALT_FREQS': 'MAF'}, inplace=True)
+            merged_df = merge_snp_tables(pd.DataFrame({'SNP': self.snps[c], 'A1': self._a1[c]}), freq_df)
+
+            if len(merged_df) != len(self.snps[c]):
+                raise ValueError("Length of allele frequency table does not match number of SNPs.")
+
+            self.maf[c] = merged_df['MAF'].values
 
         return self.maf
 
@@ -1491,8 +1528,11 @@ class GWASDataLoader(object):
 
             run_shell_script(" ".join(cmd))
 
-            miss_df = pd.read_csv(plink_output + ".vmiss", sep="\s+")
+            miss_df = pd.read_csv(plink_output + ".vmiss", delim_whitespace=True)
             miss_df = pd.DataFrame({'ID': self.snps[c]}).merge(miss_df)
+
+            if len(miss_df) != len(self.snps[c]):
+                raise ValueError("Length of missingness table does not match number of SNPs.")
 
             self.n_per_snp[c] = (miss_df['OBS_CT'] - miss_df['MISSING_CT']).values
 
