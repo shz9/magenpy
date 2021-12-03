@@ -93,7 +93,6 @@ class GWASDataLoader(object):
         self.standardize_phenotype = standardize_phenotype
         self.phenotype_likelihood = phenotype_likelihood
         self.phenotype_id = None  # Name or ID of the phenotype
-        self.C = None  # Number of annotations
 
         # ------- LD computation options -------
         self.ld_estimator = ld_estimator
@@ -145,7 +144,12 @@ class GWASDataLoader(object):
         self.maf = None  # Minor allele frequency
 
         self._iid = None  # Individual IDs
+        
+        # ------- Functional annotation data -------
         self.annotations = None
+        self.num_annotations = None
+        self.annotation_names = None
+        self.annotation_snp_order = None
 
         # ------- LD-related data -------
         self.ld_boundaries = None
@@ -181,6 +185,7 @@ class GWASDataLoader(object):
             self.compute_ld()
 
         # ------- Read phenotype/sumstats files -------
+
         self.read_phenotypes(phenotype_file, phenotype_id=phenotype_id,
                              header=phenotype_header, phenotype_col=phenotype_col,
                              standardize=self.standardize_phenotype)
@@ -318,6 +323,11 @@ class GWASDataLoader(object):
 
             common_idx = intersect_arrays(snps, keep_snps, return_index=True)
 
+            # Filter annotations
+            if self.annotations is not None:
+                self.annotations[c] = self.annotations[c][common_idx,:]
+                self.annotation_snp_order[c] = self.annotation_snp_order[c][common_idx]
+
             # SNP vectors that must exist in all GDL objects:
             self._snps[c] = self._snps[c][common_idx]
             self._a1[c] = self._a1[c][common_idx]
@@ -428,9 +438,6 @@ class GWASDataLoader(object):
         if annot_files is None:
             return
 
-        if self.verbose:
-            print("> Reading annotation files...")
-
         if not iterable(annot_files):
             files_to_read = [annot_files]
         else:
@@ -438,24 +445,36 @@ class GWASDataLoader(object):
 
         assert len(files_to_read) == len(self.genotypes)
 
-        self.annotations = []
+        self.annotations = {}
+        self.annotation_snp_order = {}
 
-        for i, annot_file in enumerate(files_to_read):
+        for i, annot_file in tqdm(enumerate(files_to_read),
+                                  total=len(files_to_read),
+                                  desc="Reading annotation files",
+                                  disable=not self.verbose):
 
             try:
+                # read annotation file
                 annot_df = pd.read_csv(annot_file, sep="\t")
+                # assuming chromosome information is available in the annotation file name
+                # which has the following suffix: .[chromosome].annot
+                # e.g., .22.annot suffix for chromosome 22
+                # TODO improve this for more general cases
+                c = int(annot_file.split(".")[-2])
             except Exception as e:
                 self.annotations = None
                 raise e
 
             annot_df = annot_df.set_index('SNP')
             annot_df = annot_df.drop(['CHR', 'BP', 'CM', 'base'], axis=1)
-            annot_df = annot_df.loc[self.genotypes[i].variant.snp]
+            annot_df = annot_df.loc[self.snps[c]]
 
             if i == 0:
-                self.C = len(annot_df.columns)
-
-            self.annotations.append(da.array(annot_df.values))
+                self.num_annotations = len(annot_df.columns)
+                self.annotation_names = np.array(annot_df.columns)
+            
+            self.annotations[c] = np.array(annot_df.values)
+            self.annotation_snp_order[c] = np.array(annot_df.index)
 
     def read_genotypes(self, bed_files):
         """

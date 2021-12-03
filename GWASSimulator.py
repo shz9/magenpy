@@ -111,8 +111,8 @@ class GWASSimulator(GWASDataLoader):
         Simulate annotation weights, which would influence the variance in causal effect size
         :return:
         """
-        if self.C is not None:
-            self.annotation_weights = np.random.normal(scale=1./self.M, size=self.C)
+        if self.num_annotations is not None:
+            self.annotation_weights = np.random.normal(scale=1./self.M, size=self.num_annotations)
 
     def simulate_phenotypes(self):
         """

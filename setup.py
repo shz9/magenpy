@@ -13,7 +13,8 @@ ext_modules = cythonize([
     Extension("c_utils",
               ["c_utils.pyx"],
               libraries=["m"],
-              extra_compile_args=["-ffast-math", "-fopenmp"]
+              extra_compile_args=["-ffast-math", "-fopenmp"],
+              extra_link_args=["-fopenmp"],
               ),
     Extension("LDWrapper",
               ["LDWrapper.pyx"],
