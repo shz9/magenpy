@@ -1120,7 +1120,7 @@ class GWASDataLoader(object):
             if self.ld is not None:
 
                 ld_snps = self.ld[c].to_snp_table()
-                matched_snps = merge_snp_tables(ld_snps, sumstats_tables[c])
+                matched_snps = merge_snp_tables(ld_snps[['SNP', 'A1']], sumstats_tables[c])
 
                 # If the SNP list doesn't align with the matched SNPs,
                 # then filter the SNP list
