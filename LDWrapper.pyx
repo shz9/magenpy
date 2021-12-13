@@ -17,6 +17,9 @@ from .c_utils import zarr_islice
 
 
 cdef class LDWrapper:
+    """
+    TODO: Devise a way to represent this in terms of triangular matrices to reduce storage requirements.
+    """
 
     cdef:
         object _zarr
@@ -115,8 +118,7 @@ cdef class LDWrapper:
     def compute_ld_scores(self, corrected=True):
         """
         Computes the LD scores for all SNPs in the LD matrix.
-        :param corrected: Whether to use the sample-size corrected estimator (Bulik-Sullivan et al. 2015)
-        :return:
+        :param corrected: Use the sample-size corrected estimator (Bulik-Sullivan et al. 2015)
         """
 
         ld_scores = []
@@ -164,10 +166,6 @@ cdef class LDWrapper:
             raise e
 
     def load(self, start=0, end=None):
-        """
-        TODO: This implementation is not efficient with memory resources
-        Need to re-write.
-        """
 
         if end is None:
             end = len(self)

@@ -19,7 +19,7 @@ import zarr
 from .LDWrapper import LDWrapper
 from .c_utils import find_windowed_ld_boundaries, find_shrinkage_ld_boundaries, find_ld_block_boundaries
 from .ld_utils import (from_plink_ld_bin_to_zarr,
-                       from_plink_ld_table_to_zarr,
+                       from_plink_ld_table_to_zarr_chunked,
                        shrink_ld_matrix,
                        zarr_array_to_ragged,
                        rechunk_zarr,
@@ -890,11 +890,11 @@ class GWASDataLoader(object):
             max_kb = round(.001*(self.bp_pos[c].max() - self.bp_pos[c].min()))
 
             if self.ld_estimator in ('shrinkage', 'block'):
-                cmd.append("--r")
+                cmd.append("--r gz")
                 cmd.append(f"--ld-window {max_window_size} "
                            f"--ld-window-kb {max_kb}")
             elif self.ld_estimator == 'windowed':
-                cmd.append("--r")
+                cmd.append("--r gz")
                 cmd.append(f"--ld-window {len(self.snps[c]) + 1} "
                            f"--ld-window-kb {max_kb} "
                            f"--ld-window-cm {self.cm_window_cutoff}")
@@ -913,10 +913,10 @@ class GWASDataLoader(object):
                                                      fin_ld_store,
                                                      self.ld_boundaries[c])
             else:
-                z_ld_mat = from_plink_ld_table_to_zarr(f"{plink_output}.ld",
-                                                       fin_ld_store,
-                                                       self.ld_boundaries[c],
-                                                       self.snps[c])
+                z_ld_mat = from_plink_ld_table_to_zarr_chunked(f"{plink_output}.ld.gz",
+                                                               fin_ld_store,
+                                                               self.ld_boundaries[c],
+                                                               self.snps[c])
 
             # Add LD matrix properties:
             z_ld_mat.attrs['Chromosome'] = c
