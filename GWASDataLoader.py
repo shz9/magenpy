@@ -1325,7 +1325,7 @@ class GWASDataLoader(object):
                 self.config.get('plink2_path'),
                 f"--bfile {bf.replace('.bed', '')}",
                 f"--extract {snp_keepfile}",
-                f"--{plink_reg_type} hide-covar allow-no-covars cols=chrom,pos,alt1,ref,a1freq,nobs,beta,se,tz,p",
+                f"--{plink_reg_type} hide-covar cols=chrom,pos,alt1,ref,a1freq,nobs,beta,se,tz,p",
                 f"--pheno {phe_fname}",
                 f"--out {plink_output}"
             ]

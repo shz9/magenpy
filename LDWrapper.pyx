@@ -122,13 +122,14 @@ cdef class LDWrapper:
         """
 
         ld_scores = []
+        cdef int n = self.sample_size
 
         for snp_ld in self:
 
             ldsc = np.array(snp_ld)**2
 
             if corrected:
-                ldsc = ldsc - (1. - ldsc) / (self.sample_size - 2)
+                ldsc = ldsc - (1. - ldsc) / (n - 2)
 
             ld_scores.append(ldsc.sum())
 
@@ -137,7 +138,6 @@ cdef class LDWrapper:
     def store_size(self):
         """
         Returns the size of the compressed LD store in MB
-        :return:
         """
         return self.store.getsize() / 1024 ** 2
 
