@@ -158,8 +158,8 @@ def from_plink_ld_table_to_zarr_chunked(ld_file, dir_store, ld_boundaries, snps)
                       dtype=object,
                       object_codec=numcodecs.VLenArray(float))
 
-    # Create a dataframe of SNPs and their indices:
-    snp_df = pd.DataFrame({'SNP': snps}).reset_index()
+    # Create a dictionary mapping SNPs to their indices:
+    snp_dict = dict(zip(snps, np.arange(len(snps))))
 
     # The sparse matrix will help us convert from triangular
     # sparse matrix to square sparse matrix:
@@ -171,17 +171,14 @@ def from_plink_ld_table_to_zarr_chunked(ld_file, dir_store, ld_boundaries, snps)
     for ld_chunk in ld_chunks:
 
         # Create an indexed LD chunk:
-        idx_chunk = ld_chunk.merge(
-            snp_df.rename(columns={'SNP': 'SNP_A', 'index': 'index_A'})
-        ).merge(
-            snp_df.rename(columns={'SNP': 'SNP_B', 'index': 'index_B'})
-        )
+        ld_chunk['index_A'] = ld_chunk['SNP_A'].map(snp_dict)
+        ld_chunk['index_B'] = ld_chunk['SNP_B'].map(snp_dict)
 
-        idx_chunk['R'].values[idx_chunk['R'].values == 0.] = np.nan
+        ld_chunk['R'].values[ld_chunk['R'].values == 0.] = np.nan
 
         # Create a compressed sparse row matrix:
-        chunk_mat = csr_matrix((idx_chunk['R'].values,
-                               (idx_chunk['index_A'].values, idx_chunk['index_B'].values)),
+        chunk_mat = csr_matrix((ld_chunk['R'].values,
+                               (ld_chunk['index_A'].values, ld_chunk['index_B'].values)),
                                shape=(rows, rows))
 
         if sp_mat is None:
@@ -190,16 +187,22 @@ def from_plink_ld_table_to_zarr_chunked(ld_file, dir_store, ld_boundaries, snps)
         else:
             sp_mat = sp_mat + (chunk_mat + chunk_mat.T)
 
-        if idx_chunk['index_A'].max() // row_chunk_size > curr_chunk:
+        # The chunk of the snp of largest index:
+        max_index_chunk = ld_chunk['index_A'].max() // row_chunk_size
+
+        if max_index_chunk > curr_chunk:
             write_csr_to_zarr(sp_mat, z_arr,
                               start_row=curr_chunk*row_chunk_size,
-                              end_row=(idx_chunk['index_A'].max() // row_chunk_size)*row_chunk_size,
-                              ld_boundaries=ld_boundaries, purge_data=True)
-            curr_chunk = idx_chunk['index_A'].max() // row_chunk_size
+                              end_row=max_index_chunk*row_chunk_size,
+                              ld_boundaries=ld_boundaries,
+                              purge_data=True)
+            curr_chunk = max_index_chunk
 
     write_csr_to_zarr(sp_mat, z_arr,
-                      start_row=curr_chunk * row_chunk_size, end_row=(curr_chunk + 1) * row_chunk_size,
-                      ld_boundaries=ld_boundaries, purge_data=True)
+                      start_row=curr_chunk * row_chunk_size,
+                      end_row=(curr_chunk + 1) * row_chunk_size,
+                      ld_boundaries=ld_boundaries,
+                      purge_data=True)
 
     return z_arr
 
