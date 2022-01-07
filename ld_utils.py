@@ -2,6 +2,7 @@ import os
 import shutil
 import psutil
 
+from scipy.sparse import csr_matrix
 import pandas as pd
 import numpy as np
 import dask.array as da
@@ -75,6 +76,135 @@ def from_plink_ld_bin_to_zarr(bin_file, dir_store, ld_boundaries):
         z_rag[i*chunk_size:(i+1)*chunk_size] = ld_chunk
 
     return z_rag
+
+
+def write_csr_to_zarr(csr_mat, z_arr, start_row=None, end_row=None, ld_boundaries=None, purge_data=False):
+    """
+    Write from Scipy's csr matrix to Zarr array
+    :param csr_mat: A scipy compressed sparse row matrix `csr_matrix`
+    :param z_arr: A ragged zarr array with the same row dimension as the csr matrix
+    :param start_row: The start row
+    :param end_row: The end row
+    :param purge_data: If `True`, delete the data that was written to Zarr from `csr_mat`
+    :param ld_boundaries: If provided, we'd only write the elements within the provided boundaries.
+    """
+
+    if start_row is None:
+        start_row = 0
+
+    if end_row is None:
+        end_row = csr_mat.shape[0]
+    else:
+        end_row = min(end_row, csr_mat.shape[0])
+
+    ld_rows = []
+    for i in range(start_row, end_row):
+        if ld_boundaries is None:
+            ld_rows.append(np.nan_to_num(csr_mat[i, :].data))
+        else:
+            ld_rows.append(np.nan_to_num(csr_mat[i, ld_boundaries[0, i]:ld_boundaries[1, i]].data))
+
+    z_arr.oindex[np.arange(start_row, end_row)] = np.array(ld_rows + [None], dtype=object)[:-1]
+
+    if purge_data:
+        # Delete data from csr matrix:
+        csr_mat.data[csr_mat.indptr[start_row]:csr_mat.indptr[end_row - 1]] = 0.
+        csr_mat.eliminate_zeros()
+
+
+def from_plink_ld_table_to_zarr_chunked(ld_file, dir_store, ld_boundaries, snps):
+    """
+    Transform a PLINK LD table to Zarr ragged array.
+    PLINK LD tables are of the format:
+    CHR_A   BP_A   SNP_A  CHR_B   BP_B  SNP_B  R
+    This function deploys a chunked implementation so it only requires
+    modest memory.
+
+    :param dir_store: A path to the new Zarr store
+    :param ld_file: A path to the plink LD table
+    :param ld_boundaries: LD boundaries matrix
+    :param snps: A list of SNPs
+    """
+
+    # Preliminaries:
+
+    # Estimate row chunk-size for the Zarr array:
+    rows, avg_ncols = len(snps), int((ld_boundaries[1, :] - ld_boundaries[0, :]).mean())
+    chunks = estimate_row_chunk_size(rows, avg_ncols)
+
+    # Create a ragged Zarr array:
+    z_arr = zarr.open(dir_store,
+                      mode='w',
+                      shape=rows,
+                      chunks=chunks[:1],
+                      dtype=object,
+                      object_codec=numcodecs.VLenArray(float))
+
+    row_chunk_size = z_arr.chunks[0]
+
+    # Create a chunked iterator with pandas:
+    # Chunk size will correspond to the average chunk size for the Zarr array:
+    ld_chunks = pd.read_csv(ld_file,
+                            delim_whitespace=True,
+                            usecols=['SNP_A', 'SNP_B', 'R'],
+                            engine='c',
+                            chunksize=row_chunk_size*avg_ncols // 2)
+
+    # Create a ragged Zarr array:
+    z_arr = zarr.open(dir_store,
+                      mode='w',
+                      shape=rows,
+                      chunks=(row_chunk_size,),
+                      dtype=object,
+                      object_codec=numcodecs.VLenArray(float))
+
+    # Create a dictionary mapping SNPs to their indices:
+    snp_dict = dict(zip(snps, np.arange(len(snps))))
+
+    # The sparse matrix will help us convert from triangular
+    # sparse matrix to square sparse matrix:
+    sp_mat = None
+
+    curr_chunk = 0
+
+    # For each chunk in the LD file:
+    for ld_chunk in ld_chunks:
+
+        # Create an indexed LD chunk:
+        ld_chunk['index_A'] = ld_chunk['SNP_A'].map(snp_dict)
+        ld_chunk['index_B'] = ld_chunk['SNP_B'].map(snp_dict)
+
+        ld_chunk['R'].values[ld_chunk['R'].values == 0.] = np.nan
+
+        # Create a compressed sparse row matrix:
+        chunk_mat = csr_matrix((ld_chunk['R'].values,
+                               (ld_chunk['index_A'].values, ld_chunk['index_B'].values)),
+                               shape=(rows, rows))
+
+        if sp_mat is None:
+            sp_mat = chunk_mat + chunk_mat.T
+            sp_mat.setdiag(1.)
+        else:
+            sp_mat = sp_mat + (chunk_mat + chunk_mat.T)
+
+        # The chunk of the snp of largest index:
+        max_index_chunk = ld_chunk['index_A'].max() // row_chunk_size
+
+        if max_index_chunk > curr_chunk:
+            write_csr_to_zarr(sp_mat, z_arr,
+                              start_row=curr_chunk*row_chunk_size,
+                              end_row=max_index_chunk*row_chunk_size,
+                              ld_boundaries=ld_boundaries,
+                              purge_data=True)
+            curr_chunk = max_index_chunk
+
+    write_csr_to_zarr(sp_mat, z_arr,
+                      start_row=curr_chunk * row_chunk_size,
+                      end_row=(curr_chunk + 1) * row_chunk_size,
+                      ld_boundaries=ld_boundaries,
+                      purge_data=True)
+
+    return z_arr
 
 
 def from_plink_ld_table_to_zarr(ld_file, dir_store, ld_boundaries=None, snps=None):

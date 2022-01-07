@@ -19,7 +19,7 @@ import zarr
 from .LDWrapper import LDWrapper
 from .c_utils import find_windowed_ld_boundaries, find_shrinkage_ld_boundaries, find_ld_block_boundaries
 from .ld_utils import (from_plink_ld_bin_to_zarr,
-                       from_plink_ld_table_to_zarr,
+                       from_plink_ld_table_to_zarr_chunked,
                        shrink_ld_matrix,
                        zarr_array_to_ragged,
                        rechunk_zarr,
@@ -905,11 +905,11 @@ class GWASDataLoader(object):
             max_kb = round(.001*(self.bp_pos[c].max() - self.bp_pos[c].min()))
 
             if self.ld_estimator in ('shrinkage', 'block'):
-                cmd.append("--r")
+                cmd.append("--r gz")
                 cmd.append(f"--ld-window {max_window_size} "
                            f"--ld-window-kb {max_kb}")
             elif self.ld_estimator == 'windowed':
-                cmd.append("--r")
+                cmd.append("--r gz")
                 cmd.append(f"--ld-window {len(self.snps[c]) + 1} "
                            f"--ld-window-kb {max_kb} "
                            f"--ld-window-cm {self.cm_window_cutoff}")
@@ -928,10 +928,10 @@ class GWASDataLoader(object):
                                                      fin_ld_store,
                                                      self.ld_boundaries[c])
             else:
-                z_ld_mat = from_plink_ld_table_to_zarr(f"{plink_output}.ld",
-                                                       fin_ld_store,
-                                                       self.ld_boundaries[c],
-                                                       self.snps[c])
+                z_ld_mat = from_plink_ld_table_to_zarr_chunked(f"{plink_output}.ld.gz",
+                                                               fin_ld_store,
+                                                               self.ld_boundaries[c],
+                                                               self.snps[c])
 
             # Add LD matrix properties:
             z_ld_mat.attrs['Chromosome'] = c
@@ -1340,7 +1340,7 @@ class GWASDataLoader(object):
                 self.config.get('plink2_path'),
                 f"--bfile {bf.replace('.bed', '')}",
                 f"--extract {snp_keepfile}",
-                f"--{plink_reg_type} hide-covar allow-no-covars cols=chrom,pos,alt1,ref,a1freq,nobs,beta,se,tz,p",
+                f"--{plink_reg_type} hide-covar cols=chrom,pos,alt1,ref,a1freq,nobs,beta,se,tz,p",
                 f"--pheno {phe_fname}",
                 f"--out {plink_output}"
             ]
@@ -1567,11 +1567,13 @@ class GWASDataLoader(object):
 
         return self.n_per_snp
 
-    def compute_xy_per_snp(self):
+    def compute_snp_pseudo_corr(self):
         """
-        Computes the X_jTy correlation (standardized beta) per SNP
-        using Equation 15 in Mak et al. 2017
-        TODO: Change the name of this method
+        Computes the pseudo-correlation coefficient (standardized beta) between the SNP and
+        the phenotype (X_jTy / N) from GWAS summary statistics.
+        Uses Equation 15 in Mak et al. 2017
+        beta =  z_j / sqrt(n - 1 + z_j^2)
+        Where z_j is the marginal GWAS Z-score
         """
 
         if self.z_scores is None:
@@ -1584,13 +1586,26 @@ class GWASDataLoader(object):
                            total=len(self.chromosomes),
                            desc="Computing SNP-wise correlations",
                            disable=not self.verbose):
-            snp_corr[c] = zsc / (np.sqrt(self.n_per_snp[c] - 1 + zsc))
+            # z_j / sqrt(n - 1 + z_j^2)
+            snp_corr[c] = zsc / (np.sqrt(self.n_per_snp[c] - 1 + zsc**2))
 
         return snp_corr
 
     def compute_yy_per_snp(self):
         """
-        Computes (yTy)j following SBayesR and Yang et al. (2012)
+        Computes the quantity (y'y)_j/n_j following SBayesR (Lloyd-Jones 2019) and Yang et al. (2012).
+        (y'y)_j/n_j is the empirical variance for continuous phenotypes and may be estimated
+        from GWAS summary statistics by re-arranging the equation for the
+        squared standard error:
+
+        SE(b_j)^2 = (Var(y) - Var(x_j)*b_j^2) / (Var(x)*n)
+
+        Which gives the following estimate:
+
+        (y'y)_j / n_j = (n_j - 2)*SE(b_j)^2 + b_j^2
+
+        TODO: Verify the derivation and logic here, ensure it's consistent.
+
         """
 
         if self.beta_hats is None:
