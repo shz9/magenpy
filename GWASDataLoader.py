@@ -147,7 +147,7 @@ class GWASDataLoader(object):
         
         # ------- Functional annotation data -------
         self.annotations = None
-        self.num_annotations = None
+        self.C = None
         self.annotation_names = None
         self.annotation_snp_order = None
 
@@ -456,21 +456,17 @@ class GWASDataLoader(object):
             try:
                 # read annotation file
                 annot_df = pd.read_csv(annot_file, sep="\t")
-                # assuming chromosome information is available in the annotation file name
-                # which has the following suffix: .[chromosome].annot
-                # e.g., .22.annot suffix for chromosome 22
-                # TODO improve this for more general cases
-                c = int(annot_file.split(".")[-2])
             except Exception as e:
                 self.annotations = None
                 raise e
 
+            c = annot_df["CHR"][0]
             annot_df = annot_df.set_index('SNP')
             annot_df = annot_df.drop(['CHR', 'BP', 'CM', 'base'], axis=1)
             annot_df = annot_df.loc[self.snps[c]]
 
             if i == 0:
-                self.num_annotations = len(annot_df.columns)
+                self.C = len(annot_df.columns)
                 self.annotation_names = np.array(annot_df.columns)
             
             self.annotations[c] = np.array(annot_df.values)
