@@ -65,7 +65,7 @@ cpdef find_ld_block_boundaries(long[:] pos, long[:, :] block_boundaries):
                 v_max[i] = j
                 break
 
-        for j in range(i, 0, -1):
+        for j in range(i, -1, -1):
             if pos[j] < block_start:
                 v_min[i] = j + 1
                 break
@@ -86,7 +86,7 @@ cpdef find_windowed_ld_boundaries(double[:] cm_dist, double max_dist):
                 v_max[i] = j
                 break
 
-        for j in range(i, 0, -1):
+        for j in range(i, -1, -1):
             if cm_dist[i] - cm_dist[j] > max_dist:
                 v_min[i] = j + 1
                 break
@@ -113,7 +113,7 @@ cpdef find_shrinkage_ld_boundaries(double[:] cm_dist,
                 v_max[i] = j
                 break
 
-        for j in range(i, 0, -1):
+        for j in range(i, -1, -1):
             if exp(-mult_factor*(cm_dist[i] - cm_dist[j])) < cutoff:
                 v_min[i] = j + 1
                 break

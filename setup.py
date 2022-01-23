@@ -15,8 +15,8 @@ ext_modules = cythonize([
               libraries=["m"],
               extra_compile_args=["-ffast-math", "-fopenmp"]
               ),
-    Extension("LDWrapper",
-              ["LDWrapper.pyx"],
+    Extension("LDMatrix",
+              ["LDMatrix.pyx"],
               libraries=["m"],
               extra_compile_args=["-ffast-math"],
               )

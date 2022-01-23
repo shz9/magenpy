@@ -16,7 +16,7 @@ import numpy as np
 from scipy import stats
 import zarr
 
-from .LDWrapper import LDWrapper
+from .LDMatrix import LDMatrix
 from .c_utils import find_windowed_ld_boundaries, find_shrinkage_ld_boundaries, find_ld_block_boundaries
 from .ld_utils import (from_plink_ld_bin_to_zarr,
                        from_plink_ld_table_to_zarr_chunked,
@@ -734,7 +734,7 @@ class GWASDataLoader(object):
             init_snps = False
 
         for f in ld_store_files:
-            z = LDWrapper.from_path(f)
+            z = LDMatrix.from_path(f)
             self.ld[z.chromosome] = z
             # If the SNP list is not set,
             # initialize it with the SNP list from the LD store:
@@ -962,7 +962,8 @@ class GWASDataLoader(object):
             if ld_estimator_properties is not None:
                 z_ld_mat.attrs['Estimator properties'] = ld_estimator_properties
 
-            self.ld[c] = LDWrapper(z_ld_mat)
+            self.ld[c] = LDMatrix(z_ld_mat)
+            self.ld[c].set_store_attr('LDScore', self.ld[c].compute_ld_scores().tolist())
 
     def compute_ld(self):
         """
@@ -1066,7 +1067,8 @@ class GWASDataLoader(object):
             if ld_estimator_properties is not None:
                 z_ld_mat.attrs['Estimator properties'] = ld_estimator_properties
 
-            self.ld[c] = LDWrapper(z_ld_mat)
+            self.ld[c] = LDMatrix(z_ld_mat)
+            self.ld[c].set_store_attr('LDScore', self.ld[c].compute_ld_scores().tolist())
 
     def get_ld_matrices(self):
         return self.ld
@@ -1075,7 +1077,7 @@ class GWASDataLoader(object):
         if self.ld is None:
             return None
 
-        return {c: ld.ld_boundaries for c, ld in self.ld.items()}
+        return {c: ld.get_masked_boundaries() for c, ld in self.ld.items()}
 
     def realign_ld(self):
         """
@@ -1096,7 +1098,7 @@ class GWASDataLoader(object):
                             disable=not self.verbose):
             ld_snps = self.ld[c].snps
             if not np.array_equal(snps, ld_snps):
-                self.ld[c] = LDWrapper(
+                self.ld[c] = LDMatrix(
                     zarr_array_to_ragged(self.ld[c].z_array,
                                          dir_store=osp.join(ld_tmpdir.name, f'chr_{c}'),
                                          keep_snps=snps,
@@ -1119,16 +1121,33 @@ class GWASDataLoader(object):
             # Harmonize SNPs in LD store and summary statistics/genotype matrix:
             if self.ld is not None:
 
-                ld_snps = self.ld[c].to_snp_table()
-                matched_snps = merge_snp_tables(ld_snps[['SNP', 'A1']], sumstats_tables[c])
+                self.ld[c].set_mask(None)
+
+                ld_snps = self.ld[c].to_snp_table(col_subset=['SNP', 'A1'])
+                matched_snps = merge_snp_tables(ld_snps, sumstats_tables[c])
 
                 # If the SNP list doesn't align with the matched SNPs,
                 # then filter the SNP list
                 if len(snps) != len(matched_snps):
                     self.filter_snps(matched_snps['SNP'].values, chrom=c)
-                    update_ld = True
-                elif len(matched_snps) != len(ld_snps):
-                    update_ld = True
+
+                if len(matched_snps) != len(ld_snps):
+
+                    # If the percentage of SNPs that will need to be excluded from the
+                    # LD matrix exceeds 30% (and greater than 5000), then copy and update the matrix.
+                    # Otherwise, introduce a mask that ensures those SNPs are excluded from
+                    # downstream tasks.
+
+                    n_miss = len(ld_snps) - len(matched_snps)
+                    if float(n_miss) / len(ld_snps) > .3 and n_miss > 5000:
+                        update_ld = True
+                    else:
+                        remain_index = intersect_arrays(ld_snps['SNP'].values,
+                                                        matched_snps['SNP'].values,
+                                                        return_index=True)
+                        mask = np.zeros(len(ld_snps))
+                        mask[remain_index] = 1
+                        self.ld[c].set_mask(mask.astype(bool))
 
                 flip_01 = matched_snps['flip'].values
                 num_flips = flip_01.sum()
@@ -1401,11 +1420,11 @@ class GWASDataLoader(object):
 
         chr_h2g = {}
 
-        for c, ldw in tqdm(self.ld.items(),
+        for c, ldm in tqdm(self.ld.items(),
                            total=len(self.chromosomes),
-                           desc="Computing LD scores",
+                           desc="Estimating SNP-heritability",
                            disable=not self.verbose):
-            ldsc = ldw.compute_ld_scores()
+            ldsc = ldm.ld_score
             xi_sq = self.z_scores[c]**2
 
             h2g = (xi_sq.mean() - 1.)*len(ldsc) / (ldsc.mean()*self.N)
