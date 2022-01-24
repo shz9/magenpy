@@ -143,7 +143,8 @@ cdef class LDMatrix:
 
         if ld_score is None:
             ld_score = self.compute_ld_scores()
-            self.set_store_attr('LDScore', ld_score.tolist())
+            if self._mask is None:
+                self.set_store_attr('LDScore', ld_score.tolist())
         else:
             ld_score = np.array(ld_score)
 
@@ -271,6 +272,11 @@ cdef class LDMatrix:
         self._data = None
         self.in_memory = False
         self.index = 0
+
+    def iterate_chunks(self):
+        # TODO: Incorporate the mask into the chunk iterator
+        for i in range(len(self) // self.chunk_size + 1):
+            yield self.z_array[i*self.chunk_size:(i + 1)*self.chunk_size]
 
     def __getstate__(self):
         return self.store.path, self.in_memory, self._mask
