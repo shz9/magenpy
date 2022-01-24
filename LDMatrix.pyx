@@ -185,7 +185,7 @@ cdef class LDMatrix:
             end_pos = curr_ld_bounds[1, :] - n_excluded[curr_ld_bounds[1, :] - 1]
 
             # Return masked boundaries array:
-            return np.array([start_pos, end_pos])[:, self._mask]
+            return np.array([start_pos[self._mask], end_pos[self._mask]])
 
     def to_snp_table(self, col_subset=('CHR', 'SNP', 'POS', 'A1', 'MAF')):
 
