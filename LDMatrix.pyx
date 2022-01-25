@@ -282,7 +282,6 @@ cdef class LDMatrix:
                 else:
                     self._data.append(np.array([np.nan]))
 
-
     def release(self):
         self._data = None
         self.in_memory = False
@@ -330,14 +329,15 @@ cdef class LDMatrix:
 
         if self._mask is not None:
 
-            for i in range(0, len(self) - self.index + 1):
-                try:
-                    if self._mask[self.index + i]:
-                        break
-                except IndexError:
-                    pass
+            try:
+                if not self._mask[self.index]:
+                    for i in range(0, len(self) - self.index + 1):
+                        if self._mask[self.index + i]:
+                            break
 
-            self.index += i
+                    self.index += i
+            except IndexError:
+                pass
 
         if self.index == len(self):
             self.index = 0
