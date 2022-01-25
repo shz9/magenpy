@@ -321,7 +321,12 @@ cdef class LDMatrix:
 
     def __next__(self):
 
-        cdef unsigned int i
+        cdef int i, curr_chunk, index_chunk
+
+        if self.index == 0:
+            curr_chunk = -1
+        else:
+            curr_chunk = (self.index - 1) // self.chunk_size
 
         if self._mask is not None:
 
@@ -343,8 +348,9 @@ cdef class LDMatrix:
         if self.in_memory:
             next_item = self._data[self.index]
         else:
-            if self.index % self.chunk_size == 0:
-                self.load(start=self.index, end=self.index + self.chunk_size)
+            index_chunk = self.index // self.chunk_size
+            if index_chunk > curr_chunk:
+                self.load(start=index_chunk * self.chunk_size, end=(index_chunk + 1) * self.chunk_size)
 
             next_item = self._data[self.index % self.chunk_size]
 
