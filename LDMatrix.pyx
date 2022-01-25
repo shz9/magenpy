@@ -163,6 +163,9 @@ cdef class LDMatrix:
         self._mask = mask
         # Load the LD boundaries:
         ld_bounds = self.ld_boundaries
+        # If the data is already in memory, reload:
+        if self.in_memory:
+            self.load()
 
     def get_masked_boundaries(self):
         """
@@ -264,9 +267,21 @@ cdef class LDMatrix:
 
         self._data = []
 
-        for d in zarr_islice(self._zarr, start, end):
-            # TODO: Figure out a way to get around copying
-            self._data.append(d.copy())
+        if self._mask is None:
+
+            for d in zarr_islice(self._zarr, start, end):
+                # TODO: Figure out a way to get around copying
+                self._data.append(d.copy())
+
+        else:
+
+            for i, d in enumerate(zarr_islice(self._zarr, start, end), start):
+                if self._mask[i]:
+                    bound_start, bound_end = self._ld_boundaries[:, i]
+                    self._data.append(d[self._mask[bound_start: bound_end]].copy())
+                else:
+                    self._data.append(np.array([np.nan]))
+
 
     def release(self):
         self._data = None
@@ -274,7 +289,7 @@ cdef class LDMatrix:
         self.index = 0
 
     def iterate_chunks(self):
-        # TODO: Incorporate the mask into the chunk iterator
+        # TODO: Incorporate the mask into the chunk iterator?
         for i in range(len(self) // self.chunk_size + 1):
             yield self.z_array[i*self.chunk_size:(i + 1)*self.chunk_size]
 
@@ -288,7 +303,7 @@ cdef class LDMatrix:
         self._zarr = zarr.open(path)
         self.set_mask(mask)
 
-        if in_mem:
+        if in_mem and mask is not None:
             self.load()
 
     def __len__(self):
@@ -306,51 +321,32 @@ cdef class LDMatrix:
 
     def __next__(self):
 
+        cdef unsigned int i
+
+        if self._mask is not None:
+
+            for i in range(0, len(self) - self.index + 1):
+                try:
+                    if self._mask[self.index + i]:
+                        break
+                except IndexError:
+                    pass
+
+            self.index += i
+
         if self.index == len(self):
             self.index = 0
             raise StopIteration
 
         cdef double[::1] next_item
 
-        if self._mask is None:
-
-            if self.in_memory:
-                next_item = self._data[self.index]
-            else:
-                if self.index % self.chunk_size == 0:
-                    self.load(start=self.index, end=self.index + self.chunk_size)
-
-                next_item = self._data[self.index % self.chunk_size]
-
+        if self.in_memory:
+            next_item = self._data[self.index]
         else:
-            # If there's a mask, we need to fetch the next unmasked element
-            # and set the index to point to the following one.
+            if self.index % self.chunk_size == 0:
+                self.load(start=self.index, end=self.index + self.chunk_size)
 
-            if self.index == 0:
-                curr_chunk = -1
-            else:
-                curr_chunk = (self.index - 1) // self.chunk_size
-
-            # Keep iterating until finding a SNP that is included in the mask:
-            while not self._mask[self.index]:
-                self.index += 1
-
-                if self.index == len(self):
-                    self.index = 0
-                    raise StopIteration
-
-            # Extract the LD boundaries:
-            bound_start, bound_end = self._ld_boundaries[:, self.index]
-
-            if self.in_memory:
-                next_item = self._data[self.index][self._mask[bound_start: bound_end]]
-            else:
-
-                index_chunk = self.index // self.chunk_size
-                if index_chunk > curr_chunk:
-                    self.load(start=index_chunk*self.chunk_size , end=(index_chunk + 1)*self.chunk_size)
-
-                next_item = self._data[self.index % self.chunk_size][self._mask[bound_start: bound_end]]
+            next_item = self._data[self.index % self.chunk_size]
 
         self.index += 1
 
