@@ -951,7 +951,8 @@ class GWASDataLoader(object):
                 f"--bfile {b_file.replace('.bed', '')}",
                 f"--keep {keep_file}",
                 f"--extract {snp_keepfile}",
-                f"--out {plink_output}"
+                f"--out {plink_output}",
+                f"--threads {self.n_threads}"
             ]
 
             # For the block and shrinkage estimators, ask plink to compute
@@ -1293,6 +1294,8 @@ class GWASDataLoader(object):
             for i in range(betas_shape):
                 df['BETA' + str(i)] = betas[c][:, i]
 
+            df = df.loc[df[['BETA' + str(i) for i in range(betas_shape)]].sum(axis=1) != 0]
+
             try:
                 df.to_csv(eff_file, index=False, sep="\t")
 
@@ -1302,7 +1305,8 @@ class GWASDataLoader(object):
                     f"--keep {keep_file}",
                     f"--score {eff_file} 1 2 header-read cols=+scoresums variance-standardize",
                     score_col_nums,
-                    f"--out {eff_file.replace('.txt', '')}"
+                    f"--out {eff_file.replace('.txt', '')}",
+                    f"--threads {self.n_threads}"
                 ]
 
                 try:
@@ -1310,8 +1314,7 @@ class GWASDataLoader(object):
                     if not osp.isfile(eff_file.replace('.txt', '.sscore')):
                         raise FileNotFoundError
                 except Exception as e:
-                    raise Exception("plink polygenic scoring failed to run!\n"
-                                    "Deployed command:\n"
+                    raise Exception("plink polygenic scoring failed to run!\nDeployed command:" +
                                     " ".join(cmd))
 
                 dtypes = {'FID': str, 'IID': str}
@@ -1427,7 +1430,8 @@ class GWASDataLoader(object):
                 f"--extract {snp_keepfile}",
                 f"--{plink_reg_type} hide-covar cols=chrom,pos,alt1,ref,a1freq,nobs,beta,se,tz,p",
                 f"--pheno {phe_fname}",
-                f"--out {plink_output}"
+                f"--out {plink_output}",
+                f"--threads {self.n_threads}"
             ]
 
             if self.standardize_phenotype:
@@ -1545,7 +1549,8 @@ class GWASDataLoader(object):
                 f"--keep {keep_file}",
                 f"--extract {snp_keepfile}",
                 f"--freq",
-                f"--out {plink_output}"
+                f"--out {plink_output}",
+                f"--threads {self.n_threads}"
             ]
 
             run_shell_script(" ".join(cmd))
@@ -1623,7 +1628,8 @@ class GWASDataLoader(object):
                 f"--keep {keep_file}",
                 f"--extract {snp_keepfile}",
                 f"--missing variant-only",
-                f"--out {plink_output}"
+                f"--out {plink_output}",
+                f"--threads {self.n_threads}"
             ]
 
             run_shell_script(" ".join(cmd))
