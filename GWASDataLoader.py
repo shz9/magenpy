@@ -531,7 +531,7 @@ class GWASDataLoader(object):
         """
 
         if self.use_plink:
-            self.read_genotypes_plink(bed_files)
+            return self.read_genotypes_plink(bed_files)
 
         if bed_files is None:
             return
