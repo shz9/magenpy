@@ -1304,13 +1304,21 @@ class GWASDataLoader(object):
                     score_col_nums,
                     f"--out {eff_file.replace('.txt', '')}"
                 ]
-                run_shell_script(" ".join(cmd))
+
+                try:
+                    run_shell_script(" ".join(cmd))
+                    if not osp.isfile(eff_file.replace('.txt', '.sscore')):
+                        raise FileNotFoundError
+                except Exception as e:
+                    raise Exception("plink polygenic scoring failed to run!\n"
+                                    "Deployed command:\n"
+                                    " ".join(cmd))
 
                 dtypes = {'FID': str, 'IID': str}
                 for i in range(betas_shape):
                     dtypes.update({'PRS' + str(i): np.float64})
 
-                chr_pgs = pd.read_csv(eff_file.replace('.txt', '.sscore'), sep='\s+',
+                chr_pgs = pd.read_csv(eff_file.replace('.txt', '.sscore'), delim_whitespace=True,
                                       names=['FID', 'IID'] + ['PRS' + str(i) for i in range(betas_shape)],
                                       skiprows=1,
                                       usecols=[0, 1] + [4 + betas_shape + i for i in range(betas_shape)],
