@@ -26,7 +26,8 @@ from .ld_utils import (from_plink_ld_bin_to_zarr,
                        move_ld_store)
 
 from .model_utils import standardize_genotype_matrix, merge_snp_tables
-from .parsers import read_snp_filter_file, read_individual_filter_file, parse_ld_block_data
+from .parsers.plink_parsers import parse_fam_file, parse_bim_file
+from .parsers.misc_parsers import read_snp_filter_file, read_individual_filter_file, parse_ld_block_data
 from .utils import intersect_arrays, makedir, iterable, get_filenames, run_shell_script
 
 
@@ -144,6 +145,7 @@ class GWASDataLoader(object):
         self._a2 = None  # Major allele
         self.maf = None  # Minor allele frequency
 
+        self._fid = None  # Family IDs
         self._iid = None  # Individual IDs
         self.annotations = None
 
@@ -247,7 +249,7 @@ class GWASDataLoader(object):
         """
 
         if agg == 'max':
-            if self.genotypes is not None:
+            if self._iid is not None:
                 return len(self._iid)
             else:
                 if self.n_per_snp is None:
@@ -414,11 +416,14 @@ class GWASDataLoader(object):
 
     def filter_samples(self, keep_samples):
 
-        common_samples = intersect_arrays(self._iid, keep_samples)
+        common_samples = intersect_arrays(self._iid, keep_samples, return_index=True)
 
-        for c, gt in self.genotypes.items():
-            self.genotypes[c] = gt.sel(sample=common_samples)
-            self._iid = self.genotypes[c].sample.values
+        for c in self.chromosomes:
+            if self.genotypes is not None:
+                self.genotypes[c] = self.genotypes[c].isel(sample=common_samples)
+
+            self._fid = self._fid[common_samples]
+            self._iid = self._iid[common_samples]
 
     def read_annotations(self, annot_files):
         """
@@ -457,10 +462,76 @@ class GWASDataLoader(object):
 
             self.annotations.append(da.array(annot_df.values))
 
+    def read_genotypes_plink(self, bed_files):
+        """
+        This is an alternative to `.read_genotypes` that doesn't attempt to
+        parse to process the genotype matrix and instead focuses on loading
+        the individual and SNP data and preparing it for downstream tasks.
+        """
+
+        if bed_files is None:
+            return
+
+        if not iterable(bed_files):
+            bed_files = get_filenames(bed_files, extension='.bed')
+
+        self._snps = {}
+        self._a1 = {}
+        self._a2 = {}
+        self._cm_pos = {}
+        self._bp_pos = {}
+        self.genotypes = {}
+        self.bed_files = {}
+
+        for i, bfile in tqdm(enumerate(bed_files),
+                             total=len(bed_files),
+                             desc="Reading genotype files",
+                             disable=not self.verbose):
+
+            # Read plink file:
+            try:
+                bim_df = parse_bim_file(bfile)
+                if i == 0:
+                    fam_df = parse_fam_file(bfile)
+            except Exception as e:
+                self.genotypes = None
+                self._fid = None
+                self._iid = None
+                raise e
+
+            # Filter individuals:
+            if self.keep_individuals is not None and i == 0:
+                common_samples = intersect_arrays(fam_df.IID.values, self.keep_individuals, return_index=True)
+                fam_df = fam_df.iloc[common_samples, ]
+
+            # Filter SNPs:
+            if self.keep_snps is not None:
+                common_snps = intersect_arrays(bim_df.SNP.values, self.keep_snps, return_index=True)
+                bim_df = bim_df.iloc[common_snps, ]
+
+            # Obtain information about current chromosome:
+            chr_id = int(bim_df.CHR.values[0])
+
+            # Add filename to the bedfiles dictionary:
+            self.bed_files[chr_id] = bfile
+            # Keep track of the SNPs:
+            self._snps[chr_id] = bim_df.SNP.values
+            self._a1[chr_id] = bim_df.A1.values
+            self._a2[chr_id] = bim_df.A2.values
+            self._bp_pos[chr_id] = bim_df.POS.values
+            self._cm_pos[chr_id] = bim_df.cM.values
+
+            if i == 0:
+                self._fid = fam_df.FID.values
+                self._iid = fam_df.IID.values
+
     def read_genotypes(self, bed_files):
         """
         Read the genotype files
         """
+
+        if self.use_plink:
+            self.read_genotypes_plink(bed_files)
 
         if bed_files is None:
             return
@@ -488,6 +559,7 @@ class GWASDataLoader(object):
                 gt_ac = read_plink1_bin(bfile, ref="a0", verbose=False)
             except Exception as e:
                 self.genotypes = None
+                self._fid = None
                 self._iid = None
                 raise e
 
@@ -516,7 +588,8 @@ class GWASDataLoader(object):
             self._cm_pos[chr_id] = gt_ac.variant.cm.values
 
             if i == 0:
-                self._iid = gt_ac.sample.values
+                self._fid = gt_ac.fid.values
+                self._iid = gt_ac.iid.values
 
             self.genotypes[chr_id] = gt_ac
 
@@ -1743,14 +1816,12 @@ class GWASDataLoader(object):
 
     def to_individual_table(self):
 
-        if self.genotypes is None:
+        if self._iid is None:
             raise Exception("Individual data is not provided!")
 
-        genotype_data = next(iter(self.genotypes.values()))
-
         return pd.DataFrame({
-            'FID': genotype_data.sample.fid.values,
-            'IID': genotype_data.sample.iid.values
+            'FID': self._fid,
+            'IID': self._iid
         })
 
     def to_phenotype_table(self):

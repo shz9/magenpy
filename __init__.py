@@ -4,7 +4,7 @@ import configparser
 from .GWASDataLoader import GWASDataLoader
 from .GWASSimulator import GWASSimulator
 from .TransethnicGWASSimulator import TransethnicGWASSimulator
-from .LDWrapper import LDWrapper
+from .LDMatrix import LDMatrix
 
 config = configparser.ConfigParser()
 config.read(osp.join(osp.dirname(__file__), 'config.ini'))
