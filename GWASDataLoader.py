@@ -168,13 +168,6 @@ class GWASDataLoader(object):
         self.read_genotypes(bed_files)
         self.read_annotations(annotation_files)
 
-        if self.genotypes is not None:
-
-            if remove_duplicated:
-                self.filter_duplicated_snps()
-
-            self.filter_by_allele_frequency(min_maf=min_maf, min_mac=min_mac)
-
         # ------- Compute LD matrices -------
 
         if ld_store_files is not None:
@@ -189,6 +182,8 @@ class GWASDataLoader(object):
         self.read_summary_stats(sumstats_files, sumstats_format)
 
         # ------- Harmonize data sources -------
+
+        self.filter_by_allele_frequency(min_maf=min_maf, min_mac=min_mac)
 
         if self.genotypes is None and remove_duplicated:
             self.filter_duplicated_snps()
@@ -419,7 +414,7 @@ class GWASDataLoader(object):
         common_samples = intersect_arrays(self._iid, keep_samples, return_index=True)
 
         for c in self.chromosomes:
-            if self.genotypes is not None:
+            if self.genotypes is not None and c in self.genotypes:
                 self.genotypes[c] = self.genotypes[c].isel(sample=common_samples)
 
             self._fid = self._fid[common_samples]
@@ -480,7 +475,6 @@ class GWASDataLoader(object):
         self._a2 = {}
         self._cm_pos = {}
         self._bp_pos = {}
-        self.genotypes = {}
         self.bed_files = {}
 
         for i, bfile in tqdm(enumerate(bed_files),
