@@ -1,5 +1,5 @@
 import pandas as pd
-from prs.gwasimulator.utils import get_filenames
+from ..utils import get_filenames
 
 
 def read_snp_filter_file(filename, snp_id_col=0):
