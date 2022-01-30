@@ -650,7 +650,10 @@ class GWASDataLoader(object):
         print("> Reading GWAS summary statistics...")
 
         for ssf in sumstats_files:
-            ss.append(pd.read_csv(ssf, sep="\s+"))
+            ss_df = pd.read_csv(ssf, delim_whitespace=True)
+            # Drop missing values:
+            ss_df = ss_df.dropna()
+            ss.append(ss_df)
 
         ss = pd.concat(ss)
 
@@ -1449,6 +1452,8 @@ class GWASDataLoader(object):
                 'OBS_CT': 'N',
                 'A1_FREQ': 'MAF'
             }, inplace=True)
+
+            # TODO: Filter NaN values that may arise from PLINK.
 
             # Merge to make sure that summary statistics are in order:
             res = merge_snp_tables(pd.DataFrame({'SNP': self.snps[c], 'A1': self._a1[c]}), res)
