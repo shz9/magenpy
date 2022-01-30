@@ -1494,30 +1494,42 @@ class GWASDataLoader(object):
 
     def estimate_snp_heritability(self, per_chromosome=False):
         """
-        Estimates SNP heritability using approximate formula
-        from Vilhjálmsson et al. 2015.
+        Provides an estimate of SNP heritability from summary statistics using
+        a simplified version of the LD Score Regression framework.
+        E[X_j^2] = h_g^2*l_j + int
+        Where the response is the Chi-Squared statistic for SNP j
+        and the variable is its LD score.
+
+        TODO: Maybe move into its own module?
+
         :param per_chromosome: Estimate heritability per chromosome
         """
 
         if self.ld is None or self.z_scores is None:
             raise Exception("Estimating SNP heritability requires z-scores and LD matrices!")
 
-        chr_h2g = {}
+        chr_ldsc = {}
+        chr_xi_sq = {}
 
         for c, ldm in tqdm(self.ld.items(),
                            total=len(self.chromosomes),
                            desc="Estimating SNP-heritability",
                            disable=not self.verbose):
-            ldsc = ldm.ld_score
-            xi_sq = self.z_scores[c]**2
 
-            h2g = (xi_sq.mean() - 1.)*len(ldsc) / (ldsc.mean()*self.N)
-            chr_h2g[c] = h2g
+            chr_ldsc[c] = ldm.ld_score
+            chr_xi_sq[c] = self.z_scores[c]**2
 
         if per_chromosome:
+            chr_h2g = {}
+            for c in chr_ldsc:
+                h2g, int, _, _, _ = stats.linregress(chr_ldsc[c], chr_xi_sq[c])
+                chr_h2g[c] = h2g
+
             return chr_h2g
         else:
-            return sum(chr_h2g.values())
+            h2g, int, _, _, _ = stats.linregress(np.concatenate(list(chr_ldsc.values())),
+                                                 np.concatenate(list(chr_xi_sq.values())))
+            return h2g
 
     def compute_allele_frequency_plink(self):
 
