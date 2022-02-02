@@ -168,6 +168,9 @@ class GWASDataLoader(object):
         self.read_genotypes(bed_files)
         self.read_annotations(annotation_files)
 
+        if self.genotypes is not None:
+            self.filter_by_allele_frequency(min_maf=min_maf, min_mac=min_mac)
+
         # ------- Compute LD matrices -------
 
         if ld_store_files is not None:
@@ -183,7 +186,8 @@ class GWASDataLoader(object):
 
         # ------- Harmonize data sources -------
 
-        self.filter_by_allele_frequency(min_maf=min_maf, min_mac=min_mac)
+        if self.genotypes is None:
+            self.filter_by_allele_frequency(min_maf=min_maf, min_mac=min_mac)
 
         if self.genotypes is None and remove_duplicated:
             self.filter_duplicated_snps()
@@ -1208,17 +1212,24 @@ class GWASDataLoader(object):
                     # LD matrix exceeds 30% (and greater than 5000), then copy and update the matrix.
                     # Otherwise, introduce a mask that ensures those SNPs are excluded from
                     # downstream tasks.
+                    #
+                    # NOTE: This behavior is deprecated for now...
+                    # We simply apply a mask to the LD matrix, and depending on the size
+                    # unmasked elements, downstream tasks can decide whether or not to load
+                    # the matrix to memory.
+                    #
+                    # To be revisited...
 
-                    n_miss = len(ld_snps) - len(matched_snps)
-                    if float(n_miss) / len(ld_snps) > .3 and n_miss > 5000:
-                        update_ld = True
-                    else:
-                        remain_index = intersect_arrays(ld_snps['SNP'].values,
-                                                        matched_snps['SNP'].values,
-                                                        return_index=True)
-                        mask = np.zeros(len(ld_snps))
-                        mask[remain_index] = 1
-                        self.ld[c].set_mask(mask.astype(bool))
+                    #n_miss = len(ld_snps) - len(matched_snps)
+                    #if float(n_miss) / len(ld_snps) > .3 and n_miss > 5000:
+                    #    update_ld = True
+                    #else:
+                    remain_index = intersect_arrays(ld_snps['SNP'].values,
+                                                    matched_snps['SNP'].values,
+                                                    return_index=True)
+                    mask = np.zeros(len(ld_snps))
+                    mask[remain_index] = 1
+                    self.ld[c].set_mask(mask.astype(bool))
 
                 flip_01 = matched_snps['flip'].values
                 num_flips = flip_01.sum()
@@ -1500,6 +1511,8 @@ class GWASDataLoader(object):
         Where the response is the Chi-Squared statistic for SNP j
         and the variable is its LD score.
 
+        NOTE: For now, we constrain the slope to 1.
+
         TODO: Maybe move into its own module?
 
         :param per_chromosome: Estimate heritability per chromosome
@@ -1522,14 +1535,16 @@ class GWASDataLoader(object):
         if per_chromosome:
             chr_h2g = {}
             for c in chr_ldsc:
-                h2g, int, _, _, _ = stats.linregress(chr_ldsc[c], chr_xi_sq[c])
-                chr_h2g[c] = h2g
+                # h2g, int, _, _, _ = stats.linregress(chr_ldsc[c], chr_xi_sq[c])
+                # chr_h2g[c] = h2g
+                chr_h2g[c] = (chr_xi_sq[c].mean() - 1.)*len(chr_ldsc[c]) / (chr_ldsc[c].mean()*self.N)
 
             return chr_h2g
         else:
-            h2g, int, _, _, _ = stats.linregress(np.concatenate(list(chr_ldsc.values())),
-                                                 np.concatenate(list(chr_xi_sq.values())))
-            return h2g
+            concat_ldsc = np.concatenate(list(chr_ldsc.values()))
+            concat_xi_sq = np.concatenate(list(chr_xi_sq.values()))
+            # h2g, int, _, _, _ = stats.linregress(concat_ldsc, concat_xi_sq)
+            return (concat_xi_sq.mean() - 1.)*len(concat_ldsc) / (concat_ldsc.mean()*self.N)
 
     def compute_allele_frequency_plink(self):
 

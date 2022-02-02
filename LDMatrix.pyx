@@ -240,8 +240,10 @@ cdef class LDMatrix:
     def estimate_uncompressed_size(self):
         """
         Returns an estimate of size of the uncompressed LD matrix in MB
+        If the array is masked, it returns a (rough) estimate of the size of the
+        elements that will be loaded into memory.
         """
-        ld_bounds = np.array(self.ld_boundaries)
+        ld_bounds = self.get_masked_boundaries()
 
         return (ld_bounds[1, :] - ld_bounds[0, :]).sum() * np.dtype(np.float64).itemsize / 1024 ** 2
 
