@@ -339,6 +339,8 @@ cdef class LDMatrix:
 
                     self.index += i
             except IndexError:
+                # Reached the end of the array
+                self.index = len(self)
                 pass
 
         if self.index == len(self):
