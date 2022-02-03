@@ -169,7 +169,8 @@ class GWASDataLoader(object):
         self.read_genotypes(bed_files)
         self.read_annotations(annotation_files)
 
-        if self.genotypes is not None:
+        # TODO: Figure out optimal checks and placement of SNP filters
+        if bed_files is not None:
             self.filter_by_allele_frequency(min_maf=min_maf, min_mac=min_mac)
 
         # ------- Compute LD matrices -------
@@ -187,7 +188,7 @@ class GWASDataLoader(object):
 
         # ------- Harmonize data sources -------
 
-        if self.genotypes is None:
+        if bed_files is None:
             self.filter_by_allele_frequency(min_maf=min_maf, min_mac=min_mac)
 
         if self.genotypes is None and remove_duplicated:
