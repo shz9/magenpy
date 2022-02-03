@@ -919,6 +919,9 @@ class GWASDataLoader(object):
         Compute the Linkage-Disequilibrium (LD) matrix between SNPs using plink1.9
         """
 
+        if self.maf is None:
+            self.compute_allele_frequency()
+
         if self.ld_boundaries is None:
             self.compute_ld_boundaries()
 
