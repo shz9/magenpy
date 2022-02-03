@@ -241,7 +241,6 @@ def from_plink_ld_table_to_zarr_chunked(ld_file, dir_store, ld_boundaries, snps)
 
     write_csr_to_zarr(sp_mat, z_arr,
                       start_row=curr_chunk * row_chunk_size,
-                      end_row=(curr_chunk + 1) * row_chunk_size,
                       ld_boundaries=ld_boundaries,
                       purge_data=True)
 
