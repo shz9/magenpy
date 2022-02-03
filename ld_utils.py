@@ -23,17 +23,20 @@ def _validate_ld_matrix(ld_mat):
     :return: True if `ld_mat` has the correct structure, False otherwise.
     """
 
-    attributes = ['SNP', 'A1', 'MAF', 'BP', 'cM', 'LDScore']
+    attributes = ['snps', 'a1', 'maf', 'bp_position', 'cm_position', 'ld_score']
 
     for attr in attributes:
-        if len(ld_mat.get_store_attr(attr)) != ld_mat.n_elements:
-            ValueError("Invalid LD Matrix: Attribute dimensions are not aligned!")
+        attribute = getattr(ld_mat, attr)
+        if attribute is None:
+            continue
+        if len(attribute) != ld_mat.n_elements:
+            raise ValueError("Invalid LD Matrix: Attribute dimensions are not aligned!")
 
     # Check LD bounds:
     ld_bounds = ld_mat.get_masked_boundaries()
 
     if ld_bounds.shape != (2, ld_mat.n_elements):
-        ValueError("Invalid LD Matrix: LD boundaries have the wrong dimensions!")
+        raise ValueError("Invalid LD Matrix: LD boundaries have the wrong dimensions!")
 
     ld_block_lengths = ld_bounds[1, :] - ld_bounds[0, :]
 
@@ -42,10 +45,10 @@ def _validate_ld_matrix(ld_mat):
 
     for i, d in enumerate(ld_mat):
         if len(d) != ld_block_lengths[i]:
-            ValueError(f"Invalid LD Matrix: Element {i} does not have matching LD boundaries!")
+            raise ValueError(f"Invalid LD Matrix: Element {i} does not have matching LD boundaries!")
 
     if i != (ld_mat.n_elements - 1):
-        ValueError(f"Invalid LD Matrix: Conflicting total number of elements!")
+        raise ValueError(f"Invalid LD Matrix: Conflicting total number of elements!")
 
     return True
 

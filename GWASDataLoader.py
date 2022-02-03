@@ -1037,8 +1037,8 @@ class GWASDataLoader(object):
                 z_ld_mat.attrs['Estimator properties'] = ld_estimator_properties
 
             self.ld[c] = LDMatrix(z_ld_mat)
-            _validate_ld_matrix(self.ld[c])
             self.ld[c].set_store_attr('LDScore', self.ld[c].compute_ld_scores().tolist())
+            _validate_ld_matrix(self.ld[c])
 
     def compute_ld(self):
         """
@@ -1143,8 +1143,8 @@ class GWASDataLoader(object):
                 z_ld_mat.attrs['Estimator properties'] = ld_estimator_properties
 
             self.ld[c] = LDMatrix(z_ld_mat)
-            _validate_ld_matrix(self.ld[c])
             self.ld[c].set_store_attr('LDScore', self.ld[c].compute_ld_scores().tolist())
+            _validate_ld_matrix(self.ld[c])
 
     def get_ld_matrices(self):
         return self.ld
