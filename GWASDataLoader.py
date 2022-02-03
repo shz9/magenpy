@@ -18,7 +18,8 @@ import zarr
 
 from .LDMatrix import LDMatrix
 from .c_utils import find_windowed_ld_boundaries, find_shrinkage_ld_boundaries, find_ld_block_boundaries
-from .ld_utils import (from_plink_ld_bin_to_zarr,
+from .ld_utils import (_validate_ld_matrix,
+                       from_plink_ld_bin_to_zarr,
                        from_plink_ld_table_to_zarr_chunked,
                        shrink_ld_matrix,
                        zarr_array_to_ragged,
@@ -1038,6 +1039,7 @@ class GWASDataLoader(object):
                 z_ld_mat.attrs['Estimator properties'] = ld_estimator_properties
 
             self.ld[c] = LDMatrix(z_ld_mat)
+            _validate_ld_matrix(self.ld[c])
             self.ld[c].set_store_attr('LDScore', self.ld[c].compute_ld_scores().tolist())
 
     def compute_ld(self):
@@ -1143,6 +1145,7 @@ class GWASDataLoader(object):
                 z_ld_mat.attrs['Estimator properties'] = ld_estimator_properties
 
             self.ld[c] = LDMatrix(z_ld_mat)
+            _validate_ld_matrix(self.ld[c])
             self.ld[c].set_store_attr('LDScore', self.ld[c].compute_ld_scores().tolist())
 
     def get_ld_matrices(self):

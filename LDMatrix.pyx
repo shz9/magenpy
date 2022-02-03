@@ -22,7 +22,7 @@ cdef class LDMatrix:
         object _zarr
         bint in_memory
         list _data
-        unsigned int index
+        unsigned int index, _n_elements
         long[:, ::1] _ld_boundaries  # For caching
         np.ndarray _mask
 
@@ -36,11 +36,16 @@ cdef class LDMatrix:
 
         self._ld_boundaries = None
         self._mask = None
+        self._n_elements = self.shape[0]
 
     @classmethod
     def from_path(cls, ld_store_path):
         ldw = zarr.open(ld_store_path)
         return cls(ldw)
+
+    @property
+    def n_elements(self):
+        return self._n_elements
 
     @property
     def shape(self):
@@ -90,7 +95,7 @@ cdef class LDMatrix:
         if self._ld_boundaries is None:
             self._ld_boundaries = np.array(self.get_store_attr('LD boundaries'))
 
-        return self._ld_boundaries
+        return np.array(self._ld_boundaries)
 
     @property
     def sample_size(self):
@@ -161,8 +166,16 @@ cdef class LDMatrix:
 
     def set_mask(self, mask):
         self._mask = mask
+
+        # Update the number of elements:
+        if mask is None:
+            self._n_elements = self.shape[0]
+        else:
+            self._n_elements = mask.sum()
+
         # Load the LD boundaries:
         ld_bounds = self.ld_boundaries
+
         # If the data is already in memory, reload:
         if self.in_memory:
             self.load()
@@ -173,7 +186,7 @@ cdef class LDMatrix:
         If the mask is not set, return the original boundaries
         """
 
-        curr_ld_bounds = np.array(self.ld_boundaries)
+        curr_ld_bounds = self.ld_boundaries
 
         if self._mask is None:
             return curr_ld_bounds
@@ -267,6 +280,7 @@ cdef class LDMatrix:
             if start == 0:
                 self.in_memory = True
 
+        cdef unsigned int i
         self._data = []
 
         if self._mask is None:
