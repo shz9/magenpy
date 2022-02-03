@@ -868,31 +868,27 @@ class GWASDataLoader(object):
 
         else:
 
-            for c, gt in tqdm(self.genotypes.items(),
-                              total=len(self.chromosomes),
-                              desc="Computing LD boundaries",
-                              disable=not self.verbose):
-
-                _, M = gt.shape
+            for c, M in tqdm(self.shapes.items(),
+                             total=len(self.chromosomes),
+                             desc="Computing LD boundaries",
+                             disable=not self.verbose):
 
                 if self.ld_estimator == 'sample':
 
                     self.ld_boundaries[c] = np.array((np.zeros(M), np.ones(M)*M)).astype(np.int64)
 
                 elif self.ld_estimator == 'block':
-                    pos_bp = gt.pos.values
 
-                    if pos_bp.any():
-                        self.ld_boundaries[c] = find_ld_block_boundaries(pos_bp.astype(int),
+                    if self._bp_pos and c in self._bp_pos:
+                        self.ld_boundaries[c] = find_ld_block_boundaries(self._bp_pos[c].astype(int),
                                                                          self.ld_blocks[c])
                     else:
                         raise Exception("SNP position in BP is missing!")
 
                 elif self.ld_estimator == 'windowed':
                     if self.window_unit == 'cM':
-                        cm_dist = gt.cm.values
-                        if cm_dist.any():
-                            self.ld_boundaries[c] = find_windowed_ld_boundaries(cm_dist,
+                        if self._cm_pos and c in self._cm_pos:
+                            self.ld_boundaries[c] = find_windowed_ld_boundaries(self._cm_pos[c],
                                                                                 self.cm_window_cutoff)
                         else:
                             raise Exception("cM information for SNPs is missing. "
@@ -906,9 +902,8 @@ class GWASDataLoader(object):
                         self.ld_boundaries[c] = np.clip(self.ld_boundaries[c],
                                                         0, M)
                 elif self.ld_estimator == 'shrinkage':
-                    cm_dist = gt.cm.values
-                    if cm_dist.any():
-                        self.ld_boundaries[c] = find_shrinkage_ld_boundaries(cm_dist,
+                    if self._cm_pos and c in self._cm_pos:
+                        self.ld_boundaries[c] = find_shrinkage_ld_boundaries(self._cm_pos[c],
                                                                              self.genmap_Ne,
                                                                              self.genmap_sample_size,
                                                                              self.shrinkage_cutoff)
