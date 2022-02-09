@@ -1,4 +1,5 @@
 import numpy as np
+from scipy import stats
 
 
 def merge_snp_tables(ref_table, alt_table,
@@ -55,6 +56,67 @@ def merge_snp_tables(ref_table, alt_table,
                 merged_table['MAF'] = np.abs(merged_table['flip'] - merged_table['MAF'])
 
     return merged_table
+
+
+def identify_mismatched_snps(gdl, chrom=None, k=100):
+    """
+    This function implements a simple quality control procedures
+    that checks that the GWAS summary statistics (Z-scores)
+    are consistent with the LD reference panel. This is done
+    using a simplified version of the framework outlined in the DENTIST paper:
+
+    Improved analyses of GWAS summary statistics by reducing data heterogeneity and errors
+    Chen et al. 2021
+
+    Compared to DENTIST, the simplifications we make are:
+        -   For each SNP, we sample one neighboring SNP at a time and compute the T statistic
+            using that neighbor's information. The benefit of this is that we don't need to
+            invert any matrices, so it's a fast operation to run.
+        -   To arrive at a more robust estimate, we sample up to `k` neighbors and average
+            the T-statistic across those `k` neighbors.
+        -   We only perform a single iteration, unlike the iterative scheme implemented by DENTIST.
+
+    :param gdl: A GWASDataLoader object
+    :param chrom: A chromosome
+    :param k: The number of neighboring SNPs to sample (default: 100)
+    """
+
+    if chrom is None:
+        chromosomes = gdl.chromosomes
+        M = gdl.M
+    else:
+        chromosomes = [chrom]
+        M = gdl.shapes[chrom]
+
+    mismatched_dict = {}
+
+    for chrom in chromosomes:
+        ld_bounds = gdl.ld[chrom].get_masked_boundaries()
+        z = gdl.z_scores[chrom]  # Obtain the z-scores
+        t = np.zeros_like(z)
+
+        # Loop over the LD information:
+        for i, r in enumerate(gdl.ld[chrom]):
+            start_idx = ld_bounds[0, i]
+
+            # Select neighbors randomly:
+            for idx in np.random.choice(len(r), size=k):
+                ld = r[idx]
+                if ld == 1.:
+                    continue
+
+                # Predict the Z-score from a single neighbor:
+                pred_z = ld*z[start_idx + idx]
+
+                # Add to the average T-statistic
+                t[i] += (1./k)*((z[i] - pred_z)**2 / (1. - ld**2))
+
+        # Compute the DENTIST p-value assuming a Chi-Square distribution with 1 dof.
+        dentist_pval = 1. - stats.chi2.cdf(t, 1)
+        # Use a bonferroni correction to select mismatched SNPs:
+        mismatched_dict[chrom] = dentist_pval < (0.05 / M)
+
+    return mismatched_dict
 
 
 def standardize_genotype_matrix(g_mat, fill_na=True):
