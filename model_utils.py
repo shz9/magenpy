@@ -58,7 +58,7 @@ def merge_snp_tables(ref_table, alt_table,
     return merged_table
 
 
-def identify_mismatched_snps(gdl, chrom=None, k=100):
+def identify_mismatched_snps(gdl, chrom=None, k=100, pval_threshold=0.05):
     """
     This function implements a simple quality control procedures
     that checks that the GWAS summary statistics (Z-scores)
@@ -79,6 +79,7 @@ def identify_mismatched_snps(gdl, chrom=None, k=100):
     :param gdl: A GWASDataLoader object
     :param chrom: A chromosome
     :param k: The number of neighboring SNPs to sample (default: 100)
+    :param pval_threshold: The nominal P-value threshold (default: 0.05)
     """
 
     if chrom is None:
@@ -114,7 +115,7 @@ def identify_mismatched_snps(gdl, chrom=None, k=100):
         # Compute the DENTIST p-value assuming a Chi-Square distribution with 1 dof.
         dentist_pval = 1. - stats.chi2.cdf(t, 1)
         # Use a bonferroni correction to select mismatched SNPs:
-        mismatched_dict[chrom] = dentist_pval < (0.05 / M)
+        mismatched_dict[chrom] = dentist_pval < (pval_threshold / M)
 
     return mismatched_dict
 
