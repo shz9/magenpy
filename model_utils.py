@@ -58,7 +58,7 @@ def merge_snp_tables(ref_table, alt_table,
     return merged_table
 
 
-def identify_mismatched_snps(gdl, chrom=None, k=100, pval_threshold=0.05):
+def identify_mismatched_snps(gdl, chrom=None, G=100, pval_threshold=0.05):
     """
     This function implements a simple quality control procedures
     that checks that the GWAS summary statistics (Z-scores)
@@ -78,7 +78,7 @@ def identify_mismatched_snps(gdl, chrom=None, k=100, pval_threshold=0.05):
 
     :param gdl: A GWASDataLoader object
     :param chrom: A chromosome
-    :param k: The number of neighboring SNPs to sample (default: 100)
+    :param G: The number of neighboring SNPs to sample (default: 100)
     :param pval_threshold: The nominal P-value threshold (default: 0.05)
     """
 
@@ -101,7 +101,7 @@ def identify_mismatched_snps(gdl, chrom=None, k=100, pval_threshold=0.05):
             start_idx = ld_bounds[0, i]
 
             # Select neighbors randomly:
-            for idx in np.random.choice(len(r), size=k):
+            for idx in np.random.choice(len(r), size=G):
                 ld = r[idx]
                 if ld == 1.:
                     continue
@@ -110,7 +110,7 @@ def identify_mismatched_snps(gdl, chrom=None, k=100, pval_threshold=0.05):
                 pred_z = ld*z[start_idx + idx]
 
                 # Add to the average T-statistic
-                t[i] += (1./k)*((z[i] - pred_z)**2 / (1. - ld**2))
+                t[i] += (1./G)*((z[i] - pred_z)**2 / (1. - ld**2))
 
         # Compute the DENTIST p-value assuming a Chi-Square distribution with 1 dof.
         dentist_pval = 1. - stats.chi2.cdf(t, 1)

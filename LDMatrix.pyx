@@ -165,20 +165,22 @@ cdef class LDMatrix:
             return np.array(self._mask)
 
     def set_mask(self, mask):
+
         self._mask = mask
 
-        # Update the number of elements:
         if mask is None:
+            # Update the number of elements:
             self._n_elements = self.shape[0]
         else:
+            # Update the number of elements:
             self._n_elements = mask.sum()
 
-        # Load the LD boundaries:
-        ld_bounds = self.ld_boundaries
+            # Load the LD boundaries:
+            ld_bounds = self.ld_boundaries
 
-        # If the data is already in memory, reload:
-        if self.in_memory:
-            self.load()
+            # If the data is already in memory, reload:
+            if self.in_memory:
+                self.load(force_reload=True)
 
     def get_masked_boundaries(self):
         """
@@ -273,7 +275,10 @@ cdef class LDMatrix:
         except Exception as e:
             raise e
 
-    def load(self, start=0, end=None):
+    def load(self, start=0, end=None, force_reload=False):
+
+        if self.in_memory and not force_reload:
+            return
 
         if end is None:
             end = len(self)
@@ -313,12 +318,12 @@ cdef class LDMatrix:
 
     def __setstate__(self, state):
 
-        path, in_mem, mask = state
+        path, self.in_memory, mask = state
 
         self._zarr = zarr.open(path)
         self.set_mask(mask)
 
-        if in_mem and mask is not None:
+        if mask is None and self.in_memory:
             self.load()
 
     def __len__(self):
