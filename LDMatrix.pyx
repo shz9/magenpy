@@ -23,7 +23,7 @@ cdef class LDMatrix:
         bint in_memory
         list _data
         unsigned int index, _n_elements
-        long[:, ::1] _ld_boundaries  # For caching
+        np.ndarray _ld_boundaries  # For caching
         np.ndarray _mask
 
     def __init__(self, ld_zarr_arr):
@@ -91,10 +91,8 @@ cdef class LDMatrix:
 
     @property
     def ld_boundaries(self):
-
         if self._ld_boundaries is None:
             self._ld_boundaries = np.array(self.get_store_attr('LD boundaries'))
-
         return np.array(self._ld_boundaries)
 
     @property
@@ -285,7 +283,10 @@ cdef class LDMatrix:
             if start == 0:
                 self.in_memory = True
 
-        cdef unsigned int i
+        cdef:
+            unsigned int i
+            long[:, ::1] ld_bounds = self.ld_boundaries
+
         self._data = []
 
         if self._mask is None:
@@ -298,7 +299,7 @@ cdef class LDMatrix:
 
             for i, d in enumerate(zarr_islice(self._zarr, start, end), start):
                 if self._mask[i]:
-                    bound_start, bound_end = self._ld_boundaries[:, i]
+                    bound_start, bound_end = ld_bounds[:, i]
                     self._data.append(d[self._mask[bound_start: bound_end]].copy())
                 else:
                     self._data.append(np.array([np.nan]))
@@ -318,13 +319,16 @@ cdef class LDMatrix:
 
     def __setstate__(self, state):
 
-        path, self.in_memory, mask = state
+        path, in_mem, mask = state
 
         self._zarr = zarr.open(path)
-        self.set_mask(mask)
 
-        if mask is None and self.in_memory:
-            self.load()
+        if mask is None:
+            if in_mem:
+                self.load()
+        else:
+            self.in_memory = in_mem
+            self.set_mask(mask)
 
     def __len__(self):
         return self.shape[0]
