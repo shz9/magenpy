@@ -1,3 +1,4 @@
+from tqdm import tqdm
 import numpy as np
 from scipy import stats
 
@@ -58,7 +59,14 @@ def merge_snp_tables(ref_table, alt_table,
     return merged_table
 
 
-def identify_mismatched_snps(gdl, chrom=None, G=100, pval_threshold=0.05):
+def identify_mismatched_snps(gdl,
+                             chrom=None,
+                             n_iter=10,
+                             G=100,
+                             p_dentist_threshold=5e-8,
+                             p_gwas_threshold=1e-2,
+                             rsq_threshold=.95,
+                             max_removed_per_iter=.005):
     """
     This function implements a simple quality control procedures
     that checks that the GWAS summary statistics (Z-scores)
@@ -74,48 +82,129 @@ def identify_mismatched_snps(gdl, chrom=None, G=100, pval_threshold=0.05):
             invert any matrices, so it's a fast operation to run.
         -   To arrive at a more robust estimate, we sample up to `k` neighbors and average
             the T-statistic across those `k` neighbors.
-        -   We only perform a single iteration, unlike the iterative scheme implemented by DENTIST.
+
+    NOTE: May need to re-implement this to apply some of the constraints genome-wide
+    rather than on a per-chromosome basis.
 
     :param gdl: A GWASDataLoader object
     :param chrom: A chromosome
+    :param n_iter: Number of iterations
     :param G: The number of neighboring SNPs to sample (default: 100)
-    :param pval_threshold: The nominal P-value threshold (default: 0.05)
+    :param p_dentist_threshold: The Bonferroni-corrected P-value threshold (default: 5e-8)
+    :param p_gwas_threshold: The nominal GWAS P-value threshold for partitioning variants (default: 1e-2)
+    :param rsq_threshold: The R^2 threshold to select neighbors (neighbor's squared
+    correlation coefficient must be less than specified threshold).
+    :param max_removed_per_iter: The maximum proportion of variants removed in each iteration
     """
 
     if chrom is None:
         chromosomes = gdl.chromosomes
-        M = gdl.M
     else:
         chromosomes = [chrom]
-        M = gdl.shapes[chrom]
 
-    mismatched_dict = {}
+    shapes = gdl.shapes
+    mismatched_dict = {c: np.repeat(False, c_size)
+                       for c, c_size in gdl.shapes.items()}
 
-    for chrom in chromosomes:
-        ld_bounds = gdl.ld[chrom].get_masked_boundaries()
-        z = gdl.z_scores[chrom]  # Obtain the z-scores
-        t = np.zeros_like(z)
+    p_gwas_above_thres = {c: p_val > p_gwas_threshold for c, p_val in gdl.p_values.items()}
+    gwas_thres_size = {c: p.sum() for c, p in p_gwas_above_thres.items()}
+    converged = {c: False for c in gdl.chromosomes}
 
-        # Loop over the LD information:
-        for i, r in enumerate(gdl.ld[chrom]):
-            start_idx = ld_bounds[0, i]
+    for j in tqdm(range(n_iter),
+                  total=n_iter,
+                  desc="Identifying mismatched SNPs..."):
 
-            # Select neighbors randomly:
-            for idx in np.random.choice(len(r), size=G):
-                ld = r[idx]
-                if ld == 1.:
+        for chrom in chromosomes:
+
+            if converged[chrom]:
+                continue
+
+            ld_bounds = gdl.ld[chrom].get_masked_boundaries()
+            z = gdl.z_scores[chrom]  # Obtain the z-scores
+            t = np.zeros_like(z)
+
+            # Loop over the LD matrix:
+            for i, r in enumerate(gdl.ld[chrom]):
+
+                if mismatched_dict[chrom][i]:
                     continue
 
-                # Predict the Z-score from a single neighbor:
-                pred_z = ld*z[start_idx + idx]
+                start_idx = ld_bounds[0, i]
 
-                # Add to the average T-statistic
-                t[i] += (1./G)*((z[i] - pred_z)**2 / (1. - ld**2))
+                # Select neighbors randomly
+                # Note: We are excluding neighbors whose squared correlation coefficient
+                # is greater than pre-specified threshold:
+                p = (np.array(r)**2 < rsq_threshold).astype(float)
+                p /= p.sum()
 
-        # Compute the DENTIST p-value assuming a Chi-Square distribution with 1 dof.
-        dentist_pval = 1. - stats.chi2.cdf(t, 1)
-        # Use a bonferroni correction to select mismatched SNPs:
-        mismatched_dict[chrom] = dentist_pval < (pval_threshold / M)
+                neighbor_idx = np.random.choice(len(r), p=p, size=G)
+                neighbor_r = np.array(r)[neighbor_idx]
+
+                # Predict the z-score of snp i, given the z-scores of its neighbors:
+                pred_z = neighbor_r*z[start_idx + neighbor_idx]
+
+                # Compute the Td statistic for each neighbor and average:
+                t[i] = ((z[i] - pred_z) ** 2 / (1. - neighbor_r**2)).mean()
+
+            # Compute the DENTIST p-value assuming a Chi-Square distribution with 1 dof.
+            dentist_pval = 1. - stats.chi2.cdf(t, 1)
+            # Use a Bonferroni correction to select mismatched SNPs:
+            mismatched_snps = dentist_pval < p_dentist_threshold
+
+            if mismatched_snps.sum() < 1:
+                # If no new mismatched SNPs are identified, stop iterating...
+                converged[chrom] = True
+            elif j == n_iter - 1:
+                # If this is the last iteration, take all identified SNPs
+                mismatched_dict[chrom] = (mismatched_dict[chrom] | mismatched_snps)
+            else:
+
+                # Otherwise, we will perform the iterative filtering procedure
+                # by splitting variants based on their GWAS p-values:
+
+                # (1) Group S1: SNPs to remove from P_GWAS > threshold:
+                mismatch_above_thres = mismatched_snps & p_gwas_above_thres[chrom]
+                n_mismatch_above_thres = mismatch_above_thres.sum()
+                prop_mismatch_above_thres = n_mismatch_above_thres / gwas_thres_size[chrom]
+
+                if n_mismatch_above_thres < 1:
+                    if j > 1:
+                        # Only apply this after at least a couple of iterations
+                        mismatched_dict[chrom] = (mismatched_dict[chrom] | mismatched_snps)
+
+                    converged[chrom] = True
+                    continue
+
+                # Sort the DENTIST p-values by index:
+                sort_d_pval_idx = np.argsort(dentist_pval)
+
+                if prop_mismatch_above_thres > max_removed_per_iter:
+                    idx_to_keep = sort_d_pval_idx[mismatch_above_thres][
+                                  int(gwas_thres_size[chrom]*max_removed_per_iter):]
+                    mismatch_above_thres[idx_to_keep] = False
+
+                # (2) Group S2: SNPs to remove from P_GWAS < threshold
+
+                # Find mismatched variants below the threshold:
+                mismatch_below_thres = mismatched_snps & (~p_gwas_above_thres[chrom])
+                n_mismatch_below_thres = mismatch_below_thres.sum()
+                prop_mismatch_below_thres = n_mismatch_below_thres / (shapes[chrom] - gwas_thres_size[chrom])
+
+                # For the mismatched variants below the threshold,
+                # we remove the same proportion as the variants above the threshold:
+                prop_keep_below_thres = min(max_removed_per_iter, prop_mismatch_above_thres)
+
+                if prop_mismatch_below_thres > prop_keep_below_thres:
+                    idx_to_keep = sort_d_pval_idx[mismatch_below_thres][
+                                  int((shapes[chrom] - gwas_thres_size[chrom]) * prop_keep_below_thres):
+                                  ]
+                    mismatch_below_thres[idx_to_keep] = False
+
+                # Update the number of variants above the threshold:
+                gwas_thres_size[chrom] -= mismatch_above_thres.sum()
+
+                # Update the mismatched dictionary:
+                mismatched_dict[chrom] = (mismatched_dict[chrom] | mismatch_below_thres | mismatch_above_thres)
 
     return mismatched_dict
 
