@@ -168,11 +168,9 @@ def identify_mismatched_snps(gdl,
                 prop_mismatch_above_thres = n_mismatch_above_thres / gwas_thres_size[chrom]
 
                 if n_mismatch_above_thres < 1:
-                    if j > 1:
-                        # Only apply this after at least a couple of iterations
-                        mismatched_dict[chrom] = (mismatched_dict[chrom] | mismatched_snps)
-
-                    converged[chrom] = True
+                    # If no mismatches are detected above the threshold, filter
+                    # the mismatches below the threshold and continue...
+                    mismatched_dict[chrom] = (mismatched_dict[chrom] | mismatched_snps)
                     continue
 
                 # Sort the DENTIST p-values by index:
