@@ -373,8 +373,8 @@ class GWASDataLoader(object):
 
         if min_mac is not None:
             for c, maf in self.maf.items():
-                mac = (2.*maf*self.n_per_snp[c]).astype(np.int64)
-                cond_dict[c] = (mac >= min_mac) & ((self.n_per_snp[c] - mac) >= min_mac)
+                mac = (2*maf*self.n_per_snp[c]).astype(np.int64)
+                cond_dict[c] = (mac >= min_mac) & ((2*self.n_per_snp[c] - mac) >= min_mac)
 
         if min_maf is not None:
 
