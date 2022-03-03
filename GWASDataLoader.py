@@ -952,6 +952,7 @@ class GWASDataLoader(object):
                 f"--bfile {b_file.replace('.bed', '')}",
                 f"--keep {keep_file}",
                 f"--extract {snp_keepfile}",
+                "--keep-allele-order",
                 f"--out {plink_output}",
                 f"--threads {self.n_threads}"
             ]
