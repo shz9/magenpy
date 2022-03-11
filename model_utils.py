@@ -126,11 +126,11 @@ def identify_mismatched_snps(gdl,
             # Loop over the LD matrix:
             for i, r in enumerate(gdl.ld[chrom]):
 
-                if mismatched_dict[chrom][i]:
+                # If the number of neighbors is less than 10, skip...
+                if mismatched_dict[chrom][i] or len(r) < 10:
                     continue
 
                 start_idx = ld_bounds[0, i]
-
                 # Select neighbors randomly
                 # Note: We are excluding neighbors whose squared correlation coefficient
                 # is greater than pre-specified threshold:
@@ -257,3 +257,31 @@ def tree_to_rho(tree, min_corr):
         c.branch_length /= max_depth
 
     return tree.root.branch_length + get_shared_distance_matrix(tree)
+
+
+def multinomial_rvs(n, p):
+    """
+    Taken from Warren Weckesser:
+    https://stackoverflow.com/a/55830796
+
+    Sample from the multinomial distribution with multiple p vectors.
+
+    * n must be a scalar.
+    * p must an n-dimensional numpy array, n >= 1.  The last axis of p
+      holds the sequence of probabilities for a multinomial distribution.
+
+    The return value has the same shape as p.
+    """
+    count = np.full(p.shape[:-1], n)
+    out = np.zeros(p.shape, dtype=int)
+    ps = p.cumsum(axis=-1)
+    # Conditional probabilities
+    with np.errstate(divide='ignore', invalid='ignore'):
+        condp = p / ps
+    condp[np.isnan(condp)] = 0.0
+    for i in range(p.shape[-1]-1, 0, -1):
+        binsample = np.random.binomial(count, condp[..., i])
+        out[..., i] = binsample
+        count -= binsample
+    out[..., 0] = count
+    return out

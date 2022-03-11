@@ -16,6 +16,7 @@ import numpy as np
 from scipy import stats
 import zarr
 
+from .AnnotationMatrix import AnnotationMatrix
 from .LDMatrix import LDMatrix
 from .c_utils import find_windowed_ld_boundaries, find_shrinkage_ld_boundaries, find_ld_block_boundaries
 from .ld_utils import (_validate_ld_matrix,
@@ -95,7 +96,6 @@ class GWASDataLoader(object):
         self.standardize_phenotype = standardize_phenotype
         self.phenotype_likelihood = phenotype_likelihood
         self.phenotype_id = None  # Name or ID of the phenotype
-        self.C = None  # Number of annotations
 
         # ------- LD computation options -------
         self.ld_estimator = ld_estimator
@@ -239,6 +239,11 @@ class GWASDataLoader(object):
         return gdl
 
     @property
+    def n_annotations(self):
+        assert self.annotations is not None
+        return self.annotations[self.chromosomes[0]].n_annotations
+
+    @property
     def sample_size(self):
         return self.N
 
@@ -356,6 +361,10 @@ class GWASDataLoader(object):
             if self.p_values is not None and c in self.p_values:
                 self.p_values[c] = self.p_values[c][common_idx]
 
+            # Filter the annotation table as well:
+            if self.annotations is not None and c in self.annotations:
+                self.annotations[c].filter_snps(self._snps[c])
+
     def filter_by_allele_frequency(self, min_maf=None, min_mac=1):
         """
         Filter SNPs by minimum allele frequency or allele count
@@ -434,34 +443,18 @@ class GWASDataLoader(object):
         if annot_files is None:
             return
 
-        if self.verbose:
-            print("> Reading annotation files...")
-
         if not iterable(annot_files):
-            files_to_read = [annot_files]
-        else:
-            files_to_read = annot_files
+            annot_files = [annot_files]
 
-        assert len(files_to_read) == len(self.genotypes)
+        self.annotations = {}
 
-        self.annotations = []
-
-        for i, annot_file in enumerate(files_to_read):
-
-            try:
-                annot_df = pd.read_csv(annot_file, sep="\t")
-            except Exception as e:
-                self.annotations = None
-                raise e
-
-            annot_df = annot_df.set_index('SNP')
-            annot_df = annot_df.drop(['CHR', 'BP', 'CM', 'base'], axis=1)
-            annot_df = annot_df.loc[self.genotypes[i].variant.snp]
-
-            if i == 0:
-                self.C = len(annot_df.columns)
-
-            self.annotations.append(da.array(annot_df.values))
+        for annot_file in tqdm(annot_files,
+                               total=len(annot_files),
+                               desc="Reading annotation files",
+                               disable=not self.verbose):
+            annot_mat = AnnotationMatrix.from_file(annot_file)
+            annot_mat.filter_snps(self.snps[annot_mat.chromosome])
+            self.annotations[annot_mat.chromosome] = annot_mat
 
     def read_genotypes_plink(self, bed_files):
         """
