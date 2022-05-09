@@ -22,7 +22,7 @@ ext_modules = cythonize([
               )
 ], language_level="3")
 
-setup(name="gwasimulator", cmdclass={"build_ext": build_ext},
+setup(name="magenpy", cmdclass={"build_ext": build_ext},
       ext_modules=ext_modules,
       include_dirs=[np.get_include()],
       compiler_directives={'boundscheck': False, 'wraparound': False,
