@@ -1,4 +1,4 @@
-# `magenpy`: *M*odeling and *A*nalysis of (Statistical) *Gen*etic data in *py*thon
+# `magenpy`: *M*odeling and *A*nalysis of (Statistical) *Gen*etics data in *py*thon
 
 This repository includes code and scripts for loading, manipulating, and simulating with genotype data. The software works mostly with PLINK's `.bed` file format, with the hope that we will extend this to other data formats in the near future.
 
