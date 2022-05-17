@@ -3,12 +3,12 @@ Author: Shadi Zabad
 Date: March 2021
 """
 
-from .utils import makedir
+from magenpy.utils.system_utils import makedir
 import os.path as osp
 import pandas as pd
 import numpy as np
-from .GWASDataLoader import GWASDataLoader
-from .GWASSimulator import GWASSimulator
+from magenpy import GWASDataLoader
+from magenpy.simulation.GWASSimulator import GWASSimulator
 
 
 class TransethnicGWASSimulator(GWASDataLoader):

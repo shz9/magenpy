@@ -1,5 +1,5 @@
 import pandas as pd
-from ..utils import get_filenames
+from magenpy.utils.system_utils import get_filenames
 
 
 def read_snp_filter_file(filename, snp_id_col=0):
@@ -22,27 +22,22 @@ def read_individual_filter_file(filename, iid_col=1):
     return keep_list
 
 
-def parse_ld_block_data(ldb_files):
+def parse_ld_block_data(ldb_file_path):
     """
-    This function takes a path or list of paths to LD block files
+    This function takes a path to a file with the LD blocks
     and returns a dictionary with the chromosome ID and a list of the
     start and end positions for the blocks in that chromosome.
     The parser assumes that the LD block files have the ldetect format:
     https://bitbucket.org/nygcresearch/ldetect-data/src/master/
 
-    :param ldb_files:
-    :return:
+    :param ldb_file_path: The path to the LD blocks file
     """
-
-    ldb_files = get_filenames(ldb_files)
 
     ld_blocks = {}
 
-    for f in ldb_files:
+    df = pd.read_csv(ldb_file_path, delim_whitespace=True)
 
-        df = pd.read_csv(f, sep='\s+')
-
-        for chrom in df['chr'].unique():
-            ld_blocks[int(chrom.replace('chr', ''))] = df.loc[df['chr'] == chrom, ['start', 'stop']].values
+    for chrom in df['chr'].unique():
+        ld_blocks[int(chrom.replace('chr', ''))] = df.loc[df['chr'] == chrom, ['start', 'stop']].values
 
     return ld_blocks

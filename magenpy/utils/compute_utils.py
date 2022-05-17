@@ -1,9 +1,5 @@
 import numpy as np
 import pandas as pd
-import errno
-import os
-import subprocess
-import glob
 import collections
 import six
 
@@ -58,63 +54,8 @@ def intersect_arrays(arr1, arr2, return_index=False):
         return common_elements['ID'].values
 
 
-def makedir(dirs):
-
-    if isinstance(dirs, str):
-        dirs = [dirs]
-
-    for dir in dirs:
-        try:
-            os.makedirs(dir)
-        except OSError as e:
-            if e.errno != errno.EEXIST:
-                raise
-
-
-def get_filenames(path, extension=None):
-
-    if os.path.isdir(path):
-        if extension == '.zarr':
-            if os.path.isfile(os.path.join(path, '.zarray')):
-                return [path]
-            else:
-                return glob.glob(os.path.join(path, '*/'))
-        return glob.glob(os.path.join(path, '*'))
-    else:
-        if extension is None:
-            return glob.glob(path + '*')
-        elif extension in path:
-            return [path]
-        elif os.path.isfile(path + extension):
-            return [path + extension]
-        else:
-            return glob.glob(path + '*' + extension)
-
-
 def iterable(arg):
     return (
         isinstance(arg, collections.Iterable)
         and not isinstance(arg, six.string_types)
     )
-
-
-def run_shell_script(cmd):
-
-    result = subprocess.run(cmd, shell=True, capture_output=True)
-
-    if result.stderr:
-        raise subprocess.CalledProcessError(
-            returncode=result.returncode,
-            cmd=result.args,
-            stderr=result.stderr
-        )
-
-    return result
-
-
-def delete_temp_files(prefix):
-    for f in glob.glob(f"{prefix}*"):
-        try:
-            os.remove(f)
-        except Exception as e:
-            continue

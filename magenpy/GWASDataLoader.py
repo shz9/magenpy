@@ -16,21 +16,26 @@ import numpy as np
 from scipy import stats
 import zarr
 
-from .AnnotationMatrix import AnnotationMatrix
-from .LDMatrix import LDMatrix
-from .c_utils import find_windowed_ld_boundaries, find_shrinkage_ld_boundaries, find_ld_block_boundaries
-from .ld_utils import (_validate_ld_matrix,
-                       from_plink_ld_bin_to_zarr,
-                       from_plink_ld_table_to_zarr_chunked,
-                       shrink_ld_matrix,
-                       zarr_array_to_ragged,
-                       rechunk_zarr,
-                       move_ld_store)
+from magenpy.AnnotationMatrix import AnnotationMatrix
+from magenpy.LDMatrix import LDMatrix
 
-from .model_utils import standardize_genotype_matrix, merge_snp_tables
-from .parsers.plink_parsers import parse_fam_file, parse_bim_file
-from .parsers.misc_parsers import read_snp_filter_file, read_individual_filter_file, parse_ld_block_data
-from .utils import intersect_arrays, makedir, iterable, get_filenames, run_shell_script
+from magenpy.parsers.plink_parsers import parse_fam_file, parse_bim_file
+from magenpy.parsers.misc_parsers import read_snp_filter_file, read_individual_filter_file, parse_ld_block_data
+
+from magenpy.utils.c_utils import (find_windowed_ld_boundaries,
+                                   find_shrinkage_ld_boundaries,
+                                   find_ld_block_boundaries)
+from magenpy.utils.ld_utils import (_validate_ld_matrix,
+                                    from_plink_ld_bin_to_zarr,
+                                    from_plink_ld_table_to_zarr_chunked,
+                                    shrink_ld_matrix,
+                                    zarr_array_to_ragged,
+                                    rechunk_zarr,
+                                    move_ld_store)
+
+from magenpy.utils.model_utils import standardize_genotype_matrix, merge_snp_tables
+from magenpy.utils.compute_utils import intersect_arrays, iterable
+from magenpy.utils.system_utils import makedir, get_filenames, run_shell_script, is_cmd_tool
 
 
 class GWASDataLoader(object):
@@ -45,7 +50,7 @@ class GWASDataLoader(object):
                  phenotype_id=None,
                  standardize_phenotype=True,
                  sumstats_files=None,
-                 sumstats_format='pystatgen',
+                 sumstats_format='magenpy',
                  keep_individuals=None,
                  keep_snps=None,
                  min_maf=None,
@@ -54,7 +59,7 @@ class GWASDataLoader(object):
                  annotation_files=None,
                  genmap_Ne=None,
                  genmap_sample_size=None,
-                 shrinkage_cutoff=1e-3,
+                 shrinkage_cutoff=1e-5,
                  compute_ld=False,
                  ld_store_files=None,
                  ld_block_files=None,
@@ -84,12 +89,17 @@ class GWASDataLoader(object):
 
         # Access the configuration file:
         config = configparser.ConfigParser()
-        config.read(osp.join(osp.dirname(__file__), 'config.ini'))
+        config.read(osp.join(osp.dirname(__file__), 'config/paths.ini'))
 
         try:
             self.config = config['USER']
         except KeyError:
             self.config = config['DEFAULT']
+
+        if self.use_plink:
+            if not is_cmd_tool(self.config.get('plink2_path')):
+                raise Exception("To use `plink` as a backend, make sure that the path for the "
+                                "plink2 executable is configured properly.")
 
         # ------- General parameters -------
 
@@ -632,7 +642,7 @@ class GWASDataLoader(object):
         else:
             self.phenotype_id = phenotype_id
 
-    def read_summary_stats(self, sumstats_files, sumstats_format='pystatgen'):
+    def read_summary_stats(self, sumstats_files, sumstats_format='magenpy'):
         """
         TODO: implement parsers for summary statistics
         TODO: Move these parsers to `parsers.py`
@@ -912,6 +922,10 @@ class GWASDataLoader(object):
         """
         Compute the Linkage-Disequilibrium (LD) matrix between SNPs using plink1.9
         """
+
+        if not is_cmd_tool(self.config.get('plink1.9_path')):
+            raise Exception("To use `plink` as a backend for LD calculation, "
+                            "make sure that the path for the plink1.9 executable is configured properly.")
 
         if self.maf is None:
             self.compute_allele_frequency()
@@ -1371,9 +1385,9 @@ class GWASDataLoader(object):
                           disable=not self.verbose):
 
             if self.standardize_genotype:
-                pgs += da.dot(standardize_genotype_matrix(gt).fillna(0.), betas[c]).compute()
+                pgs += np.dot(standardize_genotype_matrix(gt).fillna(0.), betas[c])
             else:
-                pgs += da.dot(gt.fillna(self.maf[c]), betas[c]).compute()
+                pgs += np.dot(gt.fillna(self.maf[c]), betas[c])
 
         if betas_shape == 1:
             pgs = pgs.flatten()
@@ -1761,13 +1775,13 @@ class GWASDataLoader(object):
         for c in tqdm(chroms, desc="Computing beta hats", disable=not self.verbose):
 
             if self.standardize_genotype:
-                numer = da.dot(standardize_genotype_matrix(self.genotypes[c]).T, self.phenotypes)
+                numer = np.dot(standardize_genotype_matrix(self.genotypes[c]).T, self.phenotypes)
                 denom = self.n_per_snp[c]
             else:
-                numer = da.dot(self.genotypes[c].fillna(self.maf[c]).T, self.phenotypes)
-                denom = self.n_per_snp[c] * self.genotypes[c].var(axis=0)
+                numer = np.dot(self.genotypes[c].fillna(self.maf[c]).T, self.phenotypes)
+                denom = self.n_per_snp[c] * self.genotypes[c].var(axis=0).compute()
 
-            self.beta_hats[c] = (numer / denom).compute()
+            self.beta_hats[c] = numer / denom
 
         return self.beta_hats
 

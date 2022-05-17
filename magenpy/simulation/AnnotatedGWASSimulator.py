@@ -1,6 +1,6 @@
 
 import numpy as np
-from .GWASSimulator import GWASSimulator
+from magenpy.simulation import GWASSimulator
 
 
 class AnnotatedGWASSimulator(GWASSimulator):

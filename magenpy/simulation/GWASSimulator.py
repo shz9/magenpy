@@ -6,8 +6,8 @@ Date: March 2021
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
-from .model_utils import multinomial_rvs
-from .GWASDataLoader import GWASDataLoader
+from magenpy.utils.model_utils import multinomial_rvs
+from magenpy import GWASDataLoader
 
 
 class GWASSimulator(GWASDataLoader):
@@ -23,9 +23,9 @@ class GWASSimulator(GWASDataLoader):
 
         :param bed_files: A path (or list of paths) to PLINK bed files.
         :param h2g: The trait SNP heritability, or proportion of variance explained by SNPs.
-        :param pi: The mixture proportions for the SNP effect sizes.
-        :param d:  The prior multipliers for per-SNP variance in effect size.
-        :param prevalence: The (disease) prevalence for binary, case/control phenotypes.
+        :param pi: The mixture proportions for Gaussian mixture density.
+        :param d:  The variance multipliers for each component of the mixture density.
+        :param prevalence: The (disease) prevalence for binary (case-control) phenotypes.
         """
 
         super().__init__(bed_files, **kwargs)
@@ -212,6 +212,7 @@ class GWASSimulator(GWASDataLoader):
 
         if self.betas is None or reset_beta:
             self.simulate_mixture_assignment()
+            self.set_per_snp_heritability()
             self.simulate_betas()
 
         # Simulate the phenotype

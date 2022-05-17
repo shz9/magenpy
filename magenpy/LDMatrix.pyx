@@ -10,10 +10,11 @@
 
 
 import zarr
+import os.path as osp
 import numpy as np
 cimport numpy as np
 import pandas as pd
-from .c_utils import zarr_islice
+from magenpy.utils.c_utils import zarr_islice
 
 
 cdef class LDMatrix:
@@ -40,8 +41,12 @@ cdef class LDMatrix:
 
     @classmethod
     def from_path(cls, ld_store_path):
-        ldw = zarr.open(ld_store_path)
-        return cls(ldw)
+
+        if osp.isdir(ld_store_path):
+            ldw = zarr.open(ld_store_path)
+            return cls(ldw)
+        else:
+            raise FileNotFoundError
 
     @property
     def n_elements(self):

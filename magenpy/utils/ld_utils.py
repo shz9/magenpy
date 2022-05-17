@@ -9,7 +9,7 @@ import dask.array as da
 import numcodecs
 import zarr
 
-from .utils import generate_slice_dictionary
+from magenpy.utils.compute_utils import generate_slice_dictionary
 
 
 def _validate_ld_matrix(ld_mat):

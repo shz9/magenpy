@@ -261,7 +261,7 @@ def tree_to_rho(tree, min_corr):
 
 def multinomial_rvs(n, p):
     """
-    Taken from Warren Weckesser:
+    Copied from Warren Weckesser:
     https://stackoverflow.com/a/55830796
 
     Sample from the multinomial distribution with multiple p vectors.

@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from .utils import intersect_arrays
+from magenpy.utils.compute_utils import intersect_arrays
 
 
 class AnnotationMatrix(object):
