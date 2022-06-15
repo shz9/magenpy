@@ -5,15 +5,15 @@ import configparser
 # Data structures:
 from magenpy.AnnotationMatrix import AnnotationMatrix
 from magenpy.LDMatrix import LDMatrix
-from magenpy.GWASDataLoader import GWASDataLoader
-
-# Utils:
-from magenpy.parsers import *
-from magenpy.utils import *
+from magenpy.GWADataLoader import GWADataLoader
+from magenpy.SumstatsTable import SumstatsTable
+from magenpy.SampleTable import SampleTable
 
 # Simulation:
 
-from magenpy.simulation.GWASSimulator import GWASSimulator
+from magenpy.simulation.GWASimulator import GWASimulator
+
+__version__ = '0.0.2'
 
 
 config = configparser.ConfigParser()

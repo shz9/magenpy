@@ -2,4 +2,3 @@ Cython
 rechunker==0.4
 matplotlib
 seaborn
-requests

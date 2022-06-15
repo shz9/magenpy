@@ -7,13 +7,14 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 from magenpy.utils.model_utils import multinomial_rvs
-from magenpy import GWASDataLoader
+from magenpy.GWADataLoader import GWADataLoader
 
 
-class GWASSimulator(GWASDataLoader):
+class GWASimulator(GWADataLoader):
 
-    def __init__(self, bed_files,
-                 h2g=0.2,
+    def __init__(self,
+                 bed_files,
+                 h2=0.2,
                  pi=(0.9, 0.1),
                  d=(0., 1.),
                  prevalence=0.15,
@@ -21,29 +22,29 @@ class GWASSimulator(GWASDataLoader):
         """
         Simulate phenotypes using the linear additive model.
 
-        :param bed_files: A path (or list of paths) to PLINK bed files.
-        :param h2g: The trait SNP heritability, or proportion of variance explained by SNPs.
+        :param bed_files: A path (or list of paths) to PLINK BED files.
+        :param h2: The trait SNP heritability, or proportion of variance explained by SNPs.
         :param pi: The mixture proportions for Gaussian mixture density.
-        :param d:  The variance multipliers for each component of the mixture density.
+        :param d:  The variance multipliers for each component of the Gaussian mixture density.
         :param prevalence: The (disease) prevalence for binary (case-control) phenotypes.
         """
 
         super().__init__(bed_files, **kwargs)
 
         self.pi = pi
-        self.h2g = h2g
+        self.h2 = h2
         self.prevalence = prevalence
 
         # Sanity checks:
-        assert 0. <= self.h2g <= 1.
+        assert 0. <= self.h2 <= 1.
         assert round(sum(self.pi), 1) == 1.
         assert 0. < self.prevalence < 1.
 
         self.d = np.array(d)
 
-        self.per_snp_h2g = None
+        self.per_snp_h2 = None
         self.per_snp_pi = None
-        self.betas = None
+        self.beta = None
         self.mixture_assignment = None
 
     @property
@@ -58,11 +59,11 @@ class GWASSimulator(GWASDataLoader):
         self.pi = new_pi
         self.set_per_snp_mixture_probability()
 
-    def set_h2g(self, new_h2g):
+    def set_h2(self, new_h2):
         """
         Set the total heritability (proportion of additive variance due to SNPs) for the trait
         """
-        self.h2g = new_h2g
+        self.h2 = new_h2
         self.set_per_snp_heritability()
 
     def set_per_snp_mixture_probability(self):
@@ -85,12 +86,12 @@ class GWASSimulator(GWASDataLoader):
         # Estimate the global sigma_beta_sq based on the
         # pre-specified heritability, the mixture proportions `pi`,
         # and the prior multipliers `d`.
-        sigma_beta_sq = self.h2g / (self.M*np.array(self.pi)*self.d).sum()
+        sigma_beta_sq = self.h2 / (self.m*np.array(self.pi)*self.d).sum()
 
-        self.per_snp_h2g = {}
+        self.per_snp_h2 = {}
 
         for c, c_size in self.shapes.items():
-            self.per_snp_h2g[c] = sigma_beta_sq*self.d[np.where(self.mixture_assignment[c])[1]]
+            self.per_snp_h2[c] = sigma_beta_sq*self.d[np.where(self.mixture_assignment[c])[1]]
 
     def get_causal_status(self):
         """
@@ -143,53 +144,51 @@ class GWASSimulator(GWASDataLoader):
 
         return self.mixture_assignment
 
-    def set_betas(self, new_betas):
+    def set_beta(self, new_beta):
         """
-        Set the betas according to user-provided dictionary.
-        :param new_betas: A dictionary where the keys are the chromosomes and
-        the values are the betas for each SNP on that chromosome.
+        Set the beta according to user-provided dictionary.
+        :param new_beta: A dictionary where the keys are the chromosomes and
+        the values are the beta for each SNP on that chromosome.
         """
 
         # Check that the shapes match pre-specified information:
         for c, c_size in self.shapes.items():
-            assert len(new_betas[c]) == c_size
+            assert len(new_beta[c]) == c_size
 
-        self.betas = new_betas
+        self.beta = new_beta
 
-    def simulate_betas(self):
+    def simulate_beta(self):
         """
         Simulate the causal effect size for the variants included
         in the dataset.
         """
 
-        if self.per_snp_h2g is None or len(self.per_snp_h2g) < 1:
+        if self.per_snp_h2 is None or len(self.per_snp_h2) < 1:
             self.set_per_snp_heritability()
 
-        self.betas = {}
+        self.beta = {}
 
         for c, c_size in self.shapes.items():
 
-            self.betas[c] = np.random.normal(loc=0.0,
-                                             scale=np.sqrt(self.per_snp_h2g[c]),
-                                             size=c_size)
+            self.beta[c] = np.random.normal(loc=0.0,
+                                            scale=np.sqrt(self.per_snp_h2[c]),
+                                            size=c_size)
 
-        return self.betas
+        return self.beta
 
     def simulate_phenotypes(self):
         """
-        Simulate the phenotypes for N individuals
+        Simulate complex phenotypes for the samples, given their genotype information and 
+        fixed effect sizes `beta` that were simulated previously.
         """
 
-        assert self.betas is not None
+        assert self.beta
 
-        # Compute the polygenic score given the simulated/provided betas:
-        if self.use_plink:
-            pgs = self.score_plink(self.betas)
-        else:
-            pgs = self.score(self.betas)
+        # Compute the polygenic score given the simulated/provided beta:
+        pgs = self.score(self.beta)
 
         # Sample the environmental/residual component:
-        e = np.random.normal(loc=0., scale=np.sqrt(1. - self.h2g), size=self.N)
+        e = np.random.normal(loc=0., scale=np.sqrt(1. - self.h2), size=self.sample_size)
 
         # The final simulated phenotype is a combination of
         # the polygenic score + the residual component:
@@ -199,34 +198,51 @@ class GWASSimulator(GWASDataLoader):
             # If the simulated phenotype is to be binary,
             # use the threshold model to determine positives/negatives
             # based on the prevalence of the phenotype in the population:
+            
+            from ..stats.transforms.phenotype import standardize
+            
+            y = standardize(y)
+            
             cutoff = norm.ppf(1. - self.prevalence)
             new_y = np.zeros_like(y, dtype=int)
             new_y[y > cutoff] = 1
-            self.phenotypes = new_y
         else:
-            self.phenotypes = y
+            new_y = y
 
-        return self.phenotypes
+        self.set_phenotype(new_y)
+        
+        return new_y
 
-    def simulate(self, reset_beta=True, perform_gwas=False, phenotype_id=None):
+    def simulate(self, reset_beta=True, perform_gwas=False):
+        """
+        A convenience method to simulate all the components of the generative model.
+        Specifically, the simulation follows the standard linear model, where the phenotype is 
+        dependent on the genotype + environmental components that are assumed to be uncorrelated:
+        
+        `Y = XB + e`
+        
+        Where `Y` is the vector of phenotypes, `X` is the genotype matrix, `B` is the vector of effect sizes, 
+        and `e` represents the residual effects. The generative model proceeds by:
+         
+         1) Drawing the effect sizes `beta` from a Gaussian mixture density.
+         2) Drawing the residual effect from an isotropic Gaussian density.
+         3) Setting the phenotype according to the equation above. 
+        
+        :param reset_beta: If True, reset the effect sizes by drawing new ones from the prior density.
+        :param perform_gwas: If True, automatically perform genome-wide association on the newly simulated phenotype.
+        """
 
-        if self.betas is None or reset_beta:
+        if self.beta is None or reset_beta:
             self.simulate_mixture_assignment()
             self.set_per_snp_heritability()
-            self.simulate_betas()
+            self.simulate_beta()
 
         # Simulate the phenotype
         self.simulate_phenotypes()
 
         if perform_gwas:
-            # Perform GWAS
-            if self.use_plink:
-                self.perform_gwas_plink()
-            else:
-                self.perform_gwas()
-
-        if phenotype_id is not None:
-            self.phenotype_id = phenotype_id
+            # Perform genome-wide association testing...
+            self.perform_gwas()
 
     def to_true_beta_table(self, per_chromosome=False):
         """
@@ -235,7 +251,7 @@ class GWASSimulator(GWASDataLoader):
         :param per_chromosome: If True, return a dictionary of tables for each chromosome.
         """
 
-        assert self.betas is not None
+        assert self.beta is not None
 
         eff_tables = {}
         causal_status = self.get_causal_status()
@@ -244,11 +260,11 @@ class GWASSimulator(GWASDataLoader):
 
             eff_tables[c] = pd.DataFrame({
                 'CHR': c,
-                'SNP': self.snps[c],
-                'A1': self.alt_alleles[c],
+                'SNP': self.genotype[c].snps,
+                'A1': self.genotype[c].a1,
                 'MixtureComponent': np.where(self.mixture_assignment[c] == 1)[1],
-                'Heritability': self.per_snp_h2g[c],
-                'BETA': self.betas[c].flatten(),
+                'Heritability': self.per_snp_h2[c],
+                'BETA': self.beta[c].flatten(),
                 'Causal': causal_status[c],
             })
 

@@ -3,8 +3,10 @@ import numpy as np
 from scipy import stats
 
 
-def merge_snp_tables(ref_table, alt_table,
-                     how='inner', drop_duplicates=True,
+def merge_snp_tables(ref_table,
+                     alt_table,
+                     how='inner',
+                     drop_duplicates=True,
                      correct_flips=True):
     """
     This function takes a reference SNP table with at least 2 columns ('SNP', 'A1')
@@ -18,7 +20,7 @@ def merge_snp_tables(ref_table, alt_table,
     the alternative table (e.g. BETA, MAF) based whether the A1 alleles agree between the two tables.
 
 
-    :param ref_table: The reference table (pandas dataframe)
+    :param ref_table: The reference table (pandas dataframe).
     :param alt_table: The alternative table (pandas dataframe)
     :param how: `inner` or `left`
     :param drop_duplicates: Drop duplicate SNPs
@@ -27,7 +29,7 @@ def merge_snp_tables(ref_table, alt_table,
 
     assert how in ('left', 'inner')
 
-    merged_table = ref_table.merge(alt_table, how=how, on='SNP')
+    merged_table = ref_table[['SNP', 'A1']].merge(alt_table, how=how, on='SNP')
 
     if drop_duplicates:
         merged_table.drop_duplicates(inplace=True, subset=['SNP'])
@@ -38,23 +40,35 @@ def merge_snp_tables(ref_table, alt_table,
     # Assign A1 to be the one derived from the reference table:
     merged_table['A1'] = merged_table['A1_x']
 
+    # Detect cases where A1 is flipped between the reference and non-reference tables:
+    flip = np.not_equal(merged_table['A1_x'].values, merged_table['A1_y'].values)
+
+    if 'A2' in merged_table.columns:
+        merged_table['A2'] = merged_table['A1_y'].where(flip, merged_table['A2'])
+
     if correct_flips:
 
-        merged_table['flip'] = np.not_equal(merged_table['A1_x'].values, merged_table['A1_y'].values).astype(int)
+        flip = flip.astype(int)
+        num_flips = flip.sum()
 
-        if merged_table['flip'].sum() > 0:
+        if num_flips > 0:
 
             # Correct betas:
             if 'BETA' in merged_table:
-                merged_table['BETA'] = (-2.*merged_table['flip'] + 1.) * merged_table['BETA']
+                merged_table['BETA'] = (-2.*flip + 1.) * merged_table['BETA']
+
+            if 'STD_BETA' in merged_table:
+                merged_table['STD_BETA'] = (-2.*flip + 1.) * merged_table['STD_BETA']
 
             # Correct Z-scores:
             if 'Z' in merged_table:
-                merged_table['Z'] = (-2.*merged_table['flip'] + 1.) * merged_table['Z']
+                merged_table['Z'] = (-2.*flip + 1.) * merged_table['Z']
 
             # Correct MAF:
             if 'MAF' in merged_table:
-                merged_table['MAF'] = np.abs(merged_table['flip'] - merged_table['MAF'])
+                merged_table['MAF'] = np.abs(flip - merged_table['MAF'])
+
+    merged_table.drop(['A1_x', 'A1_y'], axis=1, inplace=True)
 
     return merged_table
 
@@ -86,7 +100,7 @@ def identify_mismatched_snps(gdl,
     NOTE: May need to re-implement this to apply some of the constraints genome-wide
     rather than on a per-chromosome basis.
 
-    :param gdl: A GWASDataLoader object
+    :param gdl: A `GWADataLoader` object
     :param chrom: A chromosome
     :param n_iter: Number of iterations
     :param G: The number of neighboring SNPs to sample (default: 100)
@@ -205,16 +219,6 @@ def identify_mismatched_snps(gdl,
                 mismatched_dict[chrom] = (mismatched_dict[chrom] | mismatch_below_thres | mismatch_above_thres)
 
     return mismatched_dict
-
-
-def standardize_genotype_matrix(g_mat, fill_na=True):
-
-    sg_mat = (g_mat - g_mat.mean(axis=0)) / g_mat.std(axis=0)
-
-    if fill_na:
-        sg_mat = sg_mat.fillna(0.)
-
-    return sg_mat
 
 
 def get_shared_distance_matrix(tree, tips=None):

@@ -31,11 +31,10 @@ magenpy_ld --bfile "$TGP_PATH" \
 # Example 3: Compute LD within LD blocks:
 
 LD_URL="https://bitbucket.org/nygcresearch/ldetect-data/raw/ac125e47bf7ff3e90be31f278a7b6a61daaba0dc/EUR/fourier_ls-all.bed"
-wget -O EUR_ld_blocks.bed "$LD_URL"
 
 magenpy_ld --bfile "$TGP_PATH" \
            --backend "plink" \
            --estimator "block" \
-           --ld-blocks "EUR_ld_blocks.bed" \
+           --ld-blocks "$LD_URL" \
            --output-dir "output/ld/example_3/"
 

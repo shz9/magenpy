@@ -25,7 +25,15 @@ def parse_bim_file(plink_bfile):
             plink_bfile = plink_bfile + '.bim'
 
     bim_df = pd.read_csv(plink_bfile, delim_whitespace=True,
-                         names=['CHR', 'SNP', 'cM', 'POS', 'A1', 'A2'])
+                         names=['CHR', 'SNP', 'cM', 'POS', 'A1', 'A2'],
+                         dtype={
+                             'CHR': int,
+                             'SNP': str,
+                             'cM': float,
+                             'POS': int,
+                             'A1': str,
+                             'A2': str
+                         })
 
     return bim_df
 
@@ -44,10 +52,7 @@ def parse_fam_file(plink_bfile):
         - Sex code ('1' = male, '2' = female, '0' = unknown)
         - Phenotype value ('1' = control, '2' = case, '-9'/'0'/non-numeric = missing data if case/control)
 
-    TODO: Handle missing values here for downstream tasks
-
     :param plink_bfile:
-    :return:
     """
 
     if '.bim' not in plink_bfile:
@@ -56,7 +61,26 @@ def parse_fam_file(plink_bfile):
         else:
             plink_bfile = plink_bfile + '.fam'
 
-    fam_df = pd.read_csv(plink_bfile, delim_whitespace=True,
-                         names=['FID', 'IID', 'FatherID', 'MotherID', 'Sex', 'Phenotype'])
+    fam_df = pd.read_csv(plink_bfile,
+                         delim_whitespace=True,
+                         usecols=range(6),
+                         names=['FID', 'IID', 'fatherID', 'motherID', 'sex', 'phenotype'],
+                         dtype={'FID': str,
+                                'IID': str,
+                                'fatherID': str,
+                                'motherID': str,
+                                'sex': float,
+                                'phenotype': float
+                                },
+                         na_values={
+                             'phenotype': [-9.],
+                             'sex': [0]
+                         })
+
+    if fam_df['phenotype'].isnull().all():
+        fam_df.drop('phenotype', axis=1, inplace=True)
+
+    if fam_df['sex'].isnull().all():
+        fam_df.drop('sex', axis=1, inplace=True)
 
     return fam_df

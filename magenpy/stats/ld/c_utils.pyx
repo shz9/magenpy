@@ -17,12 +17,11 @@ def zarr_islice(arr, start=None, end=None):
 
     """
     This is copied from the official, but not yet released implementation of
-    i_slice from the official Zarr codebase:
+    i_slice in Zarr codebase:
     https://github.com/zarr-developers/zarr-python/blob/e79e75ca8f07c95a5deede51f7074f699aa41149/zarr/core.py#L463
-    :param arr:
-    :param start:
-    :param end:
-    :return:
+    :param arr: A Zarr array
+    :param start: Start index
+    :param end: End index
     """
 
     if len(arr.shape) == 0:
@@ -73,35 +72,35 @@ cpdef find_ld_block_boundaries(long[:] pos, long[:, :] block_boundaries):
     return np.array((v_min, v_max))
 
 
-cpdef find_windowed_ld_boundaries(double[:] cm_dist, double max_dist):
+cpdef find_windowed_ld_boundaries(double[:] pos, double max_dist):
 
-    cdef unsigned int i, j, M = len(cm_dist)
-    cdef long[:] v_min = np.zeros_like(cm_dist, dtype=np.int)
-    cdef long[:] v_max = M*np.ones_like(cm_dist, dtype=np.int)
+    cdef unsigned int i, j, M = len(pos)
+    cdef long[:] v_min = np.zeros_like(pos, dtype=np.int)
+    cdef long[:] v_max = M*np.ones_like(pos, dtype=np.int)
 
     for i in range(M):
 
         for j in range(i, M):
-            if cm_dist[j] - cm_dist[i] > max_dist:
+            if pos[j] - pos[i] > max_dist:
                 v_max[i] = j
                 break
 
         for j in range(i, -1, -1):
-            if cm_dist[i] - cm_dist[j] > max_dist:
+            if pos[i] - pos[j] > max_dist:
                 v_min[i] = j + 1
                 break
 
     return np.array((v_min, v_max))
 
 
-cpdef find_shrinkage_ld_boundaries(double[:] cm_dist,
+cpdef find_shrinkage_ld_boundaries(double[:] cm_pos,
                                    double genmap_Ne,
                                    int genmap_sample_size,
                                    double cutoff):
 
-    cdef unsigned int i, j, M = len(cm_dist)
-    cdef long[:] v_min = np.zeros_like(cm_dist, dtype=np.int)
-    cdef long[:] v_max = M*np.ones_like(cm_dist, dtype=np.int)
+    cdef unsigned int i, j, M = len(cm_pos)
+    cdef long[:] v_min = np.zeros_like(cm_pos, dtype=np.int)
+    cdef long[:] v_max = M*np.ones_like(cm_pos, dtype=np.int)
 
     # The multiplicative factor for the shrinkage estimator
     cdef double mult_factor = 2. * genmap_Ne / genmap_sample_size
@@ -109,12 +108,12 @@ cpdef find_shrinkage_ld_boundaries(double[:] cm_dist,
     for i in range(M):
 
         for j in range(i, M):
-            if exp(-mult_factor*(cm_dist[j] - cm_dist[i])) < cutoff:
+            if exp(-mult_factor*(cm_pos[j] - cm_pos[i])) < cutoff:
                 v_max[i] = j
                 break
 
         for j in range(i, -1, -1):
-            if exp(-mult_factor*(cm_dist[i] - cm_dist[j])) < cutoff:
+            if exp(-mult_factor*(cm_pos[i] - cm_pos[j])) < cutoff:
                 v_min[i] = j + 1
                 break
 

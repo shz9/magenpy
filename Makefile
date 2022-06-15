@@ -12,7 +12,7 @@ install:
 	pip install .
 
 install-from-source: dist
-	pip install dist/magenpy-0.1.tar.gz
+	pip install dist/magenpy-*.tar.gz
 
 clean:
 	$(RM) -r build dist *.egg-info

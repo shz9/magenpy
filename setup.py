@@ -29,8 +29,8 @@ def no_cythonize(extensions, **_ignore):
 
 
 extensions = [
-    Extension("magenpy.utils.c_utils",
-              sources=["magenpy/utils/c_utils.pyx"],
+    Extension("magenpy.stats.ld.c_utils",
+              sources=["magenpy/stats/ld/c_utils.pyx"],
               extra_compile_args=["-ffast-math"],
               include_dirs=[np.get_include()],
               ),
@@ -69,7 +69,7 @@ with open("requirements-optional.txt") as fp:
 
 setup(
     name="magenpy",
-    version="0.0.1",
+    version="0.0.2",
     author="Shadi Zabad",
     author_email="shadi.zabad@mail.mcgill.ca",
     description="Modeling and Analysis of Statistical Genetics data in python",

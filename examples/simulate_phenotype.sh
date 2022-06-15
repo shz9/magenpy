@@ -15,41 +15,41 @@ magenpy_simulate -h
 
 TGP_PATH=$(python -c "import magenpy as mgp; print(mgp.tgp_eur_data_path())")
 
-# Example 1: Simulate a heritable quantitative trait (h2g = 0.2) for the 1000G individuals
+# Example 1: Simulate a heritable quantitative trait (h2 = 0.2) for the 1000G individuals
 
 magenpy_simulate --bed-files "$TGP_PATH" \
-                 --output-file "output/simulations/example_1.txt" \
-                 --h2g 0.2
+                 --output-file "output/simulations/example_1" \
+                 --h2 0.2
 
-# Example 2: Simulate a heritable case-control trait (h2g = 0.3, prevalence=.2) for the 1000G individuals:
+# Example 2: Simulate a heritable case-control trait (h2 = 0.3, prevalence=.2) for the 1000G individuals:
 
 magenpy_simulate --bed-files "$TGP_PATH" \
-                 --output-file "output/simulations/example_2.txt" \
+                 --output-file "output/simulations/example_2" \
                  --likelihood "binomial" \
-                 --h2g 0.3 \
+                 --h2 0.3 \
                  --prevalence 0.2
 
 # Example 3: Use plink as a backend for operations on the genotype matrix (recommended):
 
 magenpy_simulate --bed-files "$TGP_PATH" \
                  --backend "plink" \
-                 --output-file "output/simulations/example_3.txt" \
-                 --h2g 0.2
+                 --output-file "output/simulations/example_3" \
+                 --h2 0.2
 
 # Example 4: Use a mixture of 4 Gaussians for the effect sizes:
 
 magenpy_simulate --bed-files "$TGP_PATH" \
                  --backend "plink" \
-                 --output-file "output/simulations/example_4.txt" \
-                 --h2g 0.2 \
+                 --output-file "output/simulations/example_4" \
+                 --h2 0.2 \
                  --mix-prop 0.9,0.03,0.03,0.04 \
                  --var-mult 0.0,0.01,0.1,1.0
 
 # Example 5: Output the simulated phenotype + simulated effect sizes per variant:
 
 magenpy_simulate --bed-files "$TGP_PATH" \
-                 --output-file "output/simulations/example_5.txt" \
-                 --h2g 0.2 \
+                 --output-file "output/simulations/example_5" \
+                 --h2 0.2 \
                  -p 0.9,0.1 \
                  -d 0.,1. \
                  --output-simulated-effects

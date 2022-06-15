@@ -14,7 +14,7 @@ import os.path as osp
 import numpy as np
 cimport numpy as np
 import pandas as pd
-from magenpy.utils.c_utils import zarr_islice
+from magenpy.stats.ld.c_utils import zarr_islice
 
 
 cdef class LDMatrix:
@@ -42,9 +42,12 @@ cdef class LDMatrix:
     @classmethod
     def from_path(cls, ld_store_path):
 
-        if osp.isdir(ld_store_path):
-            ldw = zarr.open(ld_store_path)
-            return cls(ldw)
+        if '.zarray' in ld_store_path:
+            ld_store_path = osp.dirname(ld_store_path)
+
+        if osp.isfile(osp.join(ld_store_path, '.zarray')):
+            ldm = zarr.open(ld_store_path)
+            return cls(ldm)
         else:
             raise FileNotFoundError
 
@@ -161,10 +164,32 @@ cdef class LDMatrix:
         else:
             return ld_score
 
+    def filter_snps(self, extract_snps=None, extract_file=None):
+        """
+       Filter the LDMatrix to a subset of SNPs.
+       :param extract_snps: A list or array of SNP IDs to keep.
+       :param extract_file: A file containing the SNP IDs to keep.
+       """
+
+        assert extract_snps is not None or extract_file is not None
+
+        if extract_snps is None:
+            from .parsers.misc_parsers import read_snp_filter_file
+            extract_snps = read_snp_filter_file(extract_file)
+
+        from .utils.compute_utils import intersect_arrays
+
+        extract_index = intersect_arrays(np.array(self.get_store_attr('SNP')),
+                                         extract_snps,
+                                         return_index=True)
+
+        new_mask = np.zeros(self.shape[0], dtype=bool)
+        new_mask[extract_index] = True
+
+        self.set_mask(new_mask)
+
     def get_mask(self):
-        if self._mask is None:
-            return None
-        else:
+        if self._mask:
             return np.array(self._mask)
 
     def set_mask(self, mask):
@@ -209,7 +234,9 @@ cdef class LDMatrix:
             # Return masked boundaries array:
             return np.array([start_pos[self._mask], end_pos[self._mask]])
 
-    def to_snp_table(self, col_subset=('CHR', 'SNP', 'POS', 'A1', 'MAF')):
+    def to_snp_table(self, col_subset=None):
+
+        col_subset = col_subset or ['CHR', 'SNP', 'POS', 'A1', 'MAF', 'LDScore']
 
         table = pd.DataFrame({'SNP': self.snps})
 
@@ -227,7 +254,26 @@ cdef class LDMatrix:
             if col == 'LDScore':
                 table['LDScore'] = self.ld_score
 
-        return table[list(col_subset)]
+        return table[col_subset]
+
+    def to_csr_matrix(self):
+        """
+        Convert the Zarr-formatted LD matrix into a sparse CSR matrix.
+        """
+
+        # Concatenate the data (entries of the LD matrix):
+        data = np.concatenate([np.array(x) for x in self])
+
+        # Stitch together the rows and columns for each data point:
+        bounds = self.get_masked_boundaries()
+        window_sizes = bounds[1, :] - bounds[0, :]
+
+        rows = np.concatenate([np.repeat(i, ws) for i, ws in enumerate(window_sizes)])
+        cols = np.concatenate([np.arange(bounds[0, i], bounds[1, i]) for i in range(bounds.shape[1])])
+
+        from scipy.sparse import csr_matrix
+
+        return csr_matrix((data, (rows, cols)), shape=(self._n_elements, self._n_elements))
 
     def compute_ld_scores(self, corrected=True):
         """
