@@ -6,7 +6,6 @@ Date: March 2021
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
-from magenpy.utils.model_utils import multinomial_rvs
 from magenpy.GWADataLoader import GWADataLoader
 
 
@@ -137,6 +136,8 @@ class GWASimulator(GWADataLoader):
             self.set_per_snp_mixture_probability()
 
         self.mixture_assignment = {}
+
+        from magenpy.utils.model_utils import multinomial_rvs
 
         for c, c_size in self.shapes.items():
 

@@ -97,23 +97,39 @@ cpdef find_shrinkage_ld_boundaries(double[:] cm_pos,
                                    double genmap_Ne,
                                    int genmap_sample_size,
                                    double cutoff):
+    """
+    Find the LD boundaries for the shrinkage estimator of Wen and Stephens (2010)
+    
+    :param cm_pos: A vector with the position of each genetic variant in centi Morgan.
+    :param genmap_Ne: The effective population size for the genetic map sample.
+    :param genmap_sample_size: The sample size used to estimate the genetic map.
+    :param cutoff: The threshold below which we set the shrinkage factor to zero.
+    """
 
     cdef unsigned int i, j, M = len(cm_pos)
     cdef long[:] v_min = np.zeros_like(cm_pos, dtype=np.int)
     cdef long[:] v_max = M*np.ones_like(cm_pos, dtype=np.int)
 
-    # The multiplicative factor for the shrinkage estimator
-    cdef double mult_factor = 2. * genmap_Ne / genmap_sample_size
+    # The multiplicative term for the shrinkage factor
+    # The shrinkage factor is 4 * Ne * (rho_ij/100) / (2*m)
+    # where Ne is the effective population size and m is the sample size
+    # for the genetic map and rho_ij is the distance between SNPs i and j
+    # in centi Morgan.
+    # Therefore, the multiplicative term that we need to apply
+    # to the distance between SNPs is: 4*Ne/(200*m), which is equivalent to 0.02*Ne/m
+    # See also: https://github.com/stephenslab/rss/blob/master/misc/get_corr.R
+    # and Wen and Stephens (2010)
+    cdef double mult_term = 0.02 * genmap_Ne / genmap_sample_size
 
     for i in range(M):
 
         for j in range(i, M):
-            if exp(-mult_factor*(cm_pos[j] - cm_pos[i])) < cutoff:
+            if exp(-mult_term*(cm_pos[j] - cm_pos[i])) < cutoff:
                 v_max[i] = j
                 break
 
         for j in range(i, -1, -1):
-            if exp(-mult_factor*(cm_pos[i] - cm_pos[j])) < cutoff:
+            if exp(-mult_term*(cm_pos[i] - cm_pos[j])) < cutoff:
                 v_min[i] = j + 1
                 break
 

@@ -90,6 +90,9 @@ class SampleTable(object):
         if 'na_values' not in read_csv_kwargs:
             read_csv_kwargs['na_values'] = {'phenotype': [-9.]}
 
+        if 'dtype' not in read_csv_kwargs:
+            read_csv_kwargs['dtype'] = {'phenotype': float}
+
         pheno_table = pd.read_csv(phenotype_file, **read_csv_kwargs)
         pheno_table.columns = ['FID', 'IID', 'phenotype']
 
@@ -145,7 +148,7 @@ class SampleTable(object):
 
             unique_vals = self.table['phenotype'].unique()
 
-            if self.table['phenotype'].isnull().all() or unique_vals == [-9.]:
+            if self.table['phenotype'].isnull().all():
                 self.table.drop('phenotype', axis=1, inplace=True)
             elif self.phenotype_likelihood in ('binomial', None):
 
@@ -180,7 +183,7 @@ class SampleTable(object):
 
     def get_table(self, col_subset=None):
         if col_subset is not None:
-            return self.table[col_subset]
+            return self.table[list(col_subset)]
         else:
             return self.table
 

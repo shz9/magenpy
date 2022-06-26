@@ -362,31 +362,72 @@ def clump_snps(ldm, stat, rsq_threshold=.9, extract=True):
 
 def shrink_ld_matrix(arr,
                      cm_pos,
+                     maf_var,
                      genmap_Ne,
                      genmap_sample_size,
                      shrinkage_cutoff=1e-5,
                      ld_boundaries=None):
     """
     Shrink the entries of the LD matrix using the shrinkage estimator
-    described in Lloyd-Jones (2019).
+    described in Lloyd-Jones (2019) and Wen and Stephens (2010).
 
     :param arr: The Zarr array containing the original LD matrix.
     :param cm_pos: The position of each variant in the LD matrix in centi Morgan.
+    :param maf_var: A vector of the variance in minor allele frequency (MAF) for each SNP in the LD matrix. Should be
+    equivalent to 2*pj*(1. - pj), where pj is the MAF of SNP j.
     :param genmap_Ne: The effective population size for the genetic map.
     :param genmap_sample_size: The sample size used to estimate the genetic map.
-    :param shrinkage_cutoff: The cutoff value below which we assume that the LD is zero.
+    :param shrinkage_cutoff: The cutoff value below which we assume that the shrinkage factor is zero.
     :param ld_boundaries: The LD boundaries to use when shrinking the LD matrix.
     """
 
     if ld_boundaries is None:
         ld_boundaries = np.array([np.repeat(None, arr.shape[0]), np.repeat(None, arr.shape[0])])
 
-    # The multiplicative factor for the shrinkage estimator
-    mult_factor = 2.*genmap_Ne / genmap_sample_size
+    # The multiplicative term for the shrinkage factor
+    # The shrinkage factor is 4 * Ne * (rho_ij/100) / (2*m)
+    # where Ne is the effective population size and m is the sample size
+    # for the genetic map and rho_ij is the distance between SNPs i and j
+    # in centi Morgan.
+    # Therefore, the multiplicative term that we need to apply
+    # to the distance between SNPs is: 4*Ne/(200*m), which is equivalent to 0.02*Ne/m
+    # See also: https://github.com/stephenslab/rss/blob/master/misc/get_corr.R
+    # and Wen and Stephens (2010)
+
+    mult_term = .02*genmap_Ne / genmap_sample_size
+
+    def harmonic_series_sum(n):
+        """
+        A utility function to compute the sum of the harmonic series
+        found in Equation 2.8 in Wen and Stephens (2010)
+        Acknowledgement: https://stackoverflow.com/a/27683292
+        """
+        from scipy.special import digamma
+        from numpy import euler_gamma
+
+        return digamma(n + 1) + euler_gamma
+
+    # Compute theta according to Eq. 2.8 in Wen and Stephens (2010)
+
+    h_sum = harmonic_series_sum(2*genmap_sample_size - 1)  # The sum of the harmonic series in Eq. 2.8
+    theta = (1. / h_sum) / (2. * genmap_sample_size + 1. / h_sum)  # The theta parameter (related to mutation)
+    theta_factor = (1. - theta)**2  # The theta factor that we'll multiply all elements of the covariance matrix with
+    theta_diag_factor = .5 * theta * (1. - .5 * theta)  # The theta factor for the diagonal elements
+
+    # We need to turn the correlation matrix into a covariance matrix to
+    # apply the shrinkage factor. For this, we have to multiply each row
+    # by the product of standard deviations:
+    maf_sd = np.sqrt(maf_var)
+
+    # According to Eqs. 2.6 and 2.7 in Wen and Stephens (2010), the shrunk standard deviation should be:
+    shrunk_sd = np.sqrt(theta_factor*maf_var + theta_diag_factor)
 
     def update_prev_chunk(j):
+        """
+        A utility function to update the LD matrix chunk by chunk for optimal speed and efficiency.
+        """
         chunk_start = (j - 1) - (j - 1) % chunk_size
-        chunk_end = chunk_start + chunk_size
+        chunk_end = min(chunk_start + chunk_size, arr.shape[0])
         arr[chunk_start:chunk_end] = chunk
 
     chunk_size = arr.chunks[0]
@@ -400,21 +441,32 @@ def shrink_ld_matrix(arr,
 
             chunk = arr[j: j + chunk_size]
 
+        start, end = ld_boundaries[:, j]
+
         # Compute the shrinkage factor the entries in row j
-        shrink_mult = np.exp(-mult_factor * np.abs(cm_pos - cm_pos[j])[ld_boundaries[0, j]: ld_boundaries[1, j]])
+        shrink_factor = np.exp(-mult_term * np.abs(cm_pos - cm_pos[j])[start: end])
         # Set any shrinkage factor below the cutoff value to zero:
-        shrink_mult[shrink_mult < shrinkage_cutoff] = 0.
+        shrink_factor[shrink_factor < shrinkage_cutoff] = 0.
+
+        # The factor to convert the entries of the correlation matrix into corresponding covariances:
+        to_cov_factor = maf_sd[j]*maf_sd[start: end]
+
+        # Compute the theta multiplicative factor following Eq. 2.6 in Wen and Stephens (2010)
+        shrink_factor *= theta_factor
+
+        # Compute the new denominator for the Pearson correlation:
+        # The shrunk standard deviation of SNP j multiplied by the shrunk standard deviations of each neighbor:
+        shrunk_sd_prod = shrunk_sd[j]*shrunk_sd[start: end]
 
         # Shrink the entries of the LD matrix:
         try:
-            chunk[j % chunk_size] = chunk[j % chunk_size]*shrink_mult
+            shrunk_corr = chunk[j % chunk_size]*to_cov_factor*shrink_factor / shrunk_sd_prod
+            shrunk_corr[j - start] = 1.
+            chunk[j % chunk_size] = shrunk_corr
         except ValueError:
-            print("chunk row:", chunk[j % chunk_size])
-            print("chunk shape:", chunk[j % chunk_size].shape)
-            print("shrinkage:", shrink_mult)
             raise ValueError(f'Failed to apply shrinkage to row number: {j}')
 
-    update_prev_chunk(j)
+    update_prev_chunk(j + 1)
 
     return arr
 
@@ -445,7 +497,7 @@ def sparsify_ld_matrix(arr, bounds):
         chunk[j % chunk_size, :bounds[0, j]] = 0
         chunk[j % chunk_size, bounds[1, j]:] = 0
 
-    update_prev_chunk(j)
+    update_prev_chunk(j + 1)
 
     return arr
 

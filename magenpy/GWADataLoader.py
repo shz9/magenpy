@@ -4,8 +4,8 @@ Date: December 2020
 """
 
 from typing import Union, Dict
-import tempfile
 
+import copy
 import pandas as pd
 import numpy as np
 
@@ -30,7 +30,7 @@ class GWADataLoader(object):
                  extract_snps=None,
                  extract_file=None,
                  min_maf=None,
-                 min_mac=1,
+                 min_mac=None,
                  drop_duplicated=True,
                  phenotype_likelihood='gaussian',
                  sumstats_files=None,
@@ -98,6 +98,11 @@ class GWADataLoader(object):
         self.harmonize_data()
 
     @property
+    def samples(self):
+        if self.sample_table is not None:
+            return self.sample_table.iid
+
+    @property
     def sample_size(self, agg=np.max):
         """
         The number of samples.
@@ -106,9 +111,9 @@ class GWADataLoader(object):
         By default, we take the maximum sample size per SNP e.g. `np.max`, but you may also
         take the mean by passing `np.mean` instead.
         """
-        if self.sample_table:
+        if self.sample_table is not None:
             return self.sample_table.n
-        elif self.sumstats_table:
+        elif self.sumstats_table is not None:
             return agg([agg(ss.n_per_snp) for ss in self.sumstats_table.values()])
         else:
             raise Exception("Information about the sample size is not available!")
@@ -124,6 +129,22 @@ class GWADataLoader(object):
         """
 
         return self.sample_size(agg=agg)
+
+    @property
+    def snps(self):
+        """
+        Return the list of SNPs retained in each chromosome.
+        """
+        if self.genotype is not None:
+            return {c: g.snps for c, g in self.genotype.items()}
+        elif self.sumstats_table is not None:
+            return {c: s.snps for c, s in self.sumstats_table.items()}
+        elif self.ld is not None:
+            return {c: l.snps for c, l in self.ld.items()}
+        elif self.annotation is not None:
+            return {c: a.snps for c, a in self.annotation.items()}
+        else:
+            raise Exception("GWADataLoader is not properly initialized!")
 
     @property
     def m(self):
@@ -145,13 +166,13 @@ class GWADataLoader(object):
         Return a dictionary where the key is the chromosome number and the value is
         the number of variants on that chromosome.
         """
-        if self.genotype:
+        if self.genotype is not None:
             return {c: g.shape[1] for c, g in self.genotype.items()}
-        elif self.sumstats_table:
+        elif self.sumstats_table is not None:
             return {c: s.shape[0] for c, s in self.sumstats_table.items()}
-        elif self.ld:
+        elif self.ld is not None:
             return {c: l.shape[0] for c, l in self.ld.items()}
-        elif self.annotation:
+        elif self.annotation is not None:
             return {c: a.shape[0] for c, a in self.annotation.items()}
         else:
             raise Exception("GWADataLoader is not properly initialized!")
@@ -187,25 +208,25 @@ class GWADataLoader(object):
         else:
             chroms = self.chromosomes
 
-        if not extract_snps:
+        if extract_snps is None:
             from .parsers.misc_parsers import read_snp_filter_file
             extract_snps = read_snp_filter_file(extract_file)
 
         for c in chroms:
 
             # Filter the genotype matrix:
-            if self.genotype and c in self.genotype:
+            if self.genotype is not None and c in self.genotype:
                 self.genotype[c].filter_snps(extract_snps=extract_snps)
 
             # Filter the summary statistics table:
-            if self.sumstats_table and c in self.sumstats_table:
+            if self.sumstats_table is not None and c in self.sumstats_table:
                 self.sumstats_table[c].filter_snps(extract_snps=extract_snps)
 
-            if self.ld and c in self.ld:
+            if self.ld is not None and c in self.ld:
                 self.ld[c].filter_snps(extract_snps=extract_snps)
 
             # Filter the annotation matrix:
-            if self.annotation and c in self.annotation:
+            if self.annotation is not None and c in self.annotation:
                 self.annotation[c].filter_snps(extract_snps=extract_snps)
 
     def filter_samples(self, keep_samples=None, keep_file=None):
@@ -331,7 +352,7 @@ class GWADataLoader(object):
         if self.verbose:
             print("> Reading phenotype file...")
 
-        assert self.sample_table
+        assert self.sample_table is not None
 
         self.sample_table.read_phenotype_file(phenotype_file, drop_na=drop_na, **read_csv_kwargs)
         self.sync_sample_tables()
@@ -413,9 +434,9 @@ class GWADataLoader(object):
             if 'CHR' in ss_tab.table.columns:
                 self.sumstats_table.update(ss_tab.split_by_chromosome())
             else:
-                if self.genotype:
+                if self.genotype is not None:
                     ref_table = {c: g.snps for c, g in self.genotype.items()}
-                elif self.ld:
+                elif self.ld is not None:
                     ref_table = {c: ld.snps for c, ld in self.ld.items()}
                 else:
                     raise Exception("Cannot index summary statistics tables without chromosome information!")
@@ -508,13 +529,13 @@ class GWADataLoader(object):
 
             data_source = []
 
-            if self.genotype and c in self.genotype:
+            if self.genotype is not None and c in self.genotype:
                 data_source.append(self.genotype[c])
-            if self.sumstats_table and c in self.sumstats_table:
+            if self.sumstats_table is not None and c in self.sumstats_table:
                 data_source.append(self.sumstats_table[c])
-            if self.ld and c in self.ld:
+            if self.ld is not None and c in self.ld:
                 data_source.append(self.ld[c])
-            if self.annotation and c in self.annotation:
+            if self.annotation is not None and c in self.annotation:
                 data_source.append(self.annotation[c])
 
             if len(data_source) > 1:
@@ -555,9 +576,9 @@ class GWADataLoader(object):
         betas are not provided, we use the marginal betas by default (if those are available).
         """
 
-        if not beta:
+        if beta is None:
             try:
-                beta = {c: s.marginal_beta for c, s in self.sumstats_table.items()}
+                beta = {c: s.marginal_beta or s.get_snp_pseudo_corr() for c, s in self.sumstats_table.items()}
             except Exception:
                 raise Exception("To perform linear scoring, you must a provide effect size estimates (BETA)!")
 
@@ -622,11 +643,11 @@ class GWADataLoader(object):
         snp_tables = {}
 
         for c in self.chromosomes:
-            if self.sumstats_table:
+            if self.sumstats_table is not None:
                 snp_tables[c] = self.sumstats_table[c].get_table(col_subset=col_subset)
-            elif self.genotype:
+            elif self.genotype is not None:
                 snp_tables[c] = self.genotype[c].get_snp_table(col_subset=col_subset)
-            elif self.ld:
+            elif self.ld is not None:
                 snp_tables[c] = self.ld[c].to_snp_table(col_subset=col_subset)
             else:
                 raise Exception("GWADataLoader is not properly initialized!")
@@ -671,6 +692,79 @@ class GWADataLoader(object):
         for c, g in self.genotype.items():
             g.set_sample_table(self.sample_table)
 
+    def split_by_chromosome(self):
+        """
+        A utility method to split a GWADataLoader object by chromosome ID, such that
+        we would have one `GWADataLoader` object per chromosome. The method returns a dictionary
+        where the key is the chromosome number and the value is the `GWADataLoader` object corresponding
+        to that chromosome only.
+        """
+
+        if len(self.chromosomes) == 1:
+            return {self.chromosomes[0]: self}
+
+        else:
+            split_dict = {}
+
+            for c in self.chromosomes:
+                split_dict[c] = copy.deepcopy(self)
+
+                if self.genotype is not None and c in self.genotype:
+                    split_dict[c].genotype = {c: self.genotype[c]}
+                if self.sumstats_table is not None and c in self.sumstats_table:
+                    split_dict[c].sumstats_table = {c: self.sumstats_table[c]}
+                if self.ld is not None and c in self.ld:
+                    split_dict[c].ld = {c: self.ld[c]}
+                if self.annotation is not None and c in self.annotation:
+                    split_dict[c].annotation = {c: self.annotation[c]}
+
+            return split_dict
+
+    def split_by_samples(self, proportions=None, groups=None, keep_original=False):
+        """
+        Split the `GWADataLoader` object by samples, if genotype or sample data
+        is available. The user must provide a list or proportion of samples in each split,
+        and the method will return a list of `GWADataLoader` objects with only samples
+        within each split. This may be a useful utility for training/testing split or some
+        other downstream tasks.
+
+        :param proportions: A list with the proportion of samples in each split. Must add to 1.
+        :param groups: A list of lists containing the sample IDs in each split.
+        :param keep_original: If True, keep the original `GWADataLoader` object and do not
+        transform it in the splitting process.
+        """
+
+        if self.sample_table is None:
+            raise Exception("The sample table is not set!")
+
+        if groups is None:
+            if proportions is None:
+                raise Exception("To split a `GWADataloader` object by samples, the user must provide either the list "
+                                "or proportion of individuals in each split.")
+            else:
+
+                # Assign each sample to a different split randomly by drawing from a multinomial:
+                random_split = np.random.multinomial(1, proportions, size=self.sample_size).astype(bool)
+                # Extract the samples in each group from the multinomial sample:
+                groups = [self.samples[random_split[:, i]] for i in range(random_split.shape[1])]
+
+        gdls = []
+        for i, g in enumerate(groups):
+
+            if len(g) < 1:
+                raise Exception(f"Group {i} is empty! Please ensure that all splits have at least one sample.")
+
+            if (i + 1) == len(groups) and not keep_original:
+                new_gdl = self
+            else:
+                new_gdl = copy.deepcopy(self)
+
+            new_gdl.filter_samples(keep_samples=g)
+
+            gdls.append(new_gdl)
+
+        return gdls
+
     def cleanup(self):
         """
         Clean up all temporary files and directories
@@ -685,6 +779,6 @@ class GWADataLoader(object):
                 continue
 
         # Clean up the temporary files associated with the genotype matrices:
-        if self.genotype:
+        if self.genotype is not None:
             for g in self.genotype.values():
                 g.cleanup()

@@ -124,7 +124,7 @@ class WindowedLD(SampleLD):
         m = self.genotype_matrix.n_snps
         indices = np.arange(m)
 
-        if self.window_size:
+        if self.window_size is not None:
             bounds.append(
                 np.clip(np.array(
                     [indices - self.window_size,
@@ -135,13 +135,13 @@ class WindowedLD(SampleLD):
 
         from .c_utils import find_windowed_ld_boundaries
 
-        if self.kb_window_size:
+        if self.kb_window_size is not None:
             bounds.append(
                 find_windowed_ld_boundaries(.001*self.genotype_matrix.bp_pos,
                                             self.kb_window_size)
             )
 
-        if self.cm_window_size:
+        if self.cm_window_size is not None:
             bounds.append(
                 find_windowed_ld_boundaries(self.genotype_matrix.cm_pos,
                                             self.cm_window_size)
@@ -224,6 +224,7 @@ class ShrinkageLD(SampleLD):
 
         ld_mat = LDMatrix(shrink_ld_matrix(ld_mat.z_array,
                                            self.genotype_matrix.cm_pos,
+                                           self.genotype_matrix.maf_var,
                                            self.genetic_map_ne,
                                            self.genetic_map_sample_size,
                                            self.threshold,

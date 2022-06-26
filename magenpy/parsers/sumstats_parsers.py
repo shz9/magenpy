@@ -31,7 +31,7 @@ class SumstatsParser(object):
         if drop_na:
             df = df.dropna()
 
-        if self.col_name_converter:
+        if self.col_name_converter is not None:
             df.rename(columns=self.col_name_converter, inplace=True)
 
         return df

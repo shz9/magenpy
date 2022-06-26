@@ -211,7 +211,7 @@ class GenotypeMatrix(object):
                 else:
                     raise KeyError(f"Column '{col}' is not available in the SNP table!")
 
-            return table[col_subset]
+            return table[list(col_subset)]
 
     def get_snp_attribute(self, attr):
         """
@@ -432,6 +432,8 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
             'phenotype': float
         })
 
+        sample_table['phenotype'] = sample_table['phenotype'].replace({-9.: np.nan})
+
         # Set the snp table:
         snp_table = xr_gt.variant.coords.to_dataset().to_dataframe()
         snp_table.columns = ['CHR', 'SNP', 'cM', 'POS', 'A1', 'A2']
@@ -457,18 +459,13 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
 
     def set_sample_table(self, sample_table):
 
-        try:
-            if len(sample_table) != self.n:
-                update_mat = True
-            else:
-                update_mat = False
-        except Exception:
-            update_mat = False
-
         super(xarrayGenotypeMatrix, self).set_sample_table(sample_table)
 
-        if update_mat:
-            self.xr_mat = self.xr_mat.sel(sample=self.samples)
+        try:
+            if self.n != self.xr_mat.shape[0]:
+                self.xr_mat = self.xr_mat.sel(sample=self.samples)
+        except AttributeError:
+            pass
 
     def filter_snps(self, extract_snps=None, extract_file=None):
 
@@ -506,7 +503,7 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
 
         for c, gt in split.items():
             if len(split) > 1:
-                gt.xr_mat = gt.xr_mat.sel(variant=gt.snps)
+                gt.xr_mat = self.xr_mat.sel(variant=gt.snps)
             else:
                 gt.xr_mat = self.xr_mat
 

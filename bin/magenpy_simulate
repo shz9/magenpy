@@ -10,12 +10,13 @@ existing genotype data in the form of plink's `.bed` files.
 """
 
 import os.path as osp
+import magenpy as mgp
 from magenpy.simulation.GWASimulator import GWASimulator
 from magenpy.utils.system_utils import makedir, get_filenames
 import argparse
 
 
-print("""
+print(f"""
 **********************************************                            
  _ __ ___   __ _  __ _  ___ _ __  _ __  _   _ 
 | '_ ` _ \ / _` |/ _` |/ _ \ '_ \| '_ \| | | |
@@ -23,7 +24,7 @@ print("""
 |_| |_| |_|\__,_|\__, |\___|_| |_| .__/ \__, |
                  |___/           |_|    |___/
 Modeling and Analysis of Genetics data in python
-Version: 0.0.2 | Release date: May 2022
+Version: {mgp.__version__} | Release date: May 2022
 Author: Shadi Zabad, McGill University
 **********************************************
 < Simulate complex quantitative or case-control traits >

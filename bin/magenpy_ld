@@ -10,10 +10,11 @@ LD matrices in Zarr format from plink's `.bed` files.
 
 import os.path as osp
 import argparse
+import magenpy as mgp
 from magenpy.utils.system_utils import valid_url
 from magenpy.GenotypeMatrix import xarrayGenotypeMatrix, plinkBEDGenotypeMatrix
 
-print("""
+print(f"""
 **********************************************                            
  _ __ ___   __ _  __ _  ___ _ __  _ __  _   _ 
 | '_ ` _ \ / _` |/ _` |/ _ \ '_ \| '_ \| | | |
@@ -21,7 +22,7 @@ print("""
 |_| |_| |_|\__,_|\__, |\___|_| |_| .__/ \__, |
                  |___/           |_|    |___/
 Modeling and Analysis of Genetics data in python
-Version: 0.0.2 | Release date: May 2022
+Version: {mgp.__version__} | Release date: May 2022
 Author: Shadi Zabad, McGill University
 **********************************************
 < Compute LD matrix and output in Zarr format >

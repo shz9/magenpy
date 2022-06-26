@@ -354,9 +354,9 @@ class SumstatsTable(object):
             elif col == 'STD_BETA':
                 table['STD_BETA'] = self.get_snp_pseudo_corr()
             else:
-                raise warnings.warn(f"Column '{col}' is not available in the summary statistics table!")
+                warnings.warn(f"Column '{col}' is not available in the summary statistics table!")
 
-        return table[col_subset]
+        return table[list(col_subset)]
 
     def to_file(self, output_file, col_subset=None, **to_csv_kwargs):
         """

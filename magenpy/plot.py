@@ -138,14 +138,21 @@ def qq_plot(gdl: Union[mgp.GWADataLoader, None] = None,
         raise ValueError(f"No QQ plot can be generated for the statistic: {statistic}")
 
 
-def plot_ld_matrix(ldm: mgp.LDMatrix, row_slice=None, col_slice=None):
+def plot_ld_matrix(ldm: mgp.LDMatrix, row_slice=None, col_slice=None, cmap='OrRd'):
     """
     Plot a heatmap representing the LD matrix or portions of it.
 
     :param ldm: An instance of `LDMatrix`.
     :param row_slice: A `slice` object indicating which rows to extract from the LD matrix.
     :param col_slice: A `slice` object indicating which columns to extract from the LD matrix.
+    :param cmap: The color map for the LD matrix plot.
     """
 
-    plt.imshow(ldm.to_csr_matrix()[row_slice, col_slice].toarray())
+    if row_slice is None:
+        row_slice = slice(ldm.shape[0])
+
+    if col_slice is None:
+        col_slice = slice(ldm.shape[0])
+
+    plt.imshow(ldm.to_csr_matrix()[row_slice, col_slice].toarray(), cmap=cmap)
     plt.colorbar()

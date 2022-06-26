@@ -13,7 +13,7 @@ from magenpy.SampleTable import SampleTable
 
 from magenpy.simulation.GWASimulator import GWASimulator
 
-__version__ = '0.0.2'
+__version__ = '0.0.3'
 
 
 config = configparser.ConfigParser()

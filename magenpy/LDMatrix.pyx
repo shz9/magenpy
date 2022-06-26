@@ -189,7 +189,7 @@ cdef class LDMatrix:
         self.set_mask(new_mask)
 
     def get_mask(self):
-        if self._mask:
+        if self._mask is not None:
             return np.array(self._mask)
 
     def set_mask(self, mask):
