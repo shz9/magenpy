@@ -41,14 +41,14 @@ replaced or modified in future releases.
 can be minimally installed using the package installer `pip`:
 
 ```shell
-pip install magenpy==0.0.3
+pip install magenpy==0.0.4
 ```
 
 To access the full functionalities of `magenpy`, however, it is recommended that 
 you install the full list of dependencies:
 
 ```shell
-pip install magenpy[full]==0.0.3
+pip install magenpy[full]==0.0.4
 ```
 
 If you wish to install the package from source, 
