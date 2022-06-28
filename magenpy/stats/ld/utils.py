@@ -867,13 +867,12 @@ def compute_ld_xarray(genotype_matrix,
     g_data = genotype_matrix.xr_mat
 
     # Re-chunk the array
-    g_data = g_data.chunk((min(1024, g_data.shape[0]),
-                           min(1024, g_data.shape[1])))
+    g_data = g_data.chunk((min(1024, g_data.shape[0]), min(1024, g_data.shape[1])))
 
     from ..transforms.genotype import standardize
 
     # Standardize the genotype matrix and fill missing data with zeros:
-    g_mat = standardize(g_data)
+    g_mat = standardize(g_data).data
 
     # Compute the LD matrix:
     ld_mat = (da.dot(g_mat.T, g_mat) / genotype_matrix.sample_size).astype(np.float64)
