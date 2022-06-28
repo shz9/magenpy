@@ -189,8 +189,8 @@ class GWADataLoader(object):
         """
         Return the number of annotations included in the annotation matrices.
         """
-        assert self.annotation
-        return self.annotation[self.chromosomes[0]].n_annotations
+        if self.annotation is not None:
+            return self.annotation[self.chromosomes[0]].n_annotations
 
     def filter_snps(self, extract_snps=None, extract_file=None, chromosome=None):
         """
@@ -383,7 +383,7 @@ class GWADataLoader(object):
         if self.verbose:
             print("> Reading covariates file...")
 
-        assert self.sample_table
+        assert self.sample_table is not None
 
         self.sample_table.read_covariates_file(covariates_file, **read_csv_kwargs)
         self.sync_sample_tables()
@@ -517,38 +517,45 @@ class GWADataLoader(object):
         each variant.
         """
 
+        data_sources = (self.genotype, self.sumstats_table, self.ld, self.annotation)
+        initialized_data_sources = [ds for ds in data_sources if ds is not None]
+
         # If less than two data sources are present, skip harmonization...
-        if sum([self.genotype is not None, self.sumstats_table is not None,
-                self.ld is not None, self.annotation is not None]) < 2:
+        if len(initialized_data_sources) < 2:
             return
 
         if self.verbose:
             print("> Harmonizing data...")
 
-        for c in self.chromosomes:
+        # Get the chromosomes information from all the data sources:
+        chromosomes = list(set.union(*[set(ds.keys()) for ds in initialized_data_sources]))
 
-            data_source = []
+        for c in chromosomes:
 
-            if self.genotype is not None and c in self.genotype:
-                data_source.append(self.genotype[c])
-            if self.sumstats_table is not None and c in self.sumstats_table:
-                data_source.append(self.sumstats_table[c])
-            if self.ld is not None and c in self.ld:
-                data_source.append(self.ld[c])
-            if self.annotation is not None and c in self.annotation:
-                data_source.append(self.annotation[c])
+            # Which initialized data sources have information for chromosome `c`
+            miss_chroms = [c not in ds for ds in initialized_data_sources]
 
-            if len(data_source) > 1:
+            if sum(miss_chroms) > 0:
+                # If the chromosome data only exists for some data sources but not others, remove the chromosome
+                # from all data source.
+                # Is this the best way to handle the missingness? Should we just post a warning?
+                for ds in initialized_data_sources:
+                    if c in ds:
+                        del ds[c]
+
+            else:
 
                 # Find the set of SNPs that are shared across all data sources:
-                merged_snps = np.array(list(set.intersection(*[set(ds.snps) for ds in data_source])))
+                common_snps = np.array(list(set.intersection(*[set(ds[c].snps)
+                                                               for ds in initialized_data_sources])))
 
-                # If necessary, filter the data sources to only have those SNPs:
-                for ds in data_source:
-                    if len(ds.snps) != len(merged_snps):
-                        ds.filter_snps(extract_snps=merged_snps)
+                # If necessary, filter the data sources to only have the common SNPs:
+                for ds in initialized_data_sources:
+                    if len(ds[c].snps) != len(common_snps):
+                        ds[c].filter_snps(extract_snps=common_snps)
 
-                # Check for flips in effect allele in summary statistics data:
+                # Harmonize the summary statistics data with either genotype or LD reference.
+                # This procedure checks for flips in the effect allele between data sources.
                 if self.sumstats_table is not None:
                     if self.genotype is not None:
                         self.sumstats_table[c].match(self.genotype[c].get_snp_table(col_subset=['SNP', 'A1']))
@@ -668,7 +675,7 @@ class GWADataLoader(object):
         chromosome.
         """
 
-        assert self.sumstats_table
+        assert self.sumstats_table is not None
 
         snp_tables = {}
 

@@ -1,4 +1,3 @@
-import os.path as osp
 import glob
 import configparser
 
@@ -13,7 +12,11 @@ from magenpy.SampleTable import SampleTable
 
 from magenpy.simulation.GWASimulator import GWASimulator
 
-__version__ = '0.0.3'
+# Data utilities:
+
+from magenpy.utils.data_utils import *
+
+__version__ = '0.0.4'
 
 
 config = configparser.ConfigParser()
@@ -51,11 +54,3 @@ def set_option(key, value):
 
     with open(osp.join(osp.dirname(__file__), 'config/paths.ini'), 'w') as configfile:
         config.write(configfile)
-
-
-def tgp_eur_data_path():
-    """
-    Return the path of the attached 1000G sample data for
-    European individuals (N=378) and chromosome 22 (p=15938)
-    """
-    return osp.join(osp.dirname(__file__), 'data/1000G_eur_chr22')

@@ -183,7 +183,7 @@ class GWASimulator(GWADataLoader):
         fixed effect sizes `beta` that were simulated previously.
         """
 
-        assert self.beta
+        assert self.beta is not None
 
         # Compute the polygenic score given the simulated/provided beta:
         pgs = self.score(self.beta)

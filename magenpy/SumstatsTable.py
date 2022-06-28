@@ -387,7 +387,7 @@ class SumstatsTable(object):
         functionalities.
         :param parse_kwargs: arguments for the pandas `read_csv` function, such as the delimiter.
         """
-        assert sumstats_format or parser
+        assert sumstats_format is not None or parser is not None
 
         if parser is None:
             if sumstats_format == 'magenpy':
