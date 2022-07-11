@@ -3,9 +3,9 @@ Author: Shadi Zabad
 Date: March 2021
 """
 
+import warnings
 import numpy as np
 import pandas as pd
-from scipy.stats import norm
 from magenpy.GWADataLoader import GWADataLoader
 
 
@@ -85,7 +85,10 @@ class GWASimulator(GWADataLoader):
         # Estimate the global sigma_beta_sq based on the
         # pre-specified heritability, the mixture proportions `pi`,
         # and the prior multipliers `d`.
-        sigma_beta_sq = self.h2 / (self.m*np.array(self.pi)*self.d).sum()
+
+        combined_assignments = np.concatenate([self.mixture_assignment[c] for c in self.chromosomes])
+
+        sigma_beta_sq = self.h2 / (combined_assignments*self.d).sum()
 
         self.per_snp_h2 = {}
 
@@ -94,8 +97,8 @@ class GWASimulator(GWADataLoader):
 
     def get_causal_status(self):
         """
-        This method returns a dictionary of binary vectors
-        indicating which snps are causal for each chromosome
+        This method returns a dictionary where the keys are the chromosome numbers
+        and the values are of binary vectors indicating which SNPs are causal for the phenotype.
         """
 
         assert self.mixture_assignment is not None
@@ -112,6 +115,57 @@ class GWASimulator(GWADataLoader):
             causal_status[c] = np.where(mix_a)[1] != zero_index
 
         return causal_status
+
+    def set_causal_snps(self, causal_snps):
+        """
+        A utility method to set the causal SNPs in the simulation based on an array or
+        list of SNPs specified by the user. The method takes an iterable of `causal_snps`
+        and then creates a new mixture assignment object where only the `causal_snps`
+        contribute to the phenotype.
+
+        :param causal_snps: A list or array of SNP IDs.
+        """
+
+        # Get the index of the mixture component whose multiplier is zero (i.e. the null component):
+        try:
+            zero_index = list(self.d).index(0)
+        except ValueError:
+            raise ValueError("Cannot set causal variants when all mixture components are causal. Modify "
+                             "the mixture multipliers `d` to enable this functionality.")
+
+        # Get the indices of the non-null mixture components:
+        nonzero_indices = [i for i, d in enumerate(self.d) if d != 0.]
+
+        # Get the mixture proportions for the non-null components and normalize them so they sum to 1:
+        pis = np.array(self.pi)[nonzero_indices]
+        pis /= pis.sum()
+
+        # Initialize new mixture assignment object:
+        new_assignment = {c: np.zeros((s, self.n_mixtures)) for c, s in self.shapes.items()}
+
+        from magenpy.utils.compute_utils import intersect_arrays
+
+        n_causal_set = 0
+
+        for c, snps in self.snps.items():
+
+            # Intersect the list of causal SNPs with the SNPs on chromosome `c`:
+            snp_idx = intersect_arrays(snps, causal_snps, return_index=True)
+
+            if len(snp_idx) > 0:
+                n_causal_set += len(snp_idx)
+                # For the causal SNPs, assign them randomly to the causal components
+                new_assignment[c][snp_idx, np.random.choice(nonzero_indices,
+                                                            size=len(snp_idx),
+                                                            p=pis)] = 1
+                # For the remaining SNPs, assign them to the null component:
+                new_assignment[c][:, zero_index] = np.abs(new_assignment[c].sum(axis=1) - 1)
+
+        if n_causal_set < len(causal_snps):
+            warnings.warn("Not all causal SNPs are represented in the genotype matrix! "
+                          f"User passed a list of {len(causal_snps)} SNPs, only matched {n_causal_set}.")
+
+        self.set_mixture_assignment(new_assignment)
 
     def set_mixture_assignment(self, new_assignment):
         """
@@ -203,6 +257,8 @@ class GWASimulator(GWADataLoader):
             from ..stats.transforms.phenotype import standardize
             
             y = standardize(y)
+
+            from scipy.stats import norm
             
             cutoff = norm.ppf(1. - self.prevalence)
             new_y = np.zeros_like(y, dtype=int)
@@ -214,7 +270,7 @@ class GWASimulator(GWADataLoader):
         
         return new_y
 
-    def simulate(self, reset_beta=True, perform_gwas=False):
+    def simulate(self, reset_beta=True, reset_mixture_assignment=True, perform_gwas=False):
         """
         A convenience method to simulate all the components of the generative model.
         Specifically, the simulation follows the standard linear model, where the phenotype is 
@@ -230,12 +286,20 @@ class GWASimulator(GWADataLoader):
          3) Setting the phenotype according to the equation above. 
         
         :param reset_beta: If True, reset the effect sizes by drawing new ones from the prior density.
+        :param reset_mixture_assignment: If True, reset the assignment of SNPs to mixture components. Set to False
+        if you'd like to keep the same configuration of causal SNPs.
         :param perform_gwas: If True, automatically perform genome-wide association on the newly simulated phenotype.
         """
 
-        if self.beta is None or reset_beta:
+        # Simulate the mixture assignment:
+        if self.mixture_assignment is None or reset_mixture_assignment:
             self.simulate_mixture_assignment()
-            self.set_per_snp_heritability()
+
+        # Set the per-SNP heritability based on the mixture assignment:
+        self.set_per_snp_heritability()
+
+        # Simulate betas based on per-SNP heritability
+        if self.beta is None or reset_beta:
             self.simulate_beta()
 
         # Simulate the phenotype

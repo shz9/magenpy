@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.6] - 2022-07-11
+
+### Added
+
+- Utility function to compute the genomic control or lambda factor.
+- A method to set the causal SNPs directly in `GWASimulator`.
+
+### Changed
+
+- Fixed bugs in `manhattan` plotting function.
+- Added alternative ways to derive Chi-Squared statistic from 
+  other summary stats (e.g. p-value).
+- Give user more fine-grained control on what to reset in the `.simulate()`
+method of `GWASimulator`.
+- Modified the LD score computation method to allow for aggregating LD scores 
+by functional category or annotations.
+- Streamlining module import structure to speed up loading.
+
 ## [0.0.5] - 2022-06-28
 
 ### Changed

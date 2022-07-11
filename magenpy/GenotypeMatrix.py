@@ -114,8 +114,8 @@ class GenotypeMatrix(object):
         """
         cm = self.get_snp_attribute('cM')
         if len(set(cm)) == 1:
-            raise Exception("Genetic distance in centi Morgan (cM) is not "
-                            "set in the genotype file!")
+            raise KeyError("Genetic distance in centi Morgan (cM) is not "
+                           "set in the genotype file!")
         return cm
 
     @property

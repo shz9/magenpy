@@ -8,6 +8,7 @@ from typing import Union, Dict
 import copy
 import pandas as pd
 import numpy as np
+import tqdm
 
 from .GenotypeMatrix import GenotypeMatrix, xarrayGenotypeMatrix, plinkBEDGenotypeMatrix
 from .SampleTable import SampleTable
@@ -496,6 +497,9 @@ class GWADataLoader(object):
         :param ld_kwargs: keyword arguments for the various LD estimators. Consult
         the implementations of `WindowedLD`, `ShrinkageLD`, and `BlockLD` for details.
         """
+
+        if self.verbose:
+            print("> Computing LD matrices...")
 
         self.ld = {c: g.compute_ld(estimator, output_dir, **ld_kwargs)
                    for c, g in self.genotype.items()}

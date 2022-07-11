@@ -1,15 +1,17 @@
 from typing import Union
 import magenpy as mgp
+from magenpy.GWADataLoader import GWADataLoader
+from magenpy.SumstatsTable import SumstatsTable
 import matplotlib.pylab as plt
 import numpy as np
-import scipy.stats as stats
 
 
-def manhattan(gdl: Union[mgp.GWADataLoader, None] = None,
-              sumstats: Union[mgp.SumstatsTable, None] = None,
+def manhattan(gdl: Union[GWADataLoader, None] = None,
+              sumstats: Union[SumstatsTable, None] = None,
               y=None,
               y_label=None,
-              snp_color='#d0d0d0',
+              chrom_sep_color='#f0f0f0',
+              snp_color='#808080',
               snp_marker='o',
               snp_alpha=0.3,
               add_bonf_line=True,
@@ -25,6 +27,7 @@ def manhattan(gdl: Union[mgp.GWADataLoader, None] = None,
     :param sumstats: An instance of `SumstatsTable`.
     :param y: A vector of values to plot on the y-axis.
     :param y_label: A label for the quantity or statistic that will be plotted.
+    :param chrom_sep_color: The color for the chromosome separator block.
     :param snp_color: The color of the dots on the Manhattan plot.
     :param snp_marker: The shape of the marker on the Manhattan plot.
     :param snp_alpha: The opacity level for the markers.
@@ -37,7 +40,7 @@ def manhattan(gdl: Union[mgp.GWADataLoader, None] = None,
         assert y_label is not None
 
     if gdl is None:
-        pos = {c: ss.bp_pos for c, ss in sumstats.split_by_chromosome()}
+        pos = {c: ss.bp_pos for c, ss in sumstats.split_by_chromosome().items()}
     else:
         pos = {c: ss.bp_pos for c, ss in gdl.sumstats_table.items()}
 
@@ -74,7 +77,7 @@ def manhattan(gdl: Union[mgp.GWADataLoader, None] = None,
         xmin = min_pos + starting_pos
         xmax = max_pos + starting_pos
         if i % 2 == 1:
-            plt.axvspan(xmin=xmin, xmax=xmax, zorder=0, color='#808080')
+            plt.axvspan(xmin=xmin, xmax=xmax, zorder=0, color=chrom_sep_color)
 
         ticks.append((xmin + xmax) / 2)
 
@@ -109,6 +112,8 @@ def qq_plot(gdl: Union[mgp.GWADataLoader, None] = None,
     :param sumstats: An instance of `SumstatsTable`.
     :param statistic: The statistic to generate the QQ plot for. We currently support `p_value` and `z_score`.
     """
+
+    import scipy.stats as stats
 
     if statistic == 'p_value':
 

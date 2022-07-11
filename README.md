@@ -41,17 +41,28 @@ replaced or modified in future releases.
 can be minimally installed using the package installer `pip`:
 
 ```shell
-pip install magenpy==0.0.5
+pip install magenpy
 ```
 
 To access the full functionalities of `magenpy`, however, it is recommended that 
 you install the full list of dependencies:
 
 ```shell
-pip install magenpy[full]==0.0.5
+pip install magenpy[full]
 ```
 
-If you wish to install the package from source, 
+To use `magenpy` on a shared computing cluster, we recommend installing it in a 
+`python` virtual environment. For example:
+
+```shell
+module load python/3.8
+python -m venv magenpy_env
+source magenpy_env/bin/activate
+pip install --upgrade pip
+pip install magenpy
+```
+
+Finally, if you wish to install the package from source, 
 you can directly clone it from the GitHub repository and install it locally 
 as follows:
 
@@ -395,7 +406,7 @@ array([ 1.00000262, -0.14938791, -0.27089083,  0.33311111,  0.35015815,
        -0.08077946, -0.08077946,  0.0797345 , -0.16252513, -0.23680465])
 ```
 
-Finally, as of `magenpy==0.0.2`, now you can export the Zarr array into a `scipy` sparse `csr` 
+Finally, as of `magenpy>=0.0.2`, now you can export the Zarr array into a `scipy` sparse `csr` 
 matrix as follows:
 
 ```python

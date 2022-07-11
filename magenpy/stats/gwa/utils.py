@@ -1,8 +1,36 @@
+from typing import Union
 import os.path as osp
 import pandas as pd
 import numpy as np
 import warnings
-from magenpy.SumstatsTable import SumstatsTable
+import magenpy as mgp
+
+
+def inflation_factor(gdl: Union[mgp.GWADataLoader, None] = None,
+                     sumstats: Union[mgp.SumstatsTable, None] = None,
+                     chisq=None):
+    """
+    Compute the genomic control (GC) inflation factor (also known as lambda)
+    from GWAS summary statistics.
+
+    The inflation factor can be used to detect and correct inflation in the test statistics.
+
+    :param chisq: An array of chi-squared statistics to compute the inflation factor from.
+    :param gdl: A `GWADataLoader` object, with summary statistics initilized into the `sumstats_table` property.
+    :param sumstats: A `SumstatsTable` object, with the GWAS summary statistics load and initialized.
+    """
+
+    assert chisq is not None or gdl is not None or sumstats is not None
+
+    if chisq is None:
+        if gdl is not None:
+            chisq = np.concatenate([ss.get_chisq_statistic() for ss in gdl.sumstats_table.values()])
+        else:
+            chisq = sumstats.get_chisq_statistic()
+
+    from scipy.stats import chi2
+
+    return np.median(chisq) / chi2.median(1)
 
 
 def perform_gwa_plink2(genotype_matrix,
@@ -77,7 +105,7 @@ def perform_gwa_plink2(genotype_matrix,
             raise FileNotFoundError
 
     # Read the summary statistics file from plink:
-    ss_table = SumstatsTable.from_file(output_fname, sumstats_format='plink')
+    ss_table = mgp.SumstatsTable.from_file(output_fname, sumstats_format='plink')
     # Make sure that the effect allele is encoded properly:
     ss_table.match(genotype_matrix.snp_table, correct_flips=True)
 
@@ -134,7 +162,7 @@ def perform_gwa_xarray(genotype_matrix,
 
         sumstats_table['SE'] = np.sqrt(sigma_sq_y / (sumstats_table['N'].values * genotype_matrix.maf_var))
 
-    ss_table = SumstatsTable(sumstats_table)
+    ss_table = mgp.SumstatsTable(sumstats_table)
     _, _ = ss_table.z_score, ss_table.pval
 
     return ss_table

@@ -33,3 +33,47 @@ def simple_ldsc(gdl: mgp.GWADataLoader):
     sample_size = max(sample_size)
 
     return (chi_sq.mean() - 1.) * len(ld_score) / (ld_score.mean() * sample_size)
+
+
+class LDSCRegression(object):
+
+    def __init__(self, gdl: mgp.GWADataLoader, n_blocks=200, max_chisq=None):
+        """
+        Incomplete...
+        """
+
+        self.gdl = gdl
+        self.n_blocks = n_blocks
+
+        # Extract the data from the GDL object:
+
+        chroms = self.gdl.chromosomes
+
+        if self.gdl.annotation is not None:
+            self.ld_scores = np.concatenate([
+                self.gdl.ld[c].compute_ld_scores(
+                    annotations=self.gdl.annotation[c].values(add_intercept=True)
+                )
+                for c in chroms
+            ])
+        else:
+            self.ld_scores = np.concatenate([self.gdl.ld[c].ld_score.reshape(-1, 1) for c in chroms])
+
+        self.chisq = np.concatenate([self.gdl.sumstats_table[c].get_chisq_statistic() for c in chroms])
+        self.n = np.concatenate([self.gdl.sumstats_table[c].n_per_snp for c in chroms])
+
+        if max_chisq is None:
+            max_chisq = max(0.001*self.n.max(), 80)
+
+        chisq_cond = self.chisq < max_chisq
+
+        self.ld_scores = self.ld_scores[chisq_cond, :]
+        self.chisq = self.chisq[chisq_cond]
+        self.n = self.n[chisq_cond]
+
+    def fit(self):
+        """
+        TODO: Implement the jackknife estimator here...
+        """
+        pass
+

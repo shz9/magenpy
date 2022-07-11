@@ -71,7 +71,12 @@ class SampleLD(object):
 
         zarr_ld_mat.attrs['SNP'] = list(self.genotype_matrix.snps)
         zarr_ld_mat.attrs['BP'] = list(map(int, self.genotype_matrix.bp_pos))
-        zarr_ld_mat.attrs['cM'] = list(map(float, self.genotype_matrix.cm_pos))
+
+        try:
+            zarr_ld_mat.attrs['cM'] = list(map(float, self.genotype_matrix.cm_pos))
+        except KeyError:
+            pass
+
         zarr_ld_mat.attrs['MAF'] = list(map(float, self.genotype_matrix.maf))
         zarr_ld_mat.attrs['A1'] = list(self.genotype_matrix.a1)
 

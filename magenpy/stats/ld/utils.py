@@ -1,11 +1,9 @@
 import os
 import os.path as osp
 
-from scipy.sparse import csr_matrix
-import dask.array as da
 import pandas as pd
 import numpy as np
-import numcodecs
+from numcodecs import VLenArray
 import zarr
 
 from magenpy.utils.compute_utils import generate_slice_dictionary
@@ -98,7 +96,7 @@ def from_plink_ld_bin_to_zarr(bin_file, dir_store, ld_boundaries):
                           shape=n_rows,
                           chunks=n_chunks[:1],
                           dtype=object,
-                          object_codec=numcodecs.VLenArray(float))
+                          object_codec=VLenArray(float))
 
     chunk_size = z_rag.chunks[0]
 
@@ -179,7 +177,7 @@ def from_plink_ld_table_to_zarr_chunked(ld_file, dir_store, ld_boundaries, snps)
                       shape=rows,
                       chunks=chunks[:1],
                       dtype=object,
-                      object_codec=numcodecs.VLenArray(float))
+                      object_codec=VLenArray(float))
 
     row_chunk_size = z_arr.chunks[0]
 
@@ -197,13 +195,15 @@ def from_plink_ld_table_to_zarr_chunked(ld_file, dir_store, ld_boundaries, snps)
                       shape=rows,
                       chunks=(row_chunk_size,),
                       dtype=object,
-                      object_codec=numcodecs.VLenArray(float))
+                      object_codec=VLenArray(float))
 
     # Create a dictionary mapping SNPs to their indices:
     snp_dict = dict(zip(snps, np.arange(len(snps))))
 
     # The sparse matrix will help us convert from triangular
     # sparse matrix to square sparse matrix:
+    from scipy.sparse import csr_matrix
+
     sp_mat = None
 
     curr_chunk = 0
@@ -313,7 +313,7 @@ def from_plink_ld_table_to_zarr(ld_file, dir_store, ld_boundaries=None, snps=Non
                       shape=len(ld_array),
                       chunks=n_chunks[:1],
                       dtype=object,
-                      object_codec=numcodecs.VLenArray(float))
+                      object_codec=VLenArray(float))
 
     z_arr[:] = np.array(ld_array, dtype=object)
 
@@ -366,10 +366,14 @@ def shrink_ld_matrix(arr,
                      genmap_Ne,
                      genmap_sample_size,
                      shrinkage_cutoff=1e-5,
+                     phased_haplotype=False,
                      ld_boundaries=None):
     """
     Shrink the entries of the LD matrix using the shrinkage estimator
-    described in Lloyd-Jones (2019) and Wen and Stephens (2010).
+    described in Lloyd-Jones (2019) and Wen and Stephens (2010). The estimator
+    is also implemented in the RSS software by Xiang Zhu:
+
+    https://github.com/stephenslab/rss/blob/master/misc/get_corr.R
 
     :param arr: The Zarr array containing the original LD matrix.
     :param cm_pos: The position of each variant in the LD matrix in centi Morgan.
@@ -378,6 +382,7 @@ def shrink_ld_matrix(arr,
     :param genmap_Ne: The effective population size for the genetic map.
     :param genmap_sample_size: The sample size used to estimate the genetic map.
     :param shrinkage_cutoff: The cutoff value below which we assume that the shrinkage factor is zero.
+    :param phased_haplotype: A flag indicating whether the LD was calculated from phased haplotypes.
     :param ld_boundaries: The LD boundaries to use when shrinking the LD matrix.
     """
 
@@ -414,13 +419,17 @@ def shrink_ld_matrix(arr,
     theta_factor = (1. - theta)**2  # The theta factor that we'll multiply all elements of the covariance matrix with
     theta_diag_factor = .5 * theta * (1. - .5 * theta)  # The theta factor for the diagonal elements
 
+    # Phased haplotype/unphased genotype multiplicative factor:
+    # Wen and Stephens (2010), Section 2.4
+    phased_mult = [.5, 1.][phased_haplotype]
+
     # We need to turn the correlation matrix into a covariance matrix to
     # apply the shrinkage factor. For this, we have to multiply each row
     # by the product of standard deviations:
     maf_sd = np.sqrt(maf_var)
 
     # According to Eqs. 2.6 and 2.7 in Wen and Stephens (2010), the shrunk standard deviation should be:
-    shrunk_sd = np.sqrt(theta_factor*maf_var + theta_diag_factor)
+    shrunk_sd = np.sqrt(theta_factor*maf_var*phased_mult + theta_diag_factor)
 
     def update_prev_chunk(j):
         """
@@ -449,7 +458,7 @@ def shrink_ld_matrix(arr,
         shrink_factor[shrink_factor < shrinkage_cutoff] = 0.
 
         # The factor to convert the entries of the correlation matrix into corresponding covariances:
-        to_cov_factor = maf_sd[j]*maf_sd[start: end]
+        to_cov_factor = phased_mult*maf_sd[j]*maf_sd[start: end]
 
         # Compute the theta multiplicative factor following Eq. 2.6 in Wen and Stephens (2010)
         shrink_factor *= theta_factor
@@ -542,6 +551,7 @@ def optimize_chunks_for_memory(chunked_array, cpus=None, max_mem=None):
     """
 
     import psutil
+    import dask.array as da
 
     if cpus is None:
         cpus = psutil.cpu_count()
@@ -613,7 +623,7 @@ def dense_zarr_array_to_ragged(z,
                           shape=z.shape[0],
                           chunks=n_chunks[:1],
                           dtype=object,
-                          object_codec=numcodecs.VLenArray(float))
+                          object_codec=VLenArray(float))
 
     chunk_size = z.chunks[0]
 
@@ -694,7 +704,7 @@ def filter_zarr_array(z,
                           shape=n_rows,
                           chunks=n_chunks[:1],
                           dtype=object,
-                          object_codec=numcodecs.VLenArray(float))
+                          object_codec=VLenArray(float))
 
     idx_x = idx_map['index_x'].values
     chunk_size = z.chunks[0]
@@ -870,6 +880,7 @@ def compute_ld_xarray(genotype_matrix,
     g_data = g_data.chunk((min(1024, g_data.shape[0]), min(1024, g_data.shape[1])))
 
     from ..transforms.genotype import standardize
+    import dask.array as da
 
     # Standardize the genotype matrix and fill missing data with zeros:
     g_mat = standardize(g_data).data

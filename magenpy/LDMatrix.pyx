@@ -27,9 +27,11 @@ cdef class LDMatrix:
         np.ndarray _ld_boundaries  # For caching
         np.ndarray _mask
 
-    def __init__(self, ld_zarr_arr):
+    def __init__(self, zarr_arr):
 
-        self._zarr = ld_zarr_arr
+        assert isinstance(zarr_arr, zarr.Array)
+
+        self._zarr = zarr_arr
 
         self._data = None
         self.in_memory = False
@@ -41,6 +43,10 @@ cdef class LDMatrix:
 
     @classmethod
     def from_path(cls, ld_store_path):
+        """
+        Initialize an `LDMatrix` object from a Zarr array store.
+        :param ld_store_path: The path to the Zarr array store on the filesystem.
+        """
 
         if '.zarray' in ld_store_path:
             ld_store_path = osp.dirname(ld_store_path)
@@ -51,44 +57,83 @@ cdef class LDMatrix:
         else:
             raise FileNotFoundError
 
+    @classmethod
+    def from_dir(cls, ld_store_path):
+        """
+        Initialize an `LDMatrix` object from a Zarr array store. See also `.from_path`
+        :param ld_store_path: The path to the Zarr array store on the filesystem.
+        """
+        return cls.from_path(ld_store_path)
+
     @property
     def n_elements(self):
+        """
+        The number of non-masked elements in the LD matrix. For the full number
+        see `.shape`.
+        """
         return self._n_elements
 
     @property
     def shape(self):
+        """
+        The shape (dimensions) of the LD matrix.
+        """
         return self._zarr.shape
 
     @property
     def store(self):
+        """
+        The Zarr array store object.
+        """
         return self._zarr.store
 
     @property
     def z_array(self):
+        """
+        The Zarr array
+        """
         return self._zarr
 
     @property
     def chunks(self):
+        """
+        The chunks of the Zarr array
+        """
         return self._zarr.chunks
 
     @property
     def chunk_size(self):
+        """
+        The chunk size of the Zarr array.
+        """
         return self.chunks[0]
 
     @property
     def chromosome(self):
+        """
+        The chromosome for which this LD matrix was calculated.
+        """
         return self.get_store_attr('Chromosome')
 
     @property
     def ld_estimator(self):
+        """
+        The LD estimator
+        """
         return self.get_store_attr('LD estimator')
 
     @property
     def estimator_properties(self):
+        """
+        Properties of the LD estimator
+        """
         return self.get_store_attr('Estimator properties')
 
     @property
     def snps(self):
+        """
+        The SNPs included in the LD matrix.
+        """
 
         z_snps = np.array(self.get_store_attr('SNP'))
 
@@ -99,16 +144,25 @@ cdef class LDMatrix:
 
     @property
     def ld_boundaries(self):
+        """
+        The LD boundaries associated with each SNP.
+        """
         if self._ld_boundaries is None:
             self._ld_boundaries = np.array(self.get_store_attr('LD boundaries'))
         return np.array(self._ld_boundaries)
 
     @property
     def sample_size(self):
+        """
+        The sample size used to compute the LD matrix.
+        """
         return self.get_store_attr('Sample size')
 
     @property
     def a1(self):
+        """
+        The alternative allele for which we count mutations at each SNP
+        """
 
         a1 = np.array(self.get_store_attr('A1'))
 
@@ -119,6 +173,9 @@ cdef class LDMatrix:
 
     @property
     def maf(self):
+        """
+        The minor allele frequency (MAF) of each SNP in the LD matrix.
+        """
 
         maf = np.array(self.get_store_attr('MAF'))
 
@@ -129,6 +186,9 @@ cdef class LDMatrix:
 
     @property
     def bp_position(self):
+        """
+        The base pair position of each SNP in the LD matrix.
+        """
 
         bp = np.array(self.get_store_attr('BP'))
 
@@ -139,16 +199,24 @@ cdef class LDMatrix:
 
     @property
     def cm_position(self):
+        """
+        The centi Morgan position of each SNP in the LD matrix.
+        """
 
         cm = np.array(self.get_store_attr('cM'))
 
-        if self._mask is not None:
+        if cm is None:
+            return None
+        elif self._mask is not None:
             return cm[self._mask]
         else:
             return cm
 
     @property
     def ld_score(self):
+        """
+        The LD score of each SNP in the LD matrix.
+        """
 
         ld_score = self.get_store_attr('LDScore')
 
@@ -166,10 +234,10 @@ cdef class LDMatrix:
 
     def filter_snps(self, extract_snps=None, extract_file=None):
         """
-       Filter the LDMatrix to a subset of SNPs.
-       :param extract_snps: A list or array of SNP IDs to keep.
-       :param extract_file: A file containing the SNP IDs to keep.
-       """
+        Filter the LDMatrix to a subset of SNPs.
+        :param extract_snps: A list or array of SNP IDs to keep.
+        :param extract_file: A file containing the SNP IDs to keep.
+        """
 
         assert extract_snps is not None or extract_file is not None
 
@@ -189,10 +257,18 @@ cdef class LDMatrix:
         self.set_mask(new_mask)
 
     def get_mask(self):
+        """
+        Get the mask used to hide/remove some SNPs from the LD matrix.
+        """
         if self._mask is not None:
             return np.array(self._mask)
 
     def set_mask(self, mask):
+        """
+        Set the mask to hide/remove some SNPs from the LD matrix.
+        :param mask: A boolean numpy array indicating whether to keep each SNP
+        or not.
+        """
 
         self._mask = mask
 
@@ -235,6 +311,9 @@ cdef class LDMatrix:
             return np.array([start_pos[self._mask], end_pos[self._mask]])
 
     def to_snp_table(self, col_subset=None):
+        """
+        Return a table of the SNP attributes for SNPs in the LD matrix.
+        """
 
         col_subset = col_subset or ['CHR', 'SNP', 'POS', 'A1', 'MAF', 'LDScore']
 
@@ -254,7 +333,7 @@ cdef class LDMatrix:
             if col == 'LDScore':
                 table['LDScore'] = self.ld_score
 
-        return table[col_subset]
+        return table[list(col_subset)]
 
     def to_csr_matrix(self):
         """
@@ -273,25 +352,29 @@ cdef class LDMatrix:
 
         from scipy.sparse import csr_matrix
 
-        return csr_matrix((data, (rows, cols)), shape=(self._n_elements, self._n_elements))
+        return csr_matrix((data, (rows, cols)), shape=(self.n_elements, self.n_elements))
 
-    def compute_ld_scores(self, corrected=True):
+    def compute_ld_scores(self, annotation_matrix=None, corrected=True):
         """
         Computes the LD scores for all SNPs in the LD matrix.
+        :param annotation_matrix: A matrix of annotations for each variant for which to aggregate the LD scores.
         :param corrected: Use the sample-size corrected estimator (Bulik-Sullivan et al. 2015)
         """
 
         ld_scores = []
         cdef int n = self.sample_size
 
-        for snp_ld in self:
+        for snp_ld, (start, end) in zip(self, self.get_masked_boundaries().T):
 
             ldsc = np.array(snp_ld) ** 2
 
             if corrected:
                 ldsc = ldsc - (1. - ldsc) / (n - 2)
 
-            ld_scores.append(ldsc.sum())
+            if annotation_matrix is None:
+                ld_scores.append(ldsc.sum())
+            else:
+                ld_scores.append((ldsc.reshape(-1, 1) * annotation_matrix[start: end, :]).sum(axis=0))
 
         return np.array(ld_scores)
 
@@ -312,6 +395,9 @@ cdef class LDMatrix:
         return (ld_bounds[1, :] - ld_bounds[0, :]).sum() * np.dtype(np.float64).itemsize / 1024 ** 2
 
     def get_store_attr(self, attr):
+        """
+        Get the attribute or metadata `attr` associated with the LD matrix.
+        """
         try:
             return self._zarr.attrs[attr]
         except KeyError:
@@ -319,18 +405,27 @@ cdef class LDMatrix:
             return None
 
     def set_store_attr(self, attr, value):
+        """
+        Set the attribute or metadata `attr` associated with the LD matrix.
+        """
         try:
             self._zarr.attrs[attr] = value
         except Exception as e:
             raise e
 
     def load(self, start=0, end=None, force_reload=False):
+        """
+        Load the LD matrix from disk to memory.
+        :param start: The start row position.
+        :param end: The end row position.
+        :param force_reload: If True, it will reload the data even if it was already loaded.
+        """
 
         if self.in_memory and not force_reload:
             return
 
         if end is None:
-            end = len(self)
+            end = self.shape[0]
             if start == 0:
                 self.in_memory = True
 
@@ -356,13 +451,19 @@ cdef class LDMatrix:
                     self._data.append(np.array([np.nan]))
 
     def release(self):
+        """
+        Release the LD data from memory.
+        """
         self._data = None
         self.in_memory = False
         self.index = 0
 
     def iterate_chunks(self):
-        # TODO: Incorporate the mask into the chunk iterator?
-        for i in range(len(self) // self.chunk_size + 1):
+        """
+        Iterate over chunks of the LD matrix.
+        TODO: Incorporate the mask into the chunk iterator?
+        """
+        for i in range(self.shape[0] // self.chunk_size + 1):
             yield self.z_array[i*self.chunk_size:(i + 1)*self.chunk_size]
 
     def __getstate__(self):
@@ -382,7 +483,7 @@ cdef class LDMatrix:
             self.set_mask(mask)
 
     def __len__(self):
-        return self.shape[0]
+        return self._n_elements
 
     def __getitem__(self, item):
         if self.in_memory:
@@ -407,17 +508,17 @@ cdef class LDMatrix:
 
             try:
                 if not self._mask[self.index]:
-                    for i in range(0, len(self) - self.index + 1):
+                    for i in range(0, self.shape[0] - self.index + 1):
                         if self._mask[self.index + i]:
                             break
 
                     self.index += i
             except IndexError:
                 # Reached the end of the array
-                self.index = len(self)
+                self.index = self.shape[0]
                 pass
 
-        if self.index == len(self):
+        if self.index == self.shape[0]:
             self.index = 0
             raise StopIteration
 

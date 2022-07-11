@@ -1,9 +1,8 @@
 
-import pandas as pd
 import warnings
+import pandas as pd
 import numpy as np
 from magenpy.utils.compute_utils import intersect_arrays
-from .parsers.sumstats_parsers import *
 
 
 class SumstatsTable(object):
@@ -234,9 +233,16 @@ class SumstatsTable(object):
             z = self.z_score
             if z is not None:
                 self.table['CHISQ'] = z**2
-                return self.table['CHISQ'].values
             else:
-                raise ValueError("Chi-Squared statistic is not available!")
+                p_val = self.p_value
+                if p_val is not None:
+                    from scipy.stats import chi2
+
+                    self.table['CHISQ'] = chi2.ppf(1. - p_val, 1)
+                else:
+                    raise ValueError("Chi-Squared statistic is not available!")
+
+        return self.table['CHISQ'].values
 
     def get_snp_pseudo_corr(self):
         """
@@ -388,6 +394,10 @@ class SumstatsTable(object):
         :param parse_kwargs: arguments for the pandas `read_csv` function, such as the delimiter.
         """
         assert sumstats_format is not None or parser is not None
+
+        from .parsers.sumstats_parsers import (
+            SumstatsParser, plinkSumstatsParser, COJOSumstatsParser, fastGWASumstatsParser
+        )
 
         if parser is None:
             if sumstats_format == 'magenpy':
