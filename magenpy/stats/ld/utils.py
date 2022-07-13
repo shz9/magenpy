@@ -365,7 +365,7 @@ def shrink_ld_matrix(arr,
                      maf_var,
                      genmap_Ne,
                      genmap_sample_size,
-                     shrinkage_cutoff=1e-5,
+                     shrinkage_cutoff=1e-3,
                      phased_haplotype=False,
                      ld_boundaries=None):
     """

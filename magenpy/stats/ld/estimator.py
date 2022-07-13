@@ -191,7 +191,7 @@ class ShrinkageLD(SampleLD):
                  genotype_matrix,
                  genetic_map_ne,
                  genetic_map_sample_size,
-                 threshold=1e-5):
+                 threshold=1e-3):
         """
         :param genotype_matrix: The genotype matrix, an instance of `GenotypeMatrix`.
         :param genetic_map_ne: The effective population size (Ne) from which the genetic map is derived.

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.7] - 2022-07-12
+
+### Added
+
+- Added `tqdm` progress bars when processing multiple files/chromosomes 
+  in `GWADataLoader`.
+- Added `min_maf` and `min_mac` flags in `magenpy_ld` and `magenpy_simulate`.
+
+### Changed
+
+- Lowered default threshold for LD shrinkage to 1e-3.
+- Bug fix in `SampleTable`.
+
 ## [0.0.6] - 2022-07-11
 
 ### Added

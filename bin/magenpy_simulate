@@ -11,6 +11,7 @@ existing genotype data in the form of plink's `.bed` files.
 
 import os.path as osp
 import magenpy as mgp
+import warnings
 from magenpy.simulation.GWASimulator import GWASimulator
 from magenpy.utils.system_utils import makedir, get_filenames
 import argparse
@@ -53,6 +54,10 @@ parser.add_argument('--output-file', dest='output_file', type=str, required=True
                          '(no extension needed).')
 parser.add_argument('--output-simulated-effects', dest='output_true', action='store_true', default=False,
                     help='Output a table with the true simulated effect size for each variant.')
+parser.add_argument('--min-maf', dest='min_maf', type=float,
+                    help='The minimum minor allele frequency for variants included in the simulation.')
+parser.add_argument('--min-mac', dest='min_mac', type=float,
+                    help='The minimum minor allele count for variants included in the simulation.')
 
 # Simulation parameters:
 parser.add_argument('--h2', dest='h2', type=float, required=True,
@@ -80,15 +85,15 @@ bed_files = get_filenames(args.bed_files, extension=".bed")
 if len(bed_files) < 1:
     raise FileNotFoundError(f"No BED files were identified at the specified location: {args.bed_files}")
 
-if args.mix_prop:
+if args.mix_prop is not None:
     pi = list(map(float, args.mix_prop.split(",")))
     if args.var_mult:
         d = list(map(float, args.var_mult.split(",")))
     else:
         raise ValueError("Specifying mixing proportions without variance multipliers is not permitted.")
 else:
-    print("Warning: Mixing proportions not specified. Assuming an infinitesimal architecture "
-          "where all variants are causal!")
+    warnings.warn("Mixing proportions not specified. Assuming an infinitesimal architecture "
+                  "where all variants are causal!")
     pi = [0., 1.]
     d = [0., 1.]
 
@@ -104,10 +109,14 @@ print(f">>> Variance multipliers:", d)
 
 print("\n\n> Source data:")
 print(">>> BED files:", args.bed_files)
-if args.keep_file:
+if args.keep_file is not None:
     print(">>> Keep samples:", args.keep_file)
-if args.extract_file:
+if args.extract_file is not None:
     print(">>> Keep variants:", args.extract_file)
+if args.min_maf is not None:
+    print(">>> Minimum allele frequency:", args.min_maf)
+if args.min_mac is not None:
+    print(">>> Minimum allele count:", args.min_mac)
 
 print("\n\n> Output:")
 print(">>> Temporary directory:", args.temp_dir)
@@ -122,6 +131,8 @@ gs = GWASimulator(bed_files,
                   h2=args.h2,
                   pi=pi,
                   d=d,
+                  min_maf=args.min_maf,
+                  min_mac=args.min_mac,
                   backend=args.backend,
                   temp_dir=args.temp_dir)
 
@@ -134,7 +145,7 @@ makedir(osp.dirname(args.output_file))
 pheno_table.to_csv(args.output_file + '.SimPheno', sep="\t",
                    index=False, header=False)
 
-if args.output_true:
+if args.output_true is not None:
 
     sim_effects = gs.to_true_beta_table()
     sim_effects.to_csv(args.output_file + ".SimEffect", sep="\t",

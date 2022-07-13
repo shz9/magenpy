@@ -179,7 +179,8 @@ class SampleTable(object):
             from .parsers.misc_parsers import read_sample_filter_file
             keep_samples = read_sample_filter_file(keep_file)
 
-        self.table = self.table.merge(pd.DataFrame({'IID': keep_samples}))
+        self.table = self.table.merge(pd.DataFrame({'IID': keep_samples},
+                                                   dtype=type(self.iid[0])))
 
     def get_table(self, col_subset=None):
         if col_subset is not None:
