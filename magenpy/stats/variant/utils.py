@@ -35,7 +35,10 @@ def compute_allele_frequency_plink2(genotype_matrix, temp_dir='temp'):
     plink2.execute(cmd)
 
     freq_df = pd.read_csv(plink_output + ".afreq", delim_whitespace=True)
-    freq_df.rename(columns={'ID': 'SNP', 'ALT': 'A1', 'ALT_FREQS': 'MAF'}, inplace=True)
+    freq_df.rename(columns={'ID': 'SNP',
+                            'REF': 'A2',
+                            'ALT': 'A1', 'ALT1': 'A1',
+                            'ALT_FREQS': 'MAF', 'ALT1_FREQ': 'MAF'}, inplace=True)
     merged_df = merge_snp_tables(genotype_matrix.get_snp_table(['SNP', 'A1', 'A2']), freq_df)
 
     if len(merged_df) != genotype_matrix.n_snps:

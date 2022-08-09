@@ -18,7 +18,8 @@ The features and functionalities that this package supports are:
 - Preliminary support for processing and integrating genomic annotations with other data sources.
 
 **NOTE**: The codebase is still in active development and some of interfaces or data structures will be 
-replaced or modified in future releases.
+replaced or modified in future releases. Check the [CHANGELOG](CHANGELOG.md) for the latest updates 
+and modifications.
 
 ## Table of Contents
 
