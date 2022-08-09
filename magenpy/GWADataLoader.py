@@ -105,32 +105,24 @@ class GWADataLoader(object):
             return self.sample_table.iid
 
     @property
-    def sample_size(self, agg=np.max):
+    def sample_size(self):
         """
         The number of samples.
-
-        :param agg: A vectorized function to aggregate the sample-size per SNP (if available).
-        By default, we take the maximum sample size per SNP e.g. `np.max`, but you may also
-        take the mean by passing `np.mean` instead.
         """
         if self.sample_table is not None:
             return self.sample_table.n
         elif self.sumstats_table is not None:
-            return agg([agg(ss.n_per_snp) for ss in self.sumstats_table.values()])
+            return np.max([np.max(ss.n_per_snp) for ss in self.sumstats_table.values()])
         else:
             raise Exception("Information about the sample size is not available!")
 
     @property
-    def n(self, agg=np.max):
+    def n(self):
         """
         The number of samples. See also `.sample_size()`.
-
-        :param agg: A vectorized function to aggregate the sample-size per SNP (if available).
-        By default, we take the maximum sample size per SNP e.g. `np.max`, but you may also
-        take the mean by, e.g. passing `np.mean` instead.
         """
 
-        return self.sample_size(agg=agg)
+        return self.sample_size
 
     @property
     def snps(self):
@@ -599,16 +591,22 @@ class GWADataLoader(object):
 
                 # If necessary, filter the data sources to only have the common SNPs:
                 for ds in initialized_data_sources:
-                    if len(ds[c].snps) != len(common_snps):
+                    if ds[c].n_snps != len(common_snps):
                         ds[c].filter_snps(extract_snps=common_snps)
 
                 # Harmonize the summary statistics data with either genotype or LD reference.
                 # This procedure checks for flips in the effect allele between data sources.
                 if self.sumstats_table is not None:
                     if self.genotype is not None:
-                        self.sumstats_table[c].match(self.genotype[c].get_snp_table(col_subset=['SNP', 'A1']))
+                        self.sumstats_table[c].match(self.genotype[c].get_snp_table(col_subset=['SNP', 'A1', 'A2']))
                     elif self.ld is not None:
-                        self.sumstats_table[c].match(self.ld[c].to_snp_table(col_subset=['SNP', 'A1']))
+                        self.sumstats_table[c].match(self.ld[c].to_snp_table(col_subset=['SNP', 'A1', 'A2']))
+
+                    # If during the allele matching process we discover incompatibilities,
+                    # we filter those SNPs:
+                    for ds in initialized_data_sources:
+                        if ds[c].n_snps != self.sumstats_table[c].n_snps:
+                            ds[c].filter_snps(extract_snps=self.sumstats_table[c].snps)
 
     def perform_gwas(self, **gwa_kwargs):
         """
@@ -659,6 +657,11 @@ class GWADataLoader(object):
                 pgs = g.score(beta[c])
             else:
                 pgs += g.score(beta[c])
+
+        # If we only have a single set of betas, flatten the PGS vector:
+        if len(pgs.shape) > 1:
+            if pgs.shape[1] == 1:
+                pgs = pgs.flatten()
 
         return pgs
 
@@ -852,3 +855,6 @@ class GWADataLoader(object):
         if self.genotype is not None:
             for g in self.genotype.values():
                 g.cleanup()
+
+        # Release the LD data from memory:
+        self.release_ld()

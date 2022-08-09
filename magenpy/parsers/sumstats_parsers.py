@@ -60,7 +60,8 @@ class plinkSumstatsParser(SumstatsParser):
                 'P': 'PVAL',
                 'OBS_CT': 'N',
                 'A1_FREQ': 'MAF',
-                'T_STAT': 'Z'
+                'T_STAT': 'Z',
+                'Z_STAT': 'Z'
             }
         )
 

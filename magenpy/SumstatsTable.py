@@ -134,20 +134,34 @@ class SumstatsTable(object):
         """
         return -np.log10(self.pval)
 
+    @property
+    def effect_sign(self):
+        """
+        Return the sign for the effect size (1 for positive effect, -1 for negative effect)
+        of each genetic marker.
+        """
+
+        signed_statistic = self.beta_hat or self.z_score
+
+        if signed_statistic is not None:
+            return np.sign(signed_statistic)
+        else:
+            raise Exception("No signed statistic to extract the sign from!")
+
     def match(self, reference_table, correct_flips=True):
         """
         Match the summary statistics table with a reference table,
         correcting for potential flips in the effect allele.
 
         :param reference_table: The SNP table to use as a reference. Must be a pandas
-        table with at least two columns: SNP and A1 (the effect allele).
+        table with at least three columns: SNP, A1, A2.
         :param correct_flips: If True, correct the direction of effect size
          estimates if the effect allele is reversed.
         """
 
         from magenpy.utils.model_utils import merge_snp_tables
 
-        self.table = merge_snp_tables(ref_table=reference_table[['SNP', 'A1']],
+        self.table = merge_snp_tables(ref_table=reference_table[['SNP', 'A1', 'A2']],
                                       alt_table=self.table,
                                       how='inner',
                                       correct_flips=correct_flips)
@@ -367,6 +381,10 @@ class SumstatsTable(object):
     def to_file(self, output_file, col_subset=None, **to_csv_kwargs):
         """
         Write the summary statistics table to file.
+
+        TODO: Add a format argument to this method and allow the user to output summary statistics
+        according to supported formats (e.g. COJO, plink, fastGWA, etc.).
+
         :param output_file: The path to the file where to write the summary statistics.
         :param col_subset: A subset of the columns to write to file.
         """

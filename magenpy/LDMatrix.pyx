@@ -74,6 +74,13 @@ cdef class LDMatrix:
         return self._n_elements
 
     @property
+    def n_snps(self):
+        """
+        The number of SNPs in the LD matrix. See also `.n_elements`
+        """
+        return self.n_elements
+
+    @property
     def shape(self):
         """
         The shape (dimensions) of the LD matrix.
@@ -170,6 +177,19 @@ cdef class LDMatrix:
             return a1[self._mask]
         else:
             return a1
+
+    @property
+    def a2(self):
+        """
+        The reference allele
+        """
+
+        a2 = np.array(self.get_store_attr('A2'))
+
+        if self._mask is not None:
+            return a2[self._mask]
+        else:
+            return a2
 
     @property
     def maf(self):
@@ -315,7 +335,7 @@ cdef class LDMatrix:
         Return a table of the SNP attributes for SNPs in the LD matrix.
         """
 
-        col_subset = col_subset or ['CHR', 'SNP', 'POS', 'A1', 'MAF', 'LDScore']
+        col_subset = col_subset or ['CHR', 'SNP', 'POS', 'A1', 'A2', 'MAF', 'LDScore']
 
         table = pd.DataFrame({'SNP': self.snps})
 
@@ -328,6 +348,8 @@ cdef class LDMatrix:
                 table['cM'] = self.cm_position
             if col == 'A1':
                 table['A1'] = self.a1
+            if col == 'A2':
+                table['A2'] = self.a2
             if col == 'MAF':
                 table['MAF'] = self.maf
             if col == 'LDScore':

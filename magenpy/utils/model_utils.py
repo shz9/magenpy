@@ -6,11 +6,12 @@ from scipy import stats
 def merge_snp_tables(ref_table,
                      alt_table,
                      how='inner',
+                     signed_statistics=('BETA', 'STD_BETA', 'Z'),
                      drop_duplicates=True,
                      correct_flips=True):
     """
-    This function takes a reference SNP table with at least 2 columns ('SNP', 'A1')
-    and matches it with an alternative table that also has these 2 columns defined.
+    This function takes a reference SNP table with at least 3 columns ('SNP', 'A1', `A2`)
+    and matches it with an alternative table that also has these 3 columns defined.
     The manner in which the join operation takes place depends on the `how` argument.
     Currently, the function supports `inner` and `left` joins.
 
@@ -23,28 +24,34 @@ def merge_snp_tables(ref_table,
     :param ref_table: The reference table (pandas dataframe).
     :param alt_table: The alternative table (pandas dataframe)
     :param how: `inner` or `left`
+    :param signed_statistics: The columns with signed statistics to flip if `correct_flips` is set to True.
     :param drop_duplicates: Drop duplicate SNPs
     :param correct_flips: Correct SNP summary statistics that depend on status of alternative allele
     """
 
     assert how in ('left', 'inner')
 
-    merged_table = ref_table[['SNP', 'A1']].merge(alt_table, how=how, on='SNP')
+    merged_table = ref_table[['SNP', 'A1', 'A2']].merge(alt_table, how=how, on='SNP')
 
     if drop_duplicates:
         merged_table.drop_duplicates(inplace=True, subset=['SNP'])
 
     if how == 'left':
         merged_table['A1_y'] = merged_table['A1_y'].fillna(merged_table['A1_x'])
+        merged_table['A2_y'] = merged_table['A2_y'].fillna(merged_table['A2_x'])
 
     # Assign A1 to be the one derived from the reference table:
     merged_table['A1'] = merged_table['A1_x']
+    merged_table['A2'] = merged_table['A2_x']
 
-    # Detect cases where A1 is flipped between the reference and non-reference tables:
-    flip = np.not_equal(merged_table['A1_x'].values, merged_table['A1_y'].values)
+    # Detect cases where the correct allele is specified in both tables:
+    matching_allele = np.all(merged_table[['A1_x', 'A2_x']].values == merged_table[['A1_y', 'A2_y']].values, axis=1)
 
-    if 'A2' in merged_table.columns:
-        merged_table['A2'] = merged_table['A1_y'].where(flip, merged_table['A2'])
+    # Detect cases where the effect and reference alleles are flipped:
+    flip = np.all(merged_table[['A2_x', 'A1_x']].values == merged_table[['A1_y', 'A2_y']].values, axis=1)
+
+    # Keep only SNPs with matching alleles or SNPs with flipped alleles:
+    merged_table = merged_table.loc[matching_allele | flip, ]
 
     if correct_flips:
 
@@ -53,22 +60,20 @@ def merge_snp_tables(ref_table,
 
         if num_flips > 0:
 
-            # Correct betas:
-            if 'BETA' in merged_table:
-                merged_table['BETA'] = (-2.*flip + 1.) * merged_table['BETA']
+            # If the user provided a single signed statistic as a string, convert to list first:
+            if isinstance(signed_statistics, str):
+                signed_statistics = [signed_statistics]
 
-            if 'STD_BETA' in merged_table:
-                merged_table['STD_BETA'] = (-2.*flip + 1.) * merged_table['STD_BETA']
-
-            # Correct Z-scores:
-            if 'Z' in merged_table:
-                merged_table['Z'] = (-2.*flip + 1.) * merged_table['Z']
+            # Loop over the signed statistics and correct them:
+            for s_stat in signed_statistics:
+                if s_stat in merged_table:
+                    merged_table[s_stat] = (-2. * flip + 1.) * merged_table[s_stat]
 
             # Correct MAF:
             if 'MAF' in merged_table:
                 merged_table['MAF'] = np.abs(flip - merged_table['MAF'])
 
-    merged_table.drop(['A1_x', 'A1_y'], axis=1, inplace=True)
+    merged_table.drop(['A1_x', 'A1_y', 'A2_x', 'A2_y'], axis=1, inplace=True)
 
     return merged_table
 

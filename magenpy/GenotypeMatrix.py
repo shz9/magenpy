@@ -477,13 +477,26 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
         super(xarrayGenotypeMatrix, self).filter_samples(keep_samples=keep_samples, keep_file=keep_file)
         self.xr_mat = self.xr_mat.sel(sample=self.samples)
 
-    def score(self, beta, standardize_genotype=False):
+    def score(self, beta, standardize_genotype=False, skip_na=True):
+        """
+        Perform linear scoring on the genotype matrix.
+        :param beta: A vector or matrix of effect sizes for each variant in the genotype matrix.
+        :param standardize_genotype: If True, standardize the genotype when computing the polygenic score.
+        :param skip_na: If True, skip missing values when computing the polygenic score.
+        """
+
+        import dask.array as da
+
+        chunked_beta = da.from_array(beta, chunks=self.xr_mat.data.chunksize[1])
 
         if standardize_genotype:
             from .stats.transforms.genotype import standardize
-            pgs = np.dot(standardize(self.xr_mat), beta)
+            pgs = da.dot(standardize(self.xr_mat).data, chunked_beta).compute()
         else:
-            pgs = np.dot(self.xr_mat.fillna(self.maf), beta)
+            if skip_na:
+                pgs = da.dot(da.nan_to_num(self.xr_mat.data), chunked_beta).compute()
+            else:
+                pgs = da.dot(self.xr_mat.fillna(self.maf).data, chunked_beta).compute()
 
         return pgs
 

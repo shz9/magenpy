@@ -79,6 +79,7 @@ class SampleLD(object):
 
         zarr_ld_mat.attrs['MAF'] = list(map(float, self.genotype_matrix.maf))
         zarr_ld_mat.attrs['A1'] = list(self.genotype_matrix.a1)
+        zarr_ld_mat.attrs['A2'] = list(self.genotype_matrix.a2)
 
         zarr_ld_mat.attrs['LD estimator'] = 'sample'
         zarr_ld_mat.attrs['LD boundaries'] = ld_boundaries.tolist()

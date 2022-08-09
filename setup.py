@@ -69,7 +69,7 @@ with open("requirements-optional.txt") as fp:
 
 setup(
     name="magenpy",
-    version="0.0.7",
+    version="0.0.8",
     author="Shadi Zabad",
     author_email="shadi.zabad@mail.mcgill.ca",
     description="Modeling and Analysis of Statistical Genetics data in python",

@@ -55,7 +55,7 @@ def parse_fam_file(plink_bfile):
     :param plink_bfile:
     """
 
-    if '.bim' not in plink_bfile:
+    if '.fam' not in plink_bfile:
         if '.bed' in plink_bfile:
             plink_bfile = plink_bfile.replace('.bed', '.fam')
         else:

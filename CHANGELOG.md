@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.8] - 2022-08-09
+
+### Added
+
+- Added the reference allele `A2` to the list of attributes of `LDMatrix`.
+- Added `effect_sign` as a property of `SumstatsTable`.
+
+### Changed
+
+- Fixed implementation of `merge_snp_tables` to detect allele differences that
+are not flips between `A1`/`A2`.
+- Improved implementation of `.score` method of `xarrayGenotypeMatrix`.
+
 ## [0.0.7] - 2022-07-12
 
 ### Added

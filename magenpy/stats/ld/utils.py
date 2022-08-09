@@ -20,7 +20,7 @@ def _validate_ld_matrix(ld_mat):
     :return: True if `ld_mat` has the correct structure, False otherwise.
     """
 
-    attributes = ['snps', 'a1', 'maf', 'bp_position', 'cm_position', 'ld_score']
+    attributes = ['snps', 'a1', 'a2', 'maf', 'bp_position', 'cm_position', 'ld_score']
 
     for attr in attributes:
         attribute = getattr(ld_mat, attr)
@@ -765,6 +765,11 @@ def filter_zarr_array(z,
 
     try:
         z_rag.attrs['A1'] = list(np.array(z.attrs['A1'])[idx_x])
+    except Exception:
+        pass
+
+    try:
+        z_rag.attrs['A2'] = list(np.array(z.attrs['A2'])[idx_x])
     except Exception:
         pass
 
