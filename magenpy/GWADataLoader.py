@@ -197,7 +197,7 @@ class GWADataLoader(object):
         if extract_snps is None and extract_file is None:
             return
 
-        if chromosome:
+        if chromosome is not None:
             chroms = [chromosome]
         else:
             chroms = self.chromosomes
@@ -644,19 +644,22 @@ class GWADataLoader(object):
             except Exception:
                 raise Exception("To perform linear scoring, you must a provide effect size estimates (BETA)!")
 
-        if self.verbose and len(self.genotype) < 2:
+        common_chroms = sorted(list(set(self.genotype.keys()).intersection(set(beta.keys()))))
+
+        if self.verbose and len(common_chroms) < 2:
             print("> Generating polygenic scores...")
 
         pgs = None
 
-        for c, g in tqdm(sorted(self.genotype.items(), key=lambda x: x[0]),
-                         total=len(self.genotype),
-                         desc='Generating polygenic scores',
-                         disable=not self.verbose or len(self.genotype) < 2):
+        for c in tqdm(common_chroms,
+                      total=len(common_chroms),
+                      desc='Generating polygenic scores',
+                      disable=not self.verbose or len(common_chroms) < 2):
+
             if pgs is None:
-                pgs = g.score(beta[c])
+                pgs = self.genotype[c].score(beta[c])
             else:
-                pgs += g.score(beta[c])
+                pgs += self.genotype[c].score(beta[c])
 
         # If we only have a single set of betas, flatten the PGS vector:
         if len(pgs.shape) > 1:
@@ -780,7 +783,7 @@ class GWADataLoader(object):
             split_dict = {}
 
             for c in self.chromosomes:
-                split_dict[c] = copy.deepcopy(self)
+                split_dict[c] = copy.copy(self)
 
                 if self.genotype is not None and c in self.genotype:
                     split_dict[c].genotype = {c: self.genotype[c]}

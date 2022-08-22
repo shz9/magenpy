@@ -152,6 +152,10 @@ class SampleTable(object):
                 self.table.drop('phenotype', axis=1, inplace=True)
             elif self.phenotype_likelihood in ('binomial', None):
 
+                if len(unique_vals) > 2:
+                    self._phenotype_likelihood = 'gaussian'
+                    return
+
                 unique_vals = sorted(unique_vals)
                 if unique_vals == [1, 2]:
                     # Plink coding for case/control

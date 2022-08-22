@@ -380,7 +380,8 @@ cdef class LDMatrix:
         """
         Computes the LD scores for all SNPs in the LD matrix.
         :param annotation_matrix: A matrix of annotations for each variant for which to aggregate the LD scores.
-        :param corrected: Use the sample-size corrected estimator (Bulik-Sullivan et al. 2015)
+        :param corrected: Use the sample-size corrected estimator for the squared Pearson correlation.
+         See Bulik-Sullivan et al. 2015.
         """
 
         ld_scores = []

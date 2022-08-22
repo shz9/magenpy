@@ -50,12 +50,15 @@ def merge_snp_tables(ref_table,
     # Detect cases where the effect and reference alleles are flipped:
     flip = np.all(merged_table[['A2_x', 'A1_x']].values == merged_table[['A1_y', 'A2_y']].values, axis=1)
 
+    # Variants to keep:
+    keep_snps = matching_allele | flip
+
     # Keep only SNPs with matching alleles or SNPs with flipped alleles:
-    merged_table = merged_table.loc[matching_allele | flip, ]
+    merged_table = merged_table.loc[keep_snps, ]
 
     if correct_flips:
 
-        flip = flip.astype(int)
+        flip = flip[keep_snps].astype(int)
         num_flips = flip.sum()
 
         if num_flips > 0:

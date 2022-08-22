@@ -16,7 +16,7 @@ from magenpy.simulation.GWASimulator import GWASimulator
 
 from magenpy.utils.data_utils import *
 
-__version__ = '0.0.9'
+__version__ = '0.0.10'
 
 
 config = configparser.ConfigParser()

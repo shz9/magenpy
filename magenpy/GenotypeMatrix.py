@@ -184,6 +184,12 @@ class GenotypeMatrix(object):
         """
         return 2. * self.maf * (1. - self.maf)
 
+    def estimate_memory_allocation(self, dtype=np.float32):
+        """
+        Estimate the size of the genotype matrix in MB
+        """
+        return self.n * self.m * np.dtype(dtype).itemsize / 1024 ** 2
+
     def get_snp_table(self, col_subset=None):
         """
         Return the SNP table or a subset of its columns.
