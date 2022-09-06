@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.11] - 2022-09-06
+
+### Changed
+
+- Fixed bug in implementation of `identify_mismatched_snps`.
+- Fixed bugs in handling of missing information in LD matrix.
+- Fixed bug in handling of covariates in `SampleTable`.
+- Updated `README` file to remove line indicators `>>>` from sample code.
+
+### Added
+
+- Added the reference allele `A2` to the output of the `true_beta_table` 
+in `GWASimulator`.
+
 ## [0.0.10] - 2022-08-22
 
 ### Changed

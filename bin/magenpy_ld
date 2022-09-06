@@ -61,7 +61,7 @@ parser.add_argument('--ld-window', dest='ld_window', type=int,
                     help='Maximum number of neighboring SNPs to consider when computing LD.')
 parser.add_argument('--ld-window-kb', dest='ld_window_kb', type=float,
                     help='Maximum distance (in kilobases) between pairs of variants when computing LD.')
-parser.add_argument('--ld-window-cm', dest='ld_window_cm', type=float, default=3.,
+parser.add_argument('--ld-window-cm', dest='ld_window_cm', type=float,
                     help='Maximum distance (in centi Morgan) between pairs of variants when computing LD.')
 
 # For the block estimator:
@@ -81,7 +81,13 @@ args = parser.parse_args()
 
 # ------------------------------------------------------
 # Sanity checks on the parsed arguments:
-if args.estimator == 'block':
+
+if args.estimator == 'windowed':
+    if args.ld_window is None and args.ld_window_kb is None and args.ld_window_cm is None:
+        raise Exception("For the windowed estimator, the user must provide the window size using --ld-window or "
+                        "the maximum distance in kb (--ld-window-kb) or cM (--ld-window-cm).")
+
+elif args.estimator == 'block':
     if args.ld_blocks is None:
         raise Exception("If you select the [block] LD estimator, make sure that "
                         "you also provide the ld blocks file via the --ld-blocks flag!")
@@ -143,20 +149,27 @@ print(">>> Output directory:", args.output_dir)
 # ------------------------------------------------------
 # Perform the computation:
 
+print("\n\n> Processing the genotype data...")
+
 if args.backend == 'xarray':
     g = xarrayGenotypeMatrix.from_file(args.bed_file, temp_dir=args.temp_dir)
 else:
     g = plinkBEDGenotypeMatrix.from_file(args.bed_file, temp_dir=args.temp_dir)
 
 if args.keep_file is not None:
+    print("> Filtering samples...")
     g.filter_samples(keep_file=args.keep_file)
 
 if args.extract_file is not None:
+    print("> Filtering variants...")
     g.filter_snps(extract_file=args.extract_file)
 
 if args.min_mac is not None or args.min_maf is not None:
+    print("> Filtering variants by allele frequency/count...")
     g.filter_by_allele_frequency(min_maf=args.min_maf, min_mac=args.min_mac)
 
+
+print("> Computing the LD matrix...")
 g.compute_ld(args.estimator, args.output_dir, **ld_kwargs)
 
 # Clean up all intermediate files and directories:

@@ -796,7 +796,7 @@ class GWADataLoader(object):
 
             return split_dict
 
-    def split_by_samples(self, proportions=None, groups=None, keep_original=False):
+    def split_by_samples(self, proportions=None, groups=None, keep_original=True):
         """
         Split the `GWADataLoader` object by samples, if genotype or sample data
         is available. The user must provide a list or proportion of samples in each split,
@@ -821,7 +821,7 @@ class GWADataLoader(object):
 
                 # Assign each sample to a different split randomly by drawing from a multinomial:
                 random_split = np.random.multinomial(1, proportions, size=self.sample_size).astype(bool)
-                # Extract the samples in each group from the multinomial sample:
+                # Extract the individuals in each group from the multinomial sample:
                 groups = [self.samples[random_split[:, i]] for i in range(random_split.shape[1])]
 
         gdls = []
@@ -833,7 +833,7 @@ class GWADataLoader(object):
             if (i + 1) == len(groups) and not keep_original:
                 new_gdl = self
             else:
-                new_gdl = copy.deepcopy(self)
+                new_gdl = copy.copy(self)
 
             new_gdl.filter_samples(keep_samples=g)
 

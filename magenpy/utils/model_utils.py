@@ -109,7 +109,7 @@ def identify_mismatched_snps(gdl,
     rather than on a per-chromosome basis.
 
     :param gdl: A `GWADataLoader` object
-    :param chrom: A chromosome
+    :param chrom: Perform checking only on chromosome `chrom`
     :param n_iter: Number of iterations
     :param G: The number of neighboring SNPs to sample (default: 100)
     :param p_dentist_threshold: The Bonferroni-corrected P-value threshold (default: 5e-8)
@@ -125,12 +125,12 @@ def identify_mismatched_snps(gdl,
         chromosomes = [chrom]
 
     shapes = gdl.shapes
-    mismatched_dict = {c: np.repeat(False, c_size)
-                       for c, c_size in gdl.shapes.items()}
+    mismatched_dict = {c: np.repeat(False, gdl.shapes[c])
+                       for c in chromosomes}
 
-    p_gwas_above_thres = {c: p_val > p_gwas_threshold for c, p_val in gdl.p_values.items()}
+    p_gwas_above_thres = {c: gdl.sumstats_table[c].p_value > p_gwas_threshold for c in chromosomes}
     gwas_thres_size = {c: p.sum() for c, p in p_gwas_above_thres.items()}
-    converged = {c: False for c in gdl.chromosomes}
+    converged = {c: False for c in chromosomes}
 
     for j in tqdm(range(n_iter),
                   total=n_iter,

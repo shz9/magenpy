@@ -327,6 +327,7 @@ class GWASimulator(GWADataLoader):
                 'CHR': c,
                 'SNP': self.genotype[c].snps,
                 'A1': self.genotype[c].a1,
+                'A2': self.genotype[c].a2,
                 'MixtureComponent': np.where(self.mixture_assignment[c] == 1)[1],
                 'Heritability': self.per_snp_h2[c],
                 'BETA': self.beta[c].flatten(),

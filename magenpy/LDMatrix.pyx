@@ -184,7 +184,12 @@ cdef class LDMatrix:
         The reference allele
         """
 
-        a2 = np.array(self.get_store_attr('A2'))
+        a2 = self.get_store_attr('A2')
+
+        if a2 is None:
+            return None
+        else:
+            a2 = np.array(a2)
 
         if self._mask is not None:
             return a2[self._mask]
@@ -197,7 +202,12 @@ cdef class LDMatrix:
         The minor allele frequency (MAF) of each SNP in the LD matrix.
         """
 
-        maf = np.array(self.get_store_attr('MAF'))
+        maf = self.get_store_attr('MAF')
+
+        if maf is None:
+            return None
+        else:
+            maf = np.array(maf)
 
         if self._mask is not None:
             return maf[self._mask]
@@ -223,11 +233,14 @@ cdef class LDMatrix:
         The centi Morgan position of each SNP in the LD matrix.
         """
 
-        cm = np.array(self.get_store_attr('cM'))
+        cm = self.get_store_attr('cM')
 
         if cm is None:
             return None
-        elif self._mask is not None:
+        else:
+            cm = np.array(cm)
+
+        if self._mask is not None:
             return cm[self._mask]
         else:
             return cm

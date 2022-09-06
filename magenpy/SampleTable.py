@@ -100,7 +100,11 @@ class SampleTable(object):
             pheno_table['FID'] = pheno_table['FID'].astype(type(self.fid[0]))
             pheno_table['IID'] = pheno_table['IID'].astype(type(self.iid[0]))
 
-            self.table = self.table.merge(pheno_table)
+            # Drop the phenotype column if already exists:
+            if 'phenotype' in self.table.columns:
+                self.table.drop(columns=['phenotype'])
+
+            self.table = self.table.merge(pheno_table, on=['FID', 'IID'])
         else:
             self.table = pheno_table
 
@@ -128,7 +132,7 @@ class SampleTable(object):
 
         covar_table = pd.read_csv(covar_file, **read_csv_kwargs)
         self._covariate_cols = covar_table.columns[2:]
-        covar_table.columns = ['FID', 'IID'] + self._covariate_cols
+        covar_table.columns = ['FID', 'IID'] + list(self._covariate_cols)
 
         if self.table is not None:
             covar_table['FID'] = covar_table['FID'].astype(type(self.fid[0]))
