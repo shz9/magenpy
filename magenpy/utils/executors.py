@@ -19,7 +19,14 @@ class plink2Executor(object):
     def execute(self, cmd):
 
         cmd = [self.plink2_path] + cmd + [f'--threads {self.threads}']
-        run_shell_script(" ".join(cmd))
+
+        from subprocess import CalledProcessError
+
+        try:
+            run_shell_script(" ".join(cmd))
+        except CalledProcessError as e:
+            print("Invocation of plink2 returned the following error message:")
+            print(e.stderr.decode())
 
 
 class plink1Executor(object):
@@ -39,4 +46,11 @@ class plink1Executor(object):
     def execute(self, cmd):
 
         cmd = [self.plink1_path] + cmd + [f'--threads {self.threads}']
-        run_shell_script(" ".join(cmd))
+
+        from subprocess import CalledProcessError
+
+        try:
+            run_shell_script(" ".join(cmd))
+        except CalledProcessError as e:
+            print("Invocation of plink returned the following error message:")
+            print(e.stderr.decode())

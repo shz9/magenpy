@@ -159,6 +159,14 @@ cdef class LDMatrix:
         return np.array(self._ld_boundaries)
 
     @property
+    def window_size(self):
+        """
+        Return the window size for each SNP (i.e. how many neighboring SNPs are included in its LD window)
+        """
+        ld_bounds = self.get_masked_boundaries()
+        return ld_bounds[1, :] - ld_bounds[0, :]
+
+    @property
     def sample_size(self):
         """
         The sample size used to compute the LD matrix.
@@ -367,16 +375,34 @@ cdef class LDMatrix:
                 table['MAF'] = self.maf
             if col == 'LDScore':
                 table['LDScore'] = self.ld_score
+            if col == 'WindowSize':
+                table['WindowSize'] = self.window_size
 
         return table[list(col_subset)]
 
+    def flatten(self):
+        """
+        Flatten the LD matrix into one long vector (excluding zero elements).
+        See also `.flattened_boundaries()`
+        NOTE: The implementation below will not work with chunked storage and loading of the
+        data from disk on a chunk-by-chunk basis. This is left for future work.
+        """
+
+        return np.concatenate([np.array(x) for x in self])
+
+    def get_flattened_boundaries(self):
+        """
+        Return the boundaries separating the LD blocks of each SNP in a flattened LD matrix.
+        """
+        return np.cumsum(self.window_size)
+
     def to_csr_matrix(self):
         """
-        Convert the Zarr-formatted LD matrix into a sparse CSR matrix.
+        Convert the Zarr-formatted LD matrix into scipy sparse CSR matrix.
         """
 
         # Concatenate the data (entries of the LD matrix):
-        data = np.concatenate([np.array(x) for x in self])
+        data = self.flatten()
 
         # Stitch together the rows and columns for each data point:
         bounds = self.get_masked_boundaries()
@@ -413,6 +439,20 @@ cdef class LDMatrix:
                 ld_scores.append((ldsc.reshape(-1, 1) * annotation_matrix[start: end, :]).sum(axis=0))
 
         return np.array(ld_scores)
+
+    def multiply(self, double[::1] vec):
+        """
+        Multiply the LD matrix with an input vector `vec`.
+        """
+
+        cdef:
+            double[::1] D_j, res = np.empty_like(vec)
+            int j, start, end
+
+        for j, (D_j, (start, end)) in enumerate(zip(self, self.get_masked_boundaries().T)):
+            res[j] = np.dot(D_j, vec[start:end])
+
+        return np.array(res)
 
     def store_size(self):
         """
@@ -494,13 +534,57 @@ cdef class LDMatrix:
         self.in_memory = False
         self.index = 0
 
+    def iterate_blockwise(self, block_size=None):
+        """
+        Iterate over the LD matrix in a block-wise fashion.
+        This function returns blocks of rows from the LD matrix, where the block size
+        is either specified by the user (`block_size`) or via the `block` estimator
+        properties, or by using the chunk size from the Zarr matrix. This function takes into
+        account the masked entries when selecting the blocks to return to the user.
+
+        This utility function may be useful for parallel processing across different
+        blocks of the LD matrix.
+
+        :param block_size: The number of SNPs or items in each block. If not specified,
+        we will automatically use the block boundaries from the block LD estimator or the
+        chunk size from the Zarr matrix.
+
+        """
+
+        if block_size is None:
+            # If the block size is not specified,
+            if self.ld_estimator == 'block':
+                # Use pre-defined block boundaries from the LD estimator:
+                block_delim = np.unique(self.get_masked_boundaries()[1, :])
+            else:
+                # Use the Zarr chunk size as a proxy for the block size:
+                block_delim = np.clip(np.arange(self.chunk_size, len(self) + self.chunk_size, self.chunk_size),
+                                      a_min=self.chunk_size, a_max=len(self))
+        else:
+            block_delim = np.clip(np.arange(block_size, len(self) + block_size, block_size),
+                                  a_min=block_size, a_max=len(self))
+
+        block_idx = 0
+        block_data = []
+
+        for j, Dj in enumerate(self):
+
+            if j < block_delim[block_idx]:
+                block_data.append(Dj)
+            else:
+                yield block_data
+                block_idx += 1
+                block_data = [Dj]
+
+        if len(block_data) > 0:
+            yield block_data
+
     def iterate_chunks(self):
         """
-        Iterate over chunks of the LD matrix.
-        TODO: Incorporate the mask into the chunk iterator?
+        Iterate over chunks of the LD matrix. Calls `iterate_blockwise`
+        where the size of the block is the `chunk_size` of the Zarr matrix.
         """
-        for i in range(self.shape[0] // self.chunk_size + 1):
-            yield self.z_array[i*self.chunk_size:(i + 1)*self.chunk_size]
+        self.iterate_blockwise(block_size=self.chunk_size)
 
     def __getstate__(self):
         return self.store.path, self.in_memory, self._mask

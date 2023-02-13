@@ -39,6 +39,7 @@ class GWADataLoader(object):
                  sumstats_format='magenpy',
                  ld_store_files=None,
                  annotation_files=None,
+                 annotation_format='magenpy',
                  backend='xarray',
                  temp_dir='temp',
                  output_dir='output',
@@ -82,7 +83,8 @@ class GWADataLoader(object):
         self.read_phenotype(phenotype_file)
         self.read_covariates(covariates_file)
         self.read_ld(ld_store_files)
-        self.read_annotations(annotation_files)
+        self.read_annotations(annotation_files,
+                              annot_format=annotation_format)
         self.read_summary_statistics(sumstats_files,
                                      sumstats_format,
                                      drop_duplicated=drop_duplicated)
@@ -165,7 +167,7 @@ class GWADataLoader(object):
         elif self.sumstats_table is not None:
             return {c: s.shape[0] for c, s in self.sumstats_table.items()}
         elif self.ld is not None:
-            return {c: l.shape[0] for c, l in self.ld.items()}
+            return {c: l.n_snps for c, l in self.ld.items()}
         elif self.annotation is not None:
             return {c: a.shape[0] for c, a in self.annotation.items()}
         else:
@@ -212,16 +214,31 @@ class GWADataLoader(object):
             if self.genotype is not None and c in self.genotype:
                 self.genotype[c].filter_snps(extract_snps=extract_snps)
 
+                # If no SNPs remain in the genotype matrix for that chromosome, then remove it:
+                if self.genotype[c].shape[1] < 1:
+                    del self.genotype[c]
+
             # Filter the summary statistics table:
             if self.sumstats_table is not None and c in self.sumstats_table:
                 self.sumstats_table[c].filter_snps(extract_snps=extract_snps)
 
+                # If no SNPs remain in the summary statistics table for that chromosome, then remove it:
+                if self.sumstats_table[c].shape[0] < 1:
+                    del self.sumstats_table[c]
+
             if self.ld is not None and c in self.ld:
                 self.ld[c].filter_snps(extract_snps=extract_snps)
+
+                # If no SNPs remain in the summary statistics table for that chromosome, then remove it:
+                if self.ld[c].n_snps < 1:
+                    del self.ld[c]
 
             # Filter the annotation matrix:
             if self.annotation is not None and c in self.annotation:
                 self.annotation[c].filter_snps(extract_snps=extract_snps)
+
+                if self.annotation[c].shape[0] < 1:
+                    del self.annotation[c]
 
     def filter_samples(self, keep_samples=None, keep_file=None):
         """
@@ -236,28 +253,35 @@ class GWADataLoader(object):
         self.sample_table.filter_samples(keep_samples=keep_samples, keep_file=keep_file)
         self.sync_sample_tables()
 
-    def read_annotations(self, annot_paths):
+    def read_annotations(self, annot_path,
+                         annot_format='magenpy',
+                         parser=None,
+                         **parse_kwargs):
         """
         Read the annotation matrix from file. Annotations are a set of features associated
-        with each SNP and are generally represented in table format. Here, we support tables
-        of the form developed and standardized by the LDSC software.
+        with each SNP and are generally represented in table format.
         Consult the documentation for `AnnotationMatrix` for more details.
 
-        :param annot_paths: The path to the annotation file(s). You may use a wildcard here to
-        read files for multiple chromosomes.
+        :param annot_path: The path to the annotation file(s). The path may contain a wildcard.
+        :param annot_format: The format for the summary statistics. Currently, supports the following
+         formats: `magenpy`, `ldsc`.
+        :param parser: If the annotation file does not follow any of the formats above, you can create
+        your own parser by inheriting from the base `AnnotationMatrixParser` class and passing it here as an argument.
+        :param parse_kwargs: keyword arguments for the parser. These are mainly parameters that will be passed to
+        `pandas.read_csv` function, such as the delimiter, header information, etc.
         """
 
-        if annot_paths is None:
+        if annot_path is None:
             return
 
         # Find all the relevant files in the path passed by the user:
-        if not iterable(annot_paths):
-            annot_files = get_filenames(annot_paths, extension='.annot')
+        if not iterable(annot_path):
+            annot_files = get_filenames(annot_path, extension='.annot')
         else:
-            annot_files = annot_paths
+            annot_files = annot_path
 
         if len(annot_files) < 1:
-            warnings.warn(f"No annotation files were found at: {annot_paths}")
+            warnings.warn(f"No annotation files were found at: {annot_path}")
             return
 
         if self.verbose and len(annot_files) < 2:
@@ -269,7 +293,10 @@ class GWADataLoader(object):
                                total=len(annot_files),
                                desc="Reading annotation files",
                                disable=not self.verbose or len(annot_files) < 2):
-            annot_mat = AnnotationMatrix.from_file(annot_file)
+            annot_mat = AnnotationMatrix.from_file(annot_file,
+                                                   annot_format=annot_format,
+                                                   annot_parser=parser,
+                                                   **parse_kwargs)
             self.annotation[annot_mat.chromosome] = annot_mat
 
     def read_genotypes(self,
@@ -833,13 +860,69 @@ class GWADataLoader(object):
             if (i + 1) == len(groups) and not keep_original:
                 new_gdl = self
             else:
-                new_gdl = copy.copy(self)
+                new_gdl = copy.deepcopy(self)
 
             new_gdl.filter_samples(keep_samples=g)
 
             gdls.append(new_gdl)
 
         return gdls
+
+    def align_with(self, other_gdls, axis='SNP', how='inner'):
+        """
+        Align the `GWADataLoader` object with other GDL objects to have the same
+        set of SNPs or samples. This utility method is meant to enable the user to
+        align multiple data sources for downstream analyses.
+
+        NOTE: Experimental for now, would like to add more features here in the near future.
+
+        :param other_gdls: A `GWADataLoader` or list of `GWADataLoader` objects.
+        :param axis: The axis on which to perform the alignment (can be `sample` for aligning individuals or
+        `SNP` for aligning variants across the datasets).
+        :param how: The type of join to perform across the datasets. For now, we support an inner join sort
+        of operation.
+        """
+
+        if isinstance(other_gdls, GWADataLoader):
+            other_gdls = [other_gdls]
+
+        assert all([isinstance(gdl, GWADataLoader) for gdl in other_gdls])
+
+        if axis == 'SNP':
+            # Ensure that all the GDLs have the same set of SNPs.
+            # This may be useful if the goal is to select a common set of variants
+            # that are shared across different datasets.
+            for c in self.chromosomes:
+                common_snps = set(self.snps[c])
+                for gdl in other_gdls:
+                    common_snps = common_snps.intersection(set(gdl.snps[c]))
+
+                common_snps = np.array(list(common_snps))
+
+                for gdl in other_gdls:
+                    gdl.filter_snps(extract_snps=common_snps, chromosome=c)
+
+                self.filter_snps(extract_snps=common_snps, chromosome=c)
+
+        elif axis == 'sample':
+            # Ensure that all the GDLs have the same set of samples.
+            # This may be useful when different GDLs have different covariates, phenotypes,
+            # or other information pertaining to the individuals.
+
+            common_samples = set(self.samples)
+
+            for gdl in other_gdls:
+                common_samples = common_samples.intersection(set(gdl.samples))
+
+            common_samples = np.array(list(common_samples))
+
+            for gdl in other_gdls:
+                gdl.filter_samples(keep_samples=common_samples)
+
+            self.filter_samples(keep_samples=common_samples)
+
+        else:
+            raise KeyError("Alignment axis can only be either 'SNP' or 'sample'!")
 
     def cleanup(self):
         """

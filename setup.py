@@ -31,15 +31,14 @@ def no_cythonize(extensions, **_ignore):
 extensions = [
     Extension("magenpy.stats.ld.c_utils",
               sources=["magenpy/stats/ld/c_utils.pyx"],
-              extra_compile_args=["-ffast-math"],
               include_dirs=[np.get_include()],
               ),
     Extension("magenpy.LDMatrix",
               sources=["magenpy/LDMatrix.pyx"],
-              extra_compile_args=["-ffast-math"],
               include_dirs=[np.get_include()],
               )
 ]
+
 if cythonize is not None:
     compiler_directives = {
         "language_level": 3,
@@ -69,7 +68,7 @@ with open("requirements-optional.txt") as fp:
 
 setup(
     name="magenpy",
-    version="0.0.11",
+    version="0.0.12",
     author="Shadi Zabad",
     author_email="shadi.zabad@mail.mcgill.ca",
     description="Modeling and Analysis of Statistical Genetics data in python",

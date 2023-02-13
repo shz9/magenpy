@@ -58,7 +58,7 @@ def manhattan(gdl: Union[GWADataLoader, None] = None,
             plt.axhline(-np.log10(0.05 / 1e6), ls='--', zorder=1, color=bonf_line_color)
 
         if gdl is None:
-            y = {c: ss.log10_p_value for c, ss in sumstats.split_by_chromosome()}
+            y = {c: ss.log10_p_value for c, ss in sumstats.split_by_chromosome().items()}
         else:
             y = {c: ss.log10_p_value for c, ss in gdl.sumstats_table.items()}
 

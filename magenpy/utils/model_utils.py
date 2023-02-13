@@ -6,24 +6,31 @@ from scipy import stats
 def merge_snp_tables(ref_table,
                      alt_table,
                      how='inner',
+                     on='auto',
                      signed_statistics=('BETA', 'STD_BETA', 'Z'),
                      drop_duplicates=True,
                      correct_flips=True):
     """
     This function takes a reference SNP table with at least 3 columns ('SNP', 'A1', `A2`)
-    and matches it with an alternative table that also has these 3 columns defined.
+    and matches it with an alternative table that also has these 3 columns defined. In the most recent
+    implementation, we allow users to merge on any set of columns that they wish by specifying the `on`
+    parameter. For example, instead of `SNP`, the user can join the SNP tables on `CHR` and `POS`, the
+    chromosome number and base pair position of the SNP.
+
     The manner in which the join operation takes place depends on the `how` argument.
     Currently, the function supports `inner` and `left` joins.
 
     The function removes duplicates if `drop_dupicates` parameter is set to True
 
     If `correct_flips` is set to True, the function will correct summary statistics in
-    the alternative table (e.g. BETA, MAF) based whether the A1 alleles agree between the two tables.
-
+    the alternative table `alt_table` (e.g. BETA, MAF) based whether the A1 alleles agree between the two tables.
 
     :param ref_table: The reference table (pandas dataframe).
     :param alt_table: The alternative table (pandas dataframe)
     :param how: `inner` or `left`
+    :param on: Which columns to use as anchors when merging. By default, we automatically infer which columns
+    to use, but the user can specify this directly. When `on='auto'`, we try to use `SNP` (i.e. rsID) if available.
+    If not, we use `['CHR', 'POS']`. If neither are available, we raise a ValueError.
     :param signed_statistics: The columns with signed statistics to flip if `correct_flips` is set to True.
     :param drop_duplicates: Drop duplicate SNPs
     :param correct_flips: Correct SNP summary statistics that depend on status of alternative allele
@@ -31,10 +38,22 @@ def merge_snp_tables(ref_table,
 
     assert how in ('left', 'inner')
 
-    merged_table = ref_table[['SNP', 'A1', 'A2']].merge(alt_table, how=how, on='SNP')
+    if on == 'auto':
+        # Check that the `SNP` column is present in both tables:
+        if all(['SNP' in tab.columns for tab in (ref_table, alt_table)]):
+            on = ['SNP']
+        # Check that the `CHR`, `POS` columns are present in both tables:
+        elif all([col in tab.columns for col in ('CHR', 'POS') for tab in (ref_table, alt_table)]):
+            on = ['CHR', 'POS']
+        else:
+            raise ValueError("Cannot merge SNP tables without specifying which columns to merge on.")
+    elif isinstance(on, str):
+        on = [on]
+
+    merged_table = ref_table[on + ['A1', 'A2']].merge(alt_table, how=how, on=on)
 
     if drop_duplicates:
-        merged_table.drop_duplicates(inplace=True, subset=['SNP'])
+        merged_table.drop_duplicates(inplace=True, subset=on)
 
     if how == 'left':
         merged_table['A1_y'] = merged_table['A1_y'].fillna(merged_table['A1_x'])
@@ -232,7 +251,9 @@ def identify_mismatched_snps(gdl,
 def get_shared_distance_matrix(tree, tips=None):
     """
     This function takes a Biopython tree and returns the
-    shared distance matrix (time to most recent common ancestor - MRCA)
+    shared distance matrix, i.e. for a pair of clades or populations,
+    time to most recent common ancestor of the pair minus the time of
+    the most recent common ancestor (MRCA).
     """
 
     tips = tree.get_terminals() if tips is None else tips

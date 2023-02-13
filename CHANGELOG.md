@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [0.0.12] - 2023-02-12
+
+### Changed
+
+- Removed the `--fast-math` compiler flag due to concerns about 
+numerical precision (e.g. [Beware of fast-math](https://simonbyrne.github.io/notes/fastmath/)).
+- Updated implementation of `SumstatsParser` class to allow user to specify `read_csv_kwargs` at the point of instantiation.
+- Updated plink executors to propagate the error messages to the user.
+- Updated `merge_snp_tables` to allow for merges on columns other than `SNP`.
+- Refactored, cleaned, and updated the implementation of the `AnnotationMatrix` class.
+- Fixed bug in `GWADataLoader.split_by_samples()`: Need to perform `deepcopy`, otherwise splitting would not work properly.
+- Updated `read_annotations` method in `GWADataLoader` to work with the latest `AnnotationMatrix` interfaces.
+- Fixed bug in the `manhattan` plotting function.
+
+### Added
+
+- Added parsers for functional annotations and annotation files. Mainly support LDSC annotation format for now.
+- Added a utility method to `GWADataLoader` called `align_with` to streamline aligning `GWADataLoader` objects across SNP and sample dimensions.
+- Added utility methods for flattening the LD matrix in `LDMatrix`.
+- Added a method to perform matrix-vector multiplication in `LDMatrix`.
+- Added a method to perform block-wise iteration in the `LDMatrix` class.
+
 ## [0.0.11] - 2022-09-06
 
 ### Changed

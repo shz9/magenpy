@@ -26,7 +26,7 @@ class SumstatsTable(object):
     @property
     def chromosomes(self):
         if 'CHR' in self.table.columns:
-            return self.table['CHR'].unique()
+            return sorted(self.table['CHR'].unique())
 
     @property
     def m(self):
@@ -82,14 +82,38 @@ class SumstatsTable(object):
 
     @property
     def beta_hat(self):
-        return self.get_col('BETA')
+
+        beta = self.get_col('BETA')
+
+        if beta is None:
+            odds_ratio = self.odds_ratio
+            if odds_ratio is not None:
+                self.table['BETA'] = np.log(odds_ratio)
+                return self.table['BETA'].values
+        else:
+            return beta
 
     @property
     def marginal_beta(self):
         return self.beta_hat
 
     @property
+    def odds_ratio(self):
+        return self.get_col('OR')
+
+    @property
+    def standardized_marginal_beta(self):
+        """
+        Return the marginal BETAs assuming that both the genotype matrix
+        and the phenotype vector are standardized column-wise.
+        In some contexts, this is also known as the per-SNP correlation or
+        pseudo-correlation with the phenotype.
+        """
+        return self.get_snp_pseudo_corr()
+
+    @property
     def z_score(self):
+
         z = self.get_col('Z')
         if z is not None:
             return z
@@ -100,8 +124,8 @@ class SumstatsTable(object):
             if beta is not None and se is not None:
                 self.table['Z'] = beta / se
                 return self.table['Z'].values
-            else:
-                raise Exception("Z-score statistic is not available!")
+
+        raise KeyError("Z-score statistic is not available and could not be inferred from available data!")
 
     @property
     def standard_error(self):
@@ -141,12 +165,17 @@ class SumstatsTable(object):
         of each genetic marker.
         """
 
-        signed_statistic = self.beta_hat or self.z_score
+        signed_statistics = ['BETA', 'Z', 'OR']
 
-        if signed_statistic is not None:
-            return np.sign(signed_statistic)
-        else:
-            raise Exception("No signed statistic to extract the sign from!")
+        for ss in signed_statistics:
+            ss_value = self.get_col(ss)
+            if ss_value is not None:
+                if ss == 'OR':
+                    return np.sign(np.log(ss_value))
+                else:
+                    return np.sign(ss_value)
+
+        raise KeyError("No signed statistic to extract the sign from!")
 
     def match(self, reference_table, correct_flips=True):
         """
@@ -254,7 +283,7 @@ class SumstatsTable(object):
 
                     self.table['CHISQ'] = chi2.ppf(1. - p_val, 1)
                 else:
-                    raise ValueError("Chi-Squared statistic is not available!")
+                    raise KeyError("Chi-Squared statistic is not available!")
 
         return self.table['CHISQ'].values
 
@@ -419,15 +448,15 @@ class SumstatsTable(object):
 
         if parser is None:
             if sumstats_format == 'magenpy':
-                parser = SumstatsParser()
+                parser = SumstatsParser(None, **parse_kwargs)
             elif sumstats_format == 'plink':
-                parser = plinkSumstatsParser()
+                parser = plinkSumstatsParser(None, **parse_kwargs)
             elif sumstats_format == 'COJO':
-                parser = COJOSumstatsParser()
+                parser = COJOSumstatsParser(None, **parse_kwargs)
             elif sumstats_format == 'fastGWA':
-                parser = fastGWASumstatsParser()
+                parser = fastGWASumstatsParser(None, **parse_kwargs)
             else:
                 raise KeyError(f"Parsers for summary statistics format {sumstats_format} are not implemented!")
 
-        sumstats_table = parser.parse(sumstats_file, **parse_kwargs)
+        sumstats_table = parser.parse(sumstats_file)
         return cls(sumstats_table)
