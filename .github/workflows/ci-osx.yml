@@ -1,4 +1,4 @@
-name: magenpy OSX-CI
+name: OSX-CI
 
 on: [push, pull_request]
 

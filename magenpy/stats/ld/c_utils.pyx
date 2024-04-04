@@ -115,8 +115,8 @@ cpdef find_ld_block_boundaries(long[:] pos, long[:, :] block_boundaries):
 
     cdef:
         int i, j, ldb_idx, block_start, block_end, B = block_boundaries.shape[0], M = pos.shape[0]
-        long[:] v_min = np.zeros_like(pos, dtype=np.int64)
-        long[:] v_max = M*np.ones_like(pos, dtype=np.int64)
+        int[:] v_min = np.zeros_like(pos, dtype=np.int32)
+        int[:] v_max = M*np.ones_like(pos, dtype=np.int32)
 
     with nogil:
         for i in range(M):
@@ -156,8 +156,8 @@ cpdef find_windowed_ld_boundaries(double[:] pos, double max_dist):
 
     cdef:
         int i, j, M = pos.shape[0]
-        long[:] v_min = np.zeros_like(pos, dtype=np.int64)
-        long[:] v_max = M*np.ones_like(pos, dtype=np.int64)
+        int[:] v_min = np.zeros_like(pos, dtype=np.int32)
+        int[:] v_max = M*np.ones_like(pos, dtype=np.int32)
 
     with nogil:
         for i in range(M):
@@ -180,9 +180,9 @@ cpdef find_windowed_ld_boundaries(double[:] pos, double max_dist):
 @cython.cdivision(True)
 @cython.exceptval(check=False)
 cpdef find_shrinkage_ld_boundaries(double[:] cm_pos,
-                                   double genmap_ne,
-                                   int genmap_sample_size,
-                                   double cutoff):
+                                  double genmap_ne,
+                                  int genmap_sample_size,
+                                  double cutoff):
     """
     Find the LD boundaries for the shrinkage estimator of Wen and Stephens (2010).
     
@@ -192,9 +192,10 @@ cpdef find_shrinkage_ld_boundaries(double[:] cm_pos,
     :param cutoff: The threshold below which we set the shrinkage factor to zero.
     """
 
-    cdef unsigned int i, j, M = cm_pos.shape[0]
-    cdef long[:] v_min = np.zeros_like(cm_pos, dtype=int)
-    cdef long[:] v_max = M*np.ones_like(cm_pos, dtype=int)
+    cdef:
+        int i, j, M = cm_pos.shape[0]
+        int[:] v_min = np.zeros_like(cm_pos, dtype=np.int32)
+        int[:] v_max = M*np.ones_like(cm_pos, dtype=np.int32)
 
     # The multiplicative term for the shrinkage factor
     # The shrinkage factor is 4 * Ne * (rho_ij/100) / (2*m)

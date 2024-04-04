@@ -72,6 +72,9 @@ with open("requirements-optional.txt") as fp:
 with open("requirements-test.txt") as fp:
     test_requires = fp.read().strip().split("\n")
 
+with open("requirements-docs.txt") as fp:
+    docs_requires = fp.read().strip().split("\n")
+
 # ------------------------------------------------------
 
 setup(
@@ -105,7 +108,7 @@ setup(
                               'config/*.ini']},
     scripts=['bin/magenpy_ld', 'bin/magenpy_simulate'],
     install_requires=install_requires,
-    extras_require={'opt': opt_requires, 'test': test_requires},
+    extras_require={'opt': opt_requires, 'test': test_requires, 'docs': docs_requires},
     ext_modules=extensions,
     zip_safe=False
 )

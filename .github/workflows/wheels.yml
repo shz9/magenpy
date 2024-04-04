@@ -1,4 +1,4 @@
-name: Build magenpy and upload to PyPI
+name: Wheels
 
 on:
   workflow_dispatch:
