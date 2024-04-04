@@ -36,6 +36,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        name: Install Python
+        with:
+          python-version: '3.11'
+          architecture: 'x64'
+
       - name: Build sdist
         run: pipx run build --sdist
 
