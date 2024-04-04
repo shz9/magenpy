@@ -57,7 +57,7 @@ def parse_ld_block_data(ldb_file_path):
     df = pd.read_csv(ldb_file_path, sep=r'\s+')
 
     df = df.loc[(df.start != 'None') & (df.stop != 'None')]
-    df = df.astype({'chr': str, 'start': np.int64, 'stop': np.int64})
+    df = df.astype({'chr': str, 'start': np.int32, 'stop': np.int32})
     df = df.sort_values('start')
 
     if df.isnull().values.any():

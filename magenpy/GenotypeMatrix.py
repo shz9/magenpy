@@ -633,8 +633,8 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
         snp_table = snp_table.astype({
             'CHR': int,
             'SNP': str,
-            'cM': float,
-            'POS': int,
+            'cM': np.float32,
+            'POS': np.int32,
             'A1': str,
             'A2': str
         })

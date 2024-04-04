@@ -9,7 +9,8 @@
 # cython: infer_types=True
 
 from libc.math cimport exp
-from cython cimport integral
+from libc.stdint cimport int64_t
+from cython cimport integral, floating
 cimport cython
 import numpy as np
 
@@ -35,8 +36,8 @@ cpdef filter_ut_csr_matrix_low_memory(integral[::1] indptr, char[::1] bool_mask)
 
 
     cdef:
-        long i, curr_row, row_bound, new_indptr_idx = 1, curr_shape=indptr.shape[0] - 1
-        long[::1] new_indptr = np.zeros(np.count_nonzero(bool_mask) + 1, dtype=np.int64)
+        int64_t i, curr_row, row_bound, new_indptr_idx = 1, curr_shape=indptr.shape[0] - 1
+        int64_t[::1] new_indptr = np.zeros(np.count_nonzero(bool_mask) + 1, dtype=np.int64)
         char[::1] data_mask = np.zeros(indptr[curr_shape], dtype=np.int8)
 
     with nogil:
@@ -70,7 +71,7 @@ cpdef filter_ut_csr_matrix_low_memory(integral[::1] indptr, char[::1] bool_mask)
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef expand_ranges(integral[::1] start, integral[::1] end, long output_size):
+cpdef expand_ranges(integral[::1] start, integral[::1] end, int64_t output_size):
     """
     Given a set of start and end indices, expand them into one long vector that contains 
     the indices between all start and end positions.
@@ -83,7 +84,7 @@ cpdef expand_ranges(integral[::1] start, integral[::1] end, long output_size):
 
     cdef:
         integral i, j, size=start.shape[0]
-        long out_idx = 0
+        int64_t out_idx = 0
         integral[::1] output
 
     if integral is int:
@@ -104,7 +105,7 @@ cpdef expand_ranges(integral[::1] start, integral[::1] end, long output_size):
 @cython.nonecheck(False)
 @cython.cdivision(True)
 @cython.exceptval(check=False)
-cpdef find_ld_block_boundaries(integral[:] pos, integral[:, :] block_boundaries):
+cpdef find_ld_block_boundaries(integral[:] pos, int[:, :] block_boundaries):
     """
     Find the LD boundaries for the blockwise estimator of LD, i.e., the 
     indices of the leftmost and rightmost neighbors for each SNP.
@@ -146,7 +147,7 @@ cpdef find_ld_block_boundaries(integral[:] pos, integral[:, :] block_boundaries)
 @cython.nonecheck(False)
 @cython.cdivision(True)
 @cython.exceptval(check=False)
-cpdef find_windowed_ld_boundaries(double[:] pos, double max_dist):
+cpdef find_windowed_ld_boundaries(floating[:] pos, double max_dist):
     """
     Find the LD boundaries for the windowed estimator of LD, i.e., the 
     indices of the leftmost and rightmost neighbors for each SNP.
@@ -180,7 +181,7 @@ cpdef find_windowed_ld_boundaries(double[:] pos, double max_dist):
 @cython.nonecheck(False)
 @cython.cdivision(True)
 @cython.exceptval(check=False)
-cpdef find_shrinkage_ld_boundaries(double[:] cm_pos,
+cpdef find_shrinkage_ld_boundaries(floating[:] cm_pos,
                                   double genmap_ne,
                                   int genmap_sample_size,
                                   double cutoff):

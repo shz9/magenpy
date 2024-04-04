@@ -68,6 +68,11 @@ class SumstatsParser(object):
         if self.col_name_converter is not None:
             df.rename(columns=self.col_name_converter, inplace=True)
 
+        try:
+            df['POS'] = df['POS'].astype(np.int32)
+        except KeyError:
+            pass
+
         return df
 
 

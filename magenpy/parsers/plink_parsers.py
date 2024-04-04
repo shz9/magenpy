@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 
 
 def parse_bim_file(plink_bfile):
@@ -31,8 +32,8 @@ def parse_bim_file(plink_bfile):
                          dtype={
                              'CHR': int,
                              'SNP': str,
-                             'cM': float,
-                             'POS': int,
+                             'cM': np.float32,
+                             'POS': np.int32,
                              'A1': str,
                              'A2': str
                          })
@@ -72,8 +73,8 @@ def parse_fam_file(plink_bfile):
                                 'IID': str,
                                 'fatherID': str,
                                 'motherID': str,
-                                'sex': float,
-                                'phenotype': float
+                                'sex': np.float32,
+                                'phenotype': np.float32
                                 },
                          na_values={
                              'phenotype': [-9.],
