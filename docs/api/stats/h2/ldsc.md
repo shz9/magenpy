@@ -1,0 +1,1 @@
+::: magenpy.stats.h2.ldsc

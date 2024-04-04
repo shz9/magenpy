@@ -1,6 +1,52 @@
 from tqdm import tqdm
 import numpy as np
+import pandas as pd
 from scipy import stats
+
+
+def match_chromosomes(chrom_1, chrom_2, check_patterns=('chr_', 'chr:', 'chr'), return_both=False):
+    """
+    Given two lists of chromosome IDs, this function returns the
+    chromosomes that are common to both lists. By default, the returned chromosomes
+    follow the data type and order of the first list. If `return_both` is set to True,
+    the function returns the common chromosomes in both lists.
+
+    The function also accounts for common ways to encode chromosomes, such as
+    chr18, chr_18, 18, etc.
+
+    :param chrom_1: A list or numpy array of chromosome IDs
+    :param chrom_2: A list or numpy array of chromosome IDs
+    :param check_patterns: A list of patterns to check for and replace in the chromosome IDs
+    :param return_both: If True, return the common chromosomes in both lists
+    """
+
+    chrom_1 = np.array(list(chrom_1))
+    chrom_2 = np.array(list(chrom_2))
+
+    # First, convert the data types to strings:
+    chr1_str = chrom_1.astype(str)
+    chr2_str = chrom_2.astype(str)
+
+    _, chr1_idx, chr2_idx = np.intersect1d(chr1_str, chr2_str, return_indices=True)
+
+    if len(chr1_idx) < 1:
+        # Replace patterns
+        for pattern in check_patterns:
+            chr1_str = np.char.replace(chr1_str, pattern, '')
+            chr2_str = np.char.replace(chr2_str, pattern, '')
+
+        _, chr1_idx, chr2_idx = np.intersect1d(chr1_str, chr2_str, return_indices=True)
+
+    if len(chr1_idx) < 1:
+        if return_both:
+            return [], []
+        else:
+            return []
+    else:
+        if return_both:
+            return chrom_1[chr1_idx], chrom_2[chr2_idx]
+        else:
+            return chrom_1[chr1_idx]
 
 
 def merge_snp_tables(ref_table,
@@ -9,7 +55,9 @@ def merge_snp_tables(ref_table,
                      on='auto',
                      signed_statistics=('BETA', 'STD_BETA', 'Z'),
                      drop_duplicates=True,
-                     correct_flips=True):
+                     correct_flips=True,
+                     return_ref_indices=False,
+                     return_alt_indices=False):
     """
     This function takes a reference SNP table with at least 3 columns ('SNP', 'A1', `A2`)
     and matches it with an alternative table that also has these 3 columns defined. In the most recent
@@ -20,7 +68,7 @@ def merge_snp_tables(ref_table,
     The manner in which the join operation takes place depends on the `how` argument.
     Currently, the function supports `inner` and `left` joins.
 
-    The function removes duplicates if `drop_dupicates` parameter is set to True
+    The function removes duplicates if `drop_duplicates` parameter is set to True
 
     If `correct_flips` is set to True, the function will correct summary statistics in
     the alternative table `alt_table` (e.g. BETA, MAF) based whether the A1 alleles agree between the two tables.
@@ -34,9 +82,16 @@ def merge_snp_tables(ref_table,
     :param signed_statistics: The columns with signed statistics to flip if `correct_flips` is set to True.
     :param drop_duplicates: Drop duplicate SNPs
     :param correct_flips: Correct SNP summary statistics that depend on status of alternative allele
+    :param return_ref_indices: Return the indices of the remaining entries in the reference table before merging.
+    :param return_alt_indices: Return the indices of the remaining entries in the alternative table before merging.
     """
 
+    # Sanity checking steps:
     assert how in ('left', 'inner')
+    for tab in (ref_table, alt_table):
+        assert isinstance(tab, pd.DataFrame)
+        if not all([col in tab.columns for col in ('A1', 'A2')]):
+            raise ValueError("To merge SNP tables, we require that the columns `A1` and `A2` are present.")
 
     if on == 'auto':
         # Check that the `SNP` column is present in both tables:
@@ -50,7 +105,15 @@ def merge_snp_tables(ref_table,
     elif isinstance(on, str):
         on = [on]
 
-    merged_table = ref_table[on + ['A1', 'A2']].merge(alt_table, how=how, on=on)
+    ref_include = on + ['A1', 'A2']
+
+    if return_ref_indices:
+        ref_table.reset_index(inplace=True, names='REF_IDX')
+        ref_include += ['REF_IDX']
+    if return_alt_indices:
+        alt_table.reset_index(inplace=True, names='ALT_IDX')
+
+    merged_table = ref_table[ref_include].merge(alt_table, how=how, on=on)
 
     if drop_duplicates:
         merged_table.drop_duplicates(inplace=True, subset=on)
@@ -70,7 +133,10 @@ def merge_snp_tables(ref_table,
     flip = np.all(merged_table[['A2_x', 'A1_x']].values == merged_table[['A1_y', 'A2_y']].values, axis=1)
 
     # Variants to keep:
-    keep_snps = matching_allele | flip
+    if correct_flips:
+        keep_snps = matching_allele | flip
+    else:
+        keep_snps = matching_allele
 
     # Keep only SNPs with matching alleles or SNPs with flipped alleles:
     merged_table = merged_table.loc[keep_snps, ]
@@ -290,6 +356,45 @@ def tree_to_rho(tree, min_corr):
         c.branch_length /= max_depth
 
     return tree.root.branch_length + get_shared_distance_matrix(tree)
+
+
+def quantize(floats, int_dtype=np.int8):
+    """
+    Quantize floating point numbers to the specified integer type.
+    NOTE: Assumes that the floats are in the range [-1, 1].
+    :param floats: A numpy array of floats
+    :param int_dtype: The integer type to quantize to.
+    """
+
+    # Infer the boundaries from the integer type
+    info = np.iinfo(int_dtype)
+
+    # Compute the scale and zero point
+    # NOTE: We add 1 to the info.min here to force the zero point to be exactly at 0.
+    # See discussions on Scale Quantization Mapping.
+    scale = 2. / (info.max - (info.min + 1))
+
+    # Quantize the floats to int
+    return np.clip((floats / scale).round(), info.min, info.max).astype(int_dtype)
+
+
+def dequantize(ints, float_dtype=np.float32):
+    """
+    Dequantize integers to the specified floating point type.
+    NOTE: Assumes original floats are in the range [-1, 1].
+    :param ints: A numpy array of integers
+    :param float_dtype: The floating point type to dequantize to.
+    """
+
+    # Infer the boundaries from the integer type
+    info = np.iinfo(ints.dtype)
+
+    # Compute the scale and zero point
+    # NOTE: We add 1 to the info.min here to force the zero point to be exactly at 0.
+    # See discussions on Scale Quantization Mapping.
+    scale = 2. / (info.max - (info.min + 1))
+
+    return ints.astype(float_dtype) * scale
 
 
 def multinomial_rvs(n, p):

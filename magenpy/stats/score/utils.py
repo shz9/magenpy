@@ -7,9 +7,32 @@ def score_plink2(genotype_matrix,
                  betas,
                  standardize_genotype=False,
                  temp_dir='temp'):
+    """
+    Perform linear scoring using PLINK2.
+    This function takes a genotype matrix object encapsulating and referencing
+    plink BED files as well as a matrix of effect sizes (betas) and performs
+    linear scoring of the form:
 
-    from magenpy.GenotypeMatrix import plinkBEDGenotypeMatrix
-    from magenpy.utils.executors import plink2Executor
+    y = X * betas
+
+    This is useful for computing polygenic scores (PGS). The function supports
+    a matrix of `beta` values, in which case the function returns a matrix of
+    PGS values, one for each column of `beta`. For example, if there are 10 sets
+    of betas, the function will compute 10 polygenic scores for each individual represented
+    in the genotype matrix `X`.
+
+    :param genotype_matrix: An instance of `plinkBEDGenotypeMatrix`.
+    :param betas: A matrix of effect sizes (betas).
+    :param standardize_genotype: If True, standardize the genotype to have mean zero and unit variance
+    before scoring.
+    :param temp_dir: The directory where the temporary files will be stored.
+
+    :return: A numpy array of polygenic scores.
+
+    """
+
+    from ...GenotypeMatrix import plinkBEDGenotypeMatrix
+    from ...utils.executors import plink2Executor
 
     assert isinstance(genotype_matrix, plinkBEDGenotypeMatrix)
 
@@ -23,7 +46,7 @@ def score_plink2(genotype_matrix,
     except IndexError:
         betas_shape = 1
         betas = betas.reshape(-1, 1)
-        score_col_nums = f"--score-col-nums 3"
+        score_col_nums = "--score-col-nums 3"
 
     # Create the samples file:
 
@@ -70,7 +93,7 @@ def score_plink2(genotype_matrix,
         dtypes.update({'PRS' + str(i): np.float64})
 
     chr_pgs = pd.read_csv(output_file + '.sscore',
-                          delim_whitespace=True,
+                          sep=r'\s+',
                           names=['FID', 'IID'] + ['PRS' + str(i) for i in range(betas_shape)],
                           skiprows=1,
                           usecols=[0, 1] + [4 + betas_shape + i for i in range(betas_shape)],

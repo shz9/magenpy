@@ -1,11 +1,19 @@
 import os.path as osp
 import pandas as pd
-from magenpy.utils.executors import plink2Executor
-from magenpy.GenotypeMatrix import plinkBEDGenotypeMatrix
-from magenpy.utils.model_utils import merge_snp_tables
+from ...utils.executors import plink2Executor
+from ...GenotypeMatrix import plinkBEDGenotypeMatrix
+from ...utils.model_utils import merge_snp_tables
 
 
 def compute_allele_frequency_plink2(genotype_matrix, temp_dir='temp'):
+    """
+    Compute the allele frequency for each SNP in the genotype matrix using PLINK2.
+    :param genotype_matrix: A GenotypeMatrix object.
+    :param temp_dir: The temporary directory where to store intermediate files.
+
+    :return: A numpy array of allele frequencies.
+
+    """
 
     assert isinstance(genotype_matrix, plinkBEDGenotypeMatrix)
 
@@ -34,7 +42,7 @@ def compute_allele_frequency_plink2(genotype_matrix, temp_dir='temp'):
 
     plink2.execute(cmd)
 
-    freq_df = pd.read_csv(plink_output + ".afreq", delim_whitespace=True)
+    freq_df = pd.read_csv(plink_output + ".afreq", sep=r'\s+')
     freq_df.rename(columns={'ID': 'SNP',
                             'REF': 'A2',
                             'ALT': 'A1', 'ALT1': 'A1',
@@ -48,6 +56,13 @@ def compute_allele_frequency_plink2(genotype_matrix, temp_dir='temp'):
 
 
 def compute_sample_size_per_snp_plink2(genotype_matrix, temp_dir='temp'):
+    """
+    Compute the sample size per SNP in the genotype matrix using PLINK2.
+    :param genotype_matrix: A GenotypeMatrix object.
+    :param temp_dir: The temporary directory where to store intermediate files.
+
+    :return: A numpy array of sample sizes per SNP.
+    """
 
     assert isinstance(genotype_matrix, plinkBEDGenotypeMatrix)
 
@@ -76,7 +91,7 @@ def compute_sample_size_per_snp_plink2(genotype_matrix, temp_dir='temp'):
 
     plink2.execute(cmd)
 
-    miss_df = pd.read_csv(plink_output + ".vmiss", delim_whitespace=True)
+    miss_df = pd.read_csv(plink_output + ".vmiss", sep=r'\s+')
     miss_df = pd.DataFrame({'ID': genotype_matrix.snps}).merge(miss_df)
 
     if len(miss_df) != genotype_matrix.n_snps:

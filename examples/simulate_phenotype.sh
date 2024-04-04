@@ -17,13 +17,13 @@ TGP_PATH=$(python -c "import magenpy as mgp; print(mgp.tgp_eur_data_path())")
 
 # Example 1: Simulate a heritable quantitative trait (h2 = 0.2) for the 1000G individuals
 
-magenpy_simulate --bed-files "$TGP_PATH" \
+magenpy_simulate --bfile "$TGP_PATH" \
                  --output-file "output/simulations/example_1" \
                  --h2 0.2
 
 # Example 2: Simulate a heritable case-control trait (h2 = 0.3, prevalence=.2) for the 1000G individuals:
 
-magenpy_simulate --bed-files "$TGP_PATH" \
+magenpy_simulate --bfile "$TGP_PATH" \
                  --output-file "output/simulations/example_2" \
                  --likelihood "binomial" \
                  --h2 0.3 \
@@ -31,14 +31,14 @@ magenpy_simulate --bed-files "$TGP_PATH" \
 
 # Example 3: Use plink as a backend for operations on the genotype matrix (recommended):
 
-magenpy_simulate --bed-files "$TGP_PATH" \
+magenpy_simulate --bfile "$TGP_PATH" \
                  --backend "plink" \
                  --output-file "output/simulations/example_3" \
                  --h2 0.2
 
 # Example 4: Use a mixture of 4 Gaussians for the effect sizes:
 
-magenpy_simulate --bed-files "$TGP_PATH" \
+magenpy_simulate --bfile "$TGP_PATH" \
                  --backend "plink" \
                  --output-file "output/simulations/example_4" \
                  --h2 0.2 \
@@ -47,9 +47,9 @@ magenpy_simulate --bed-files "$TGP_PATH" \
 
 # Example 5: Output the simulated phenotype + simulated effect sizes per variant:
 
-magenpy_simulate --bed-files "$TGP_PATH" \
+magenpy_simulate --bfile "$TGP_PATH" \
                  --output-file "output/simulations/example_5" \
                  --h2 0.2 \
                  -p 0.9,0.1 \
                  -d 0.,1. \
-                 --output-simulated-effects
+                 --output-simulated-beta

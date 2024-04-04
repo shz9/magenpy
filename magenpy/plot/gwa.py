@@ -1,13 +1,11 @@
 from typing import Union
-import magenpy as mgp
-from magenpy.GWADataLoader import GWADataLoader
-from magenpy.SumstatsTable import SumstatsTable
+from ..GWADataLoader import GWADataLoader
+from ..SumstatsTable import SumstatsTable
 import matplotlib.pylab as plt
 import numpy as np
 
 
-def manhattan(gdl: Union[GWADataLoader, None] = None,
-              sumstats: Union[SumstatsTable, None] = None,
+def manhattan(input_data: Union[GWADataLoader, SumstatsTable],
               y=None,
               y_label=None,
               chrom_sep_color='#f0f0f0',
@@ -23,10 +21,11 @@ def manhattan(gdl: Union[GWADataLoader, None] = None,
 
     TODO: Add functionality to highlight certain SNPs or markers on the plot.
 
-    :param gdl: An instance of `GWADataLoader`.
-    :param sumstats: An instance of `SumstatsTable`.
-    :param y: A vector of values to plot on the y-axis.
-    :param y_label: A label for the quantity or statistic that will be plotted.
+    :param input_data: An instance of `SumstatsTable` or `GWADataLoader` from which data about the
+    positions of the SNPs will be extracted.
+    :param y: An optional vector of values to plot on the y-axis. If not provided, the -log10(p-value)
+    will be plotted by default.
+    :param y_label: A label for the quantity or statistic that will be plotted on the y-axis.
     :param chrom_sep_color: The color for the chromosome separator block.
     :param snp_color: The color of the dots on the Manhattan plot.
     :param snp_marker: The shape of the marker on the Manhattan plot.
@@ -36,13 +35,12 @@ def manhattan(gdl: Union[GWADataLoader, None] = None,
 
     """
 
-    if y is not None:
-        assert y_label is not None
-
-    if gdl is None:
-        pos = {c: ss.bp_pos for c, ss in sumstats.split_by_chromosome().items()}
+    if isinstance(input_data, SumstatsTable):
+        pos = {c: ss.bp_pos for c, ss in input_data.split_by_chromosome().items()}
+    elif isinstance(input_data, GWADataLoader):
+        pos = {c: ss.bp_pos for c, ss in input_data.sumstats_table.items()}
     else:
-        pos = {c: ss.bp_pos for c, ss in gdl.sumstats_table.items()}
+        raise ValueError("The input data must be an instance of `SumstatsTable` or `GWADataLoader`.")
 
     starting_pos = 0
     ticks = []
@@ -57,17 +55,14 @@ def manhattan(gdl: Union[GWADataLoader, None] = None,
             # Add bonferroni significance threshold line:
             plt.axhline(-np.log10(0.05 / 1e6), ls='--', zorder=1, color=bonf_line_color)
 
-        if gdl is None:
-            y = {c: ss.log10_p_value for c, ss in sumstats.split_by_chromosome().items()}
+        if isinstance(input_data, SumstatsTable):
+            y = {c: ss.log10_p_value for c, ss in input_data.split_by_chromosome().items()}
         else:
-            y = {c: ss.log10_p_value for c, ss in gdl.sumstats_table.items()}
+            y = {c: ss.log10_p_value for c, ss in input_data.sumstats_table.items()}
 
         y_label = "$-log_{10}$(p-value)"
 
-    if gdl is None:
-        unique_chr = sumstats.chromosomes
-    else:
-        unique_chr = gdl.chromosomes
+    unique_chr = sorted(list(pos.keys()))
 
     for i, c in enumerate(unique_chr):
 
@@ -100,16 +95,15 @@ def manhattan(gdl: Union[GWADataLoader, None] = None,
     plt.tight_layout()
 
 
-def qq_plot(gdl: Union[mgp.GWADataLoader, None] = None,
-            sumstats: Union[mgp.SumstatsTable, None] = None,
+def qq_plot(input_data: Union[GWADataLoader, SumstatsTable],
             statistic='p_value'):
     """
     Generate a quantile-quantile (QQ) plot for the GWAS summary statistics.
     The function supports plotting QQ plots for the -log10(p-values) as well as
     the z-score (if available).
 
-    :param gdl: An instance of `GWADataLoader`.
-    :param sumstats: An instance of `SumstatsTable`.
+    :param input_data: An instance of `SumstatsTable` or `GWADataLoader` from which data about the
+    positions of the SNPs will be extracted.
     :param statistic: The statistic to generate the QQ plot for. We currently support `p_value` and `z_score`.
     """
 
@@ -117,12 +111,14 @@ def qq_plot(gdl: Union[mgp.GWADataLoader, None] = None,
 
     if statistic == 'p_value':
 
-        if gdl is None:
-            p_val = sumstats.log10_p_value
-            m = sumstats.m
+        if isinstance(input_data, SumstatsTable):
+            p_val = input_data.log10_p_value
+            m = input_data.m
+        elif isinstance(input_data, GWADataLoader):
+            p_val = np.concatenate([ss.log10_p_value for ss in input_data.sumstats_table.values()])
+            m = input_data.m
         else:
-            p_val = np.concatenate([ss.log10_p_value for ss in gdl.sumstats_table.values()])
-            m = gdl.m
+            raise ValueError("The input data must be an instance of `SumstatsTable` or `GWADataLoader`.")
 
         plt.scatter(-np.log10(np.arange(1, m + 1) / m), np.sort(p_val)[::-1])
 
@@ -132,32 +128,15 @@ def qq_plot(gdl: Union[mgp.GWADataLoader, None] = None,
         plt.ylabel("Observed $-log_{10}$(p-value)")
 
     elif statistic == 'z_score':
-        if gdl is None:
-            z_scs = sumstats.z_score
+        if isinstance(input_data, SumstatsTable):
+            z_scs = input_data.z_score
+        elif isinstance(input_data, GWADataLoader):
+            z_scs = np.concatenate([ss.z_score for ss in input_data.sumstats_table.values()])
         else:
-            z_scs = np.concatenate([ss.z_score for ss in gdl.sumstats_table.values()])
+            raise ValueError("The input data must be an instance of `SumstatsTable` or `GWADataLoader`.")
 
         stats.probplot(z_scs, dist="norm", plot=plt)
         plt.show()
     else:
-        raise ValueError(f"No QQ plot can be generated for the statistic: {statistic}")
+        raise NotImplementedError(f"No QQ plot can be generated for the statistic: {statistic}")
 
-
-def plot_ld_matrix(ldm: mgp.LDMatrix, row_slice=None, col_slice=None, cmap='OrRd'):
-    """
-    Plot a heatmap representing the LD matrix or portions of it.
-
-    :param ldm: An instance of `LDMatrix`.
-    :param row_slice: A `slice` object indicating which rows to extract from the LD matrix.
-    :param col_slice: A `slice` object indicating which columns to extract from the LD matrix.
-    :param cmap: The color map for the LD matrix plot.
-    """
-
-    if row_slice is None:
-        row_slice = slice(ldm.shape[0])
-
-    if col_slice is None:
-        col_slice = slice(ldm.shape[0])
-
-    plt.imshow(ldm.to_csr_matrix()[row_slice, col_slice].toarray(), cmap=cmap)
-    plt.colorbar()

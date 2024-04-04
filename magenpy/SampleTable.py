@@ -2,46 +2,94 @@
 from typing import Union
 import numpy as np
 import pandas as pd
-from .parsers.plink_parsers import parse_fam_file
 
 
 class SampleTable(object):
+    """
+    A class to represent sample (individual) information and attributes in
+    the context of a genotype matrix. The sample table is a wrapper around
+    a `pandas.DataFrame` object that contains the sample information. The
+    table provides methods to read and write sample information from/to
+    disk, filter samples, perofm checks/validation, and extract specific columns
+    from the table.
 
-    def __init__(self, table: Union[pd.DataFrame, None] = None, phenotype_likelihood: Union[str, None] = None):
+    :ivar table: The sample table as a pandas `DataFrame`.
+    :ivar _phenotype_likelihood: The likelihood of the phenotype values (if present).
+    :ivar _covariate_cols: The names or IDs of covariates that are present in the sample table.
+
+    """
+
+    def __init__(self,
+                 table: Union[pd.DataFrame, None] = None,
+                 phenotype_likelihood: Union[str, None] = None):
+        """
+        Initialize the sample table object.
+        :param table: A pandas DataFrame with the sample information.
+        :param phenotype_likelihood: The likelihood of the phenotype values.
+        """
 
         self.table: Union[pd.DataFrame, None] = table
 
-        assert phenotype_likelihood in (None, 'binomial', 'gaussian')
+        if self.table is not None and 'original_index' not in self.table.columns:
+            self.table['original_index'] = np.arange(len(self.table))
+
+        assert phenotype_likelihood in (None, 'binomial', 'gaussian', 'infer')
 
         self._phenotype_likelihood: Union[str, None] = phenotype_likelihood
         self._covariate_cols = None
 
-        self.post_check_phenotype()
+        if self.table is not None:
+            self.post_check_phenotype()
 
     @property
     def shape(self):
+        """
+        :return: The shape of the sample table (mainly sample size) as a tuple (n,).
+        """
         return (self.n,)
 
     @property
     def n(self):
+        """
+        !!! seealso "See Also"
+            * [sample_size][magenpy.SampleTable.SampleTable.sample_size]
+
+        :return: The sample size (number of individuals) in the sample table.
+        """
         return len(self.table)
 
     @property
     def sample_size(self):
+        """
+        !!! seealso "See Also"
+            * [n][magenpy.SampleTable.SampleTable.n]
+
+        :return: he sample size (number of individuals) in the sample table.
+        """
         return self.n
 
     @property
     def iid(self):
+        """
+        :return: The individual ID of each individual in the sample table.
+        """
         if self.table is not None:
             return self.table['IID'].values
 
     @property
     def fid(self):
+        """
+        :return: The family ID of each individual in the sample table.
+        """
         if self.table is not None:
             return self.table['FID'].values
 
     @property
     def phenotype(self):
+        """
+        :return: The phenotype column from the sample table.
+        :raises KeyError: If the phenotype is not set.
+        """
         if self.table is not None:
             try:
                 return self.table['phenotype'].values
@@ -49,26 +97,64 @@ class SampleTable(object):
                 raise KeyError("The phenotype is not set!")
 
     @property
+    def original_index(self):
+        """
+        :return: The original index of each individual in the sample table (before applying any filters).
+        """
+        if self.table is not None:
+            return self.table['original_index'].values
+
+    @property
     def covariates(self):
+        """
+        :return: The column names for the covariates stored in the sample table.
+        """
         return self._covariate_cols
 
     @property
     def phenotype_likelihood(self):
+        """
+        :return: The phenotype likelihood family.
+        """
         return self._phenotype_likelihood
 
     @classmethod
     def from_fam_file(cls, fam_file):
+        """
+        Initialize a sample table object from a path to PLINK FAM file.
+        :param fam_file: The path to the FAM file.
+
+        :return: A `SampleTable` object.
+        """
+
+        from .parsers.plink_parsers import parse_fam_file
+
         s_tab = parse_fam_file(fam_file)
         return cls(table=s_tab)
 
     @classmethod
     def from_phenotype_file(cls, phenotype_file, filter_na=True, **read_csv_kwargs):
+        """
+        Initialize a sample table from a phenotype file.
+        :param phenotype_file: The path to the phenotype file.
+        :param filter_na: Filter samples with missing phenotype values (Default: True).
+        :param read_csv_kwargs: keyword arguments to pass to the `read_csv` function of `pandas`.
+
+        :return: A `SampleTable` object.
+        """
         s_tab = cls()
         s_tab.read_phenotype_file(phenotype_file, filter_na, **read_csv_kwargs)
         return s_tab
 
     @classmethod
     def from_covariate_file(cls, covar_file, **read_csv_kwargs):
+        """
+        Initialize a sample table from a file of covariates.
+        :param covar_file: The path to the covariates file.
+        :param read_csv_kwargs: keyword arguments to pass to the `read_csv` function of `pandas`.
+
+        :return: A `SampleTable` object.
+        """
         s_tab = cls()
         s_tab.read_covariates_file(covar_file, **read_csv_kwargs)
         return s_tab
@@ -85,7 +171,7 @@ class SampleTable(object):
         """
 
         if 'sep' not in read_csv_kwargs and 'delimiter' not in read_csv_kwargs:
-            read_csv_kwargs['delim_whitespace'] = True
+            read_csv_kwargs['sep'] = r'\s+'
 
         if 'na_values' not in read_csv_kwargs:
             read_csv_kwargs['na_values'] = {'phenotype': [-9.]}
@@ -117,7 +203,6 @@ class SampleTable(object):
         self.post_check_phenotype()
 
     def read_covariates_file(self, covar_file, **read_csv_kwargs):
-
         """
         Read the covariates file from the provided path. The expected format is Family ID (`FID`),
         Individual ID (`IID`) and the remaining columns are assumed to be covariates. You may adjust
@@ -128,7 +213,7 @@ class SampleTable(object):
         """
 
         if 'sep' not in read_csv_kwargs and 'delimiter' not in read_csv_kwargs:
-            read_csv_kwargs['delim_whitespace'] = True
+            read_csv_kwargs['sep'] = r'\s+'
 
         covar_table = pd.read_csv(covar_file, **read_csv_kwargs)
         self._covariate_cols = covar_table.columns[2:]
@@ -145,7 +230,10 @@ class SampleTable(object):
     def post_check_phenotype(self):
         """
         Apply some simple heuristics to check the phenotype values
-        provided by the user and infer the phenotype likelihood (if needed).
+        provided by the user and infer the phenotype likelihood (if feasible).
+
+        :raises ValueError: If the phenotype values could not be matched with the
+        inferred phenotype likelihood.
         """
 
         if 'phenotype' in self.table.columns:
@@ -154,13 +242,14 @@ class SampleTable(object):
 
             if self.table['phenotype'].isnull().all():
                 self.table.drop('phenotype', axis=1, inplace=True)
-            elif self.phenotype_likelihood in ('binomial', None):
+            elif self._phenotype_likelihood != 'gaussian':
 
                 if len(unique_vals) > 2:
                     self._phenotype_likelihood = 'gaussian'
                     return
 
                 unique_vals = sorted(unique_vals)
+
                 if unique_vals == [1, 2]:
                     # Plink coding for case/control
                     self.table['phenotype'] -= 1
@@ -190,22 +279,41 @@ class SampleTable(object):
         self.table = self.table.merge(pd.DataFrame({'IID': keep_samples},
                                                    dtype=type(self.iid[0])))
 
-    def get_table(self, col_subset=None):
+    def to_table(self, col_subset=None):
+        """
+        Get the sample table as a pandas DataFrame.
+
+        :param col_subset: A subset of the columns to include in the table.
+        :return: A pandas DataFrame with the sample information.
+        """
         if col_subset is not None:
             return self.table[list(col_subset)]
         else:
             return self.table
 
     def get_individual_table(self):
-        return self.get_table(col_subset=['FID', 'IID'])
+        """
+        :return: A table of individual IDs (FID, IID) present in the sample table.
+        """
+        return self.to_table(col_subset=['FID', 'IID'])
 
     def get_phenotype_table(self):
+        """
+        :return: A table of individual IDs and phenotype values (FID IID phenotype) in the sample table.
+        """
         try:
-            return self.get_table(col_subset=['FID', 'IID', 'phenotype'])
+            return self.to_table(col_subset=['FID', 'IID', 'phenotype'])
         except KeyError:
             raise KeyError("The phenotype is not set!")
 
     def get_covariates_table(self, covar_subset=None):
+        """
+        Get a table of covariates associated with each individual in the
+        sample table. The table will be formatted as (FID, IID, covar1, covar2, ...).
+
+        :param covar_subset: A subset of the covariate names or IDs to include in the table.
+        :return: A pandas DataFrame with the covariate information.
+        """
         assert self._covariate_cols is not None
 
         if covar_subset is None:
@@ -215,24 +323,40 @@ class SampleTable(object):
 
         assert len(covar) >= 1
 
-        return self.get_table(col_subset=['FID', 'IID'] + covar)
+        return self.to_table(col_subset=['FID', 'IID'] + covar)
 
     def get_covariates(self, covar_subset=None):
+        """
+        Get the covariates associated with each individual in the sample table as a matrix.
+        :param covar_subset: A subset of the covariate names or IDs to include in the matrix.
+
+        :return: A numpy array with the covariate values.
+        """
         return self.get_covariates_table(covar_subset=covar_subset).iloc[:, 2:].values
 
     def set_phenotype(self, phenotype, phenotype_likelihood=None):
+        """
+        Update the phenotype in the sample table using the provided values.
+        :param phenotype: The new phenotype values, represented by a numpy array or Iterable.
+        :param phenotype_likelihood: The likelihood of the phenotype values.
+        """
 
         self.table['phenotype'] = phenotype
 
         if phenotype_likelihood:
             self._phenotype_likelihood = phenotype_likelihood
+        else:
+            self.post_check_phenotype()
 
     def to_file(self, output_file, col_subset=None, **to_csv_kwargs):
         """
-        Write the sample table to file.
+        Write the contents of the sample table to file.
         :param output_file: The path to the file where to write the sample table.
         :param col_subset: A subset of the columns to write to file.
+        :param to_csv_kwargs: keyword arguments to pass to the `to_csv` function of `pandas`.
         """
+
+        assert self.table is not None
 
         if 'sep' not in to_csv_kwargs and 'delimiter' not in to_csv_kwargs:
             to_csv_kwargs['sep'] = '\t'

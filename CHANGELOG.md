@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0] - 2024-04-04
+
+A large scale restructuring of the code base to improve efficiency and usability.
+
+### Changed
+
+- Bug fixes across the entire code base.
+- Simulator classes have been renamed from `GWASimulator` to `PhenotypeSimulator`.
+- Moved plotting script to its own separate module.
+- Updated some method names / commandline flags to be consistent throughout.
+
+### Added
+
+- Basic integration testing with `pytest` and GitHub workflows.
+- Documentation for the entire package using `mkdocs`.
+- Integration testing / automating building with GitHub workflows.
+- New implementation of the LD matrix that uses CSR matrix data structures.
+  - Quantization / float precision specification when storing LD matrices.
+  - Allow user to specify Compressor / Compressor options for Zarr storage.
+- New implementation of `magenpy_simulate` script.
+  - Allow users to set random seed.
+  - Now accept `--prop-causal` instead of specifying full mixing proportions.
+- Tried to incorporate `genome_build` into various data structures. This will be useful in the 
+future to ensure consistent genome builds across different data types.
+- Allow user to pass various metadata to `magenpy_ld` to save information about dataset 
+characteristics.
+- New sumstats parsers:
+  - Saige sumstats format.
+  - plink1.9 sumstats format.
+  - GWAS Catalog sumstats format.
+- Chained transform function for transforming phenotypes.
 
 ## [0.0.12] - 2023-02-12
 

@@ -15,7 +15,8 @@ def parse_bim_file(plink_bfile):
         - Allele 1 (corresponding to clear bits in .bed; usually minor)
         - Allele 2 (corresponding to set bits in .bed; usually major)
 
-    :param plink_bfile:
+    :param plink_bfile: The path to the plink bfile (with or without the extension).
+    :type plink_bfile: str
     """
 
     if '.bim' not in plink_bfile:
@@ -24,7 +25,8 @@ def parse_bim_file(plink_bfile):
         else:
             plink_bfile = plink_bfile + '.bim'
 
-    bim_df = pd.read_csv(plink_bfile, delim_whitespace=True,
+    bim_df = pd.read_csv(plink_bfile,
+                         sep=r'\s+',
                          names=['CHR', 'SNP', 'cM', 'POS', 'A1', 'A2'],
                          dtype={
                              'CHR': int,
@@ -52,7 +54,8 @@ def parse_fam_file(plink_bfile):
         - Sex code ('1' = male, '2' = female, '0' = unknown)
         - Phenotype value ('1' = control, '2' = case, '-9'/'0'/non-numeric = missing data if case/control)
 
-    :param plink_bfile:
+    :param plink_bfile: The path to the plink bfile (with or without the extension).
+    :type plink_bfile: str
     """
 
     if '.fam' not in plink_bfile:
@@ -62,8 +65,8 @@ def parse_fam_file(plink_bfile):
             plink_bfile = plink_bfile + '.fam'
 
     fam_df = pd.read_csv(plink_bfile,
-                         delim_whitespace=True,
-                         usecols=range(6),
+                         sep=r'\s+',
+                         usecols=list(range(6)),
                          names=['FID', 'IID', 'fatherID', 'motherID', 'sex', 'phenotype'],
                          dtype={'FID': str,
                                 'IID': str,
@@ -77,9 +80,11 @@ def parse_fam_file(plink_bfile):
                              'sex': [0]
                          })
 
+    # If the phenotype is all null or unknown, drop the column:
     if fam_df['phenotype'].isnull().all():
         fam_df.drop('phenotype', axis=1, inplace=True)
 
+    # If the sex column is all null or unknown, drop the column:
     if fam_df['sex'].isnull().all():
         fam_df.drop('sex', axis=1, inplace=True)
 

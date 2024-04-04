@@ -1,7 +1,3 @@
-"""
-Author: Shadi Zabad
-Date: December 2020
-"""
 
 from typing import Union, Dict
 
@@ -19,9 +15,33 @@ from .LDMatrix import LDMatrix
 
 from .utils.compute_utils import iterable
 from .utils.system_utils import makedir, get_filenames
+from .utils.model_utils import match_chromosomes
 
 
 class GWADataLoader(object):
+    """
+    A class to load and manage multiple data sources for genetic association studies.
+    This class is designed to handle genotype matrices, summary statistics, LD matrices,
+    and annotation matrices. It also provides functionalities to filter samples and/or SNPs,
+    harmonize data sources, and compute LD matrices. This is all done in order to facilitate
+    downstream statistical genetics analyses that require multiple data sources to be aligned
+    and harmonized. The use cases include:
+
+    * Summary statistics-based PRS computation
+    * Summary statistics-based heritability estimation.
+    * Complex trait simulation.
+    * Performing Genome-wide association tests.
+
+    :ivar genotype: A dictionary of `GenotypeMatrix` objects, where the key is the chromosome number.
+    :ivar sample_table: A `SampleTable` object containing the sample information.
+    :ivar phenotype_likelihood: The likelihood of the phenotype (e.g. `gaussian`, `binomial`).
+    :ivar ld: A dictionary of `LDMatrix` objects, where the key is the chromosome number.
+    :ivar sumstats_table: A dictionary of `SumstatsTable` objects, where the key is the chromosome number.
+    :ivar annotation: A dictionary of `AnnotationMatrix` objects, where the key is the chromosome number.
+    :ivar backend: The backend software used for the computation. Currently, supports `xarray` and `plink`.
+    :ivar temp_dir: The temporary directory where we store intermediate files (if necessary).
+    :ivar output_dir: The output directory where we store the results of the computation.
+    """
 
     def __init__(self,
                  bed_files=None,
@@ -44,7 +64,41 @@ class GWADataLoader(object):
                  temp_dir='temp',
                  output_dir='output',
                  verbose=True,
-                 n_threads=1):
+                 threads=1):
+        """
+        Initialize the `GWADataLoader` object with the data sources required for
+        downstream statistical genetics analyses.
+
+        :param bed_files: The path to the BED file(s). You may use a wildcard here to read files for multiple
+        chromosomes.
+        :param phenotype_file: The path to the phenotype file.
+        (Default: tab-separated file with `FID IID phenotype` columns).
+        :param covariates_file: The path to the covariates file.
+        (Default: tab-separated file starting with the `FID IID ...` columns and followed by the covariate columns).
+        :param keep_samples: A vector or list of sample IDs to keep when filtering the genotype matrix.
+        :param keep_file: A path to a plink-style keep file to select a subset of individuals.
+        :param extract_snps: A vector or list of SNP IDs to keep when filtering the genotype matrix.
+        :param extract_file: A path to a plink-style extract file to select a subset of SNPs.
+        :param min_maf: The minimum minor allele frequency cutoff.
+        :param min_mac: The minimum minor allele count cutoff.
+        :param drop_duplicated: If True, drop SNPs with duplicated rsID.
+        :param phenotype_likelihood: The likelihood of the phenotype (e.g. `gaussian`, `binomial`).
+        :param sumstats_files: The path to the summary statistics file(s). The path may be a wildcard.
+        :param sumstats_format: The format for the summary statistics. Currently supports the following
+        formats: `plink1.9`, `plink2`, `magenpy`, `fastGWA`, `COJO`, `SAIGE`, or `GWASCatalog` for the standard
+        summary statistics format (also known as `ssf` or `gwas-ssf`).
+        :param ld_store_files: The path to the LD matrices. This may be a wildcard to accommodate reading data
+        for multiple chromosomes.
+        :param annotation_files: The path to the annotation file(s). The path may contain a wildcard.
+        :param annotation_format: The format for the summary statistics. Currently, supports the following
+        formats: `magenpy`, `ldsc`.
+        :param backend: The backend software used for computations with the genotype matrix. Currently, supports
+        `xarray` and `plink`.
+        :param temp_dir: The temporary directory where to store intermediate files.
+        :param output_dir: The output directory where to store the results of the computation.
+        :param verbose: Verbosity of the information printed to standard output.
+        :param threads: The number of threads to use for computations.
+        """
 
         # ------- Sanity checks -------
 
@@ -62,7 +116,7 @@ class GWADataLoader(object):
         makedir([temp_dir, output_dir])
 
         self.verbose = verbose
-        self.n_threads = n_threads
+        self.threads = threads
 
         # ------- General parameters -------
 
@@ -103,25 +157,36 @@ class GWADataLoader(object):
 
     @property
     def samples(self):
+        """
+        :return: The list of samples retained in the sample table.
+        """
         if self.sample_table is not None:
             return self.sample_table.iid
 
     @property
     def sample_size(self):
         """
-        The number of samples.
+
+        !!! seealso "See Also"
+            * [n][magenpy.GWADataLoader.GWADataLoader.n]
+
+        :return: The number of samples in the genotype matrix.
+
         """
         if self.sample_table is not None:
             return self.sample_table.n
         elif self.sumstats_table is not None:
             return np.max([np.max(ss.n_per_snp) for ss in self.sumstats_table.values()])
         else:
-            raise Exception("Information about the sample size is not available!")
+            raise ValueError("Information about the sample size is not available!")
 
     @property
     def n(self):
         """
-        The number of samples. See also `.sample_size()`.
+        !!! seealso "See Also"
+            * [sample_size][magenpy.GWADataLoader.GWADataLoader.sample_size]
+
+        :return: The number of samples in the genotype matrix.
         """
 
         return self.sample_size
@@ -129,7 +194,8 @@ class GWADataLoader(object):
     @property
     def snps(self):
         """
-        Return the list of SNPs retained in each chromosome.
+        :return: The list of SNP rsIDs retained in each chromosome.
+        :rtype: dict
         """
         if self.genotype is not None:
             return {c: g.snps for c, g in self.genotype.items()}
@@ -140,26 +206,32 @@ class GWADataLoader(object):
         elif self.annotation is not None:
             return {c: a.snps for c, a in self.annotation.items()}
         else:
-            raise Exception("GWADataLoader is not properly initialized!")
+            raise ValueError("GWADataLoader instance is not properly initialized!")
 
     @property
     def m(self):
         """
-        The number of variants. See also `.n_snps`
+        !!! seealso "See Also"
+            * [n_snps][magenpy.GWADataLoader.GWADataLoader.n_snps]
+
+        :return: The number of variants in the harmonized data sources.
         """
         return sum(self.shapes.values())
 
     @property
     def n_snps(self):
         """
-        The number of variants. See also `.m`
+        !!! seealso "See Also"
+            * [m][magenpy.GWADataLoader.GWADataLoader.m]
+
+        :return: The number of variants in the harmonized data sources.
         """
         return self.m
 
     @property
     def shapes(self):
         """
-        Return a dictionary where the key is the chromosome number and the value is
+        :return: A dictionary where the key is the chromosome number and the value is
         the number of variants on that chromosome.
         """
         if self.genotype is not None:
@@ -171,19 +243,19 @@ class GWADataLoader(object):
         elif self.annotation is not None:
             return {c: a.shape[0] for c, a in self.annotation.items()}
         else:
-            raise Exception("GWADataLoader is not properly initialized!")
+            raise ValueError("GWADataLoader instance is not properly initialized!")
 
     @property
     def chromosomes(self):
         """
-        Return the list of chromosomes that were loaded to `GWADataLoader`.
+        :return: The list of chromosomes that were loaded to `GWADataLoader`.
         """
         return sorted(list(self.shapes.keys()))
 
     @property
     def n_annotations(self):
         """
-        Return the number of annotations included in the annotation matrices.
+        :return: The number of annotations included in the annotation matrices.
         """
         if self.annotation is not None:
             return self.annotation[self.chromosomes[0]].n_annotations
@@ -191,9 +263,9 @@ class GWADataLoader(object):
     def filter_snps(self, extract_snps=None, extract_file=None, chromosome=None):
         """
         Filter the SNP set from all the GWADataLoader objects.
-        :param extract_snps: A list or vector of SNP IDs to keep.
-        :param extract_file: A path to a plink-style file with SNP IDs to keep.
-        :param chromosome: Chromosome number. If specified, applies the filter on that chromosome only.
+        :param extract_snps: A list or array of SNP rsIDs to keep.
+        :param extract_file: A path to a plink-style file with SNP rsIDs to keep.
+        :param chromosome: Chromosome number. If specified, applies the filter to that chromosome only.
         """
 
         if extract_snps is None and extract_file is None:
@@ -246,7 +318,7 @@ class GWADataLoader(object):
         either a list of samples to keep or the path to a file
         with the list of samples to keep.
 
-        :param keep_samples: A list (or array) of sample IDs to keep.
+        :param keep_samples: A list or array of sample IDs to keep.
         :param keep_file: The path to a file with the list of samples to keep.
         """
 
@@ -352,7 +424,9 @@ class GWADataLoader(object):
                           desc="Reading BED files",
                           disable=not self.verbose or len(bed_files) < 2):
             # Read BED file and update the genotypes dictionary:
-            self.genotype.update(gmat_class.from_file(bfile, temp_dir=self.temp_dir).split_by_chromosome())
+            self.genotype.update(gmat_class.from_file(bfile,
+                                                      temp_dir=self.temp_dir,
+                                                      threads=self.threads).split_by_chromosome())
 
         # After reading the genotype matrices, apply some standard filters:
         for i, (c, g) in enumerate(self.genotype.items()):
@@ -380,7 +454,8 @@ class GWADataLoader(object):
         Read the phenotype file and integrate it with the sample tables and genotype matrices.
 
         :param phenotype_file: The path to the phenotype file
-        (Default: tab-separated file with `FID IID phenotype` columns).
+        (Default: tab-separated file with `FID IID phenotype` columns). If different, supply
+        details as additional arguments to this function.
         :param drop_na: Drop samples with missing phenotype information.
         :param read_csv_kwargs: keyword arguments for the `read_csv` function of `pandas`.
         """
@@ -438,7 +513,8 @@ class GWADataLoader(object):
 
         :param sumstats_path: The path to the summary statistics file(s). The path may be a wildcard.
         :param sumstats_format: The format for the summary statistics. Currently supports the following
-         formats: `plink`, `magenpy`, `fastGWA`, `COJO`.
+         formats: `plink1.9`, `plink2`, `magenpy`, `fastGWA`, `COJO`, `SAIGE`, or `GWASCatalog` for the standard
+         summary statistics format (also known as `ssf` or `gwas-ssf`).
         :param parser: If the summary statistics file does not follow any of the formats above, you can create
         your own parser by inheriting from the base `SumstatsParser` class and passing it here as an argument.
         :param drop_duplicated: Drop SNPs with duplicated rsIDs.
@@ -485,7 +561,7 @@ class GWADataLoader(object):
                 elif self.ld is not None:
                     ref_table = {c: ld.snps for c, ld in self.ld.items()}
                 else:
-                    raise Exception("Cannot index summary statistics tables without chromosome information!")
+                    raise ValueError("Cannot index summary statistics tables without chromosome information!")
 
                 self.sumstats_table.update(ss_tab.split_by_chromosome(snps_per_chrom=ref_table))
 
@@ -500,7 +576,7 @@ class GWADataLoader(object):
             return
 
         if not iterable(ld_store_paths):
-            ld_store_files = get_filenames(ld_store_paths, extension='.zarray')
+            ld_store_files = get_filenames(ld_store_paths, extension='.zgroup')
         else:
             ld_store_files = ld_store_paths
 
@@ -522,7 +598,7 @@ class GWADataLoader(object):
 
     def load_ld(self):
         """
-        A utility function to load the LD matrices to memory from on-disk storage.
+        A utility method to load the LD matrices to memory from on-disk storage.
         """
         if self.ld is not None:
             for ld in self.ld.values():
@@ -530,13 +606,19 @@ class GWADataLoader(object):
 
     def release_ld(self):
         """
-        A utility function to release LD matrices from memory.
+        A utility function to release the LD matrices from memory.
         """
         if self.ld is not None:
             for ld in self.ld.values():
                 ld.release()
 
-    def compute_ld(self, estimator, output_dir, **ld_kwargs):
+    def compute_ld(self,
+                   estimator,
+                   output_dir,
+                   dtype='int16',
+                   compressor_name='lz4',
+                   compression_level=5,
+                   **ld_kwargs):
         """
         Compute the Linkage-Disequilibrium (LD) matrix or SNP-by-SNP Pearson
         correlation matrix between genetic variants. This function only considers correlations
@@ -548,6 +630,10 @@ class GWADataLoader(object):
         4 different estimators: `sample`, `windowed`, `shrinkage`, and `block`.
         :param output_dir: The output directory where the Zarr array containing the
         entries of the LD matrix will be stored.
+        :param dtype: The data type for the entries of the LD matrix (supported data types are float32, float64
+        and integer quantized data types int8 and int16).
+        :param compressor_name: The name of the compression algorithm to use for the LD matrix.
+        :param compression_level: The compression level to use for the entries of the LD matrix (1-9).
         :param ld_kwargs: keyword arguments for the various LD estimators. Consult
         the implementations of `WindowedLD`, `ShrinkageLD`, and `BlockLD` for details.
         """
@@ -556,7 +642,12 @@ class GWADataLoader(object):
             print("> Computing LD matrix...")
 
         self.ld = {
-            c: g.compute_ld(estimator, output_dir, **ld_kwargs)
+            c: g.compute_ld(estimator,
+                            output_dir,
+                            dtype=dtype,
+                            compressor_name=compressor_name,
+                            compression_level=compression_level,
+                            **ld_kwargs)
             for c, g in tqdm(sorted(self.genotype.items(), key=lambda x: x[0]),
                              total=len(self.genotype),
                              desc='Computing LD matrices',
@@ -564,14 +655,10 @@ class GWADataLoader(object):
         }
 
     def get_ld_matrices(self):
+        """
+        :return: The LD matrices computed for each chromosome.
+        """
         return self.ld
-
-    def get_ld_boundaries(self):
-
-        if self.ld is None:
-            return None
-
-        return {c: ld.get_masked_boundaries() for c, ld in self.ld.items()}
 
     def harmonize_data(self):
         """
@@ -579,6 +666,12 @@ class GWADataLoader(object):
         LD matrices, summary statistics, annotations) are all aligned in terms of the
         set of variants that they operate on as well as the designation of the effect allele for
         each variant.
+
+        !!! note
+            This method is called automatically during the initialization of the `GWADataLoader` object.
+            However, if you read or manipulate the data sources after initialization,
+            you may need to call this method again to ensure that the data sources remain aligned.
+
         """
 
         data_sources = (self.genotype, self.sumstats_table, self.ld, self.annotation)
@@ -656,42 +749,48 @@ class GWADataLoader(object):
                              disable=not self.verbose or len(self.genotype) < 2)
         }
 
-    def score(self, beta=None):
+    def score(self, beta=None, standardize_genotype=False):
         """
         Perform linear scoring, i.e. multiply the genotype matrix by the vector of effect sizes, `beta`.
 
         :param beta: A dictionary where the keys are the chromosome numbers and the
         values are a vector of effect sizes for each variant on that chromosome. If the
         betas are not provided, we use the marginal betas by default (if those are available).
+        :param standardize_genotype: If True, standardize the genotype matrix before scoring.
         """
 
         if beta is None:
             try:
                 beta = {c: s.marginal_beta or s.get_snp_pseudo_corr() for c, s in self.sumstats_table.items()}
             except Exception:
-                raise Exception("To perform linear scoring, you must a provide effect size estimates (BETA)!")
+                raise ValueError("To perform linear scoring, you must provide effect size estimates (BETA)!")
 
-        common_chroms = sorted(list(set(self.genotype.keys()).intersection(set(beta.keys()))))
+        # Here, we have a very ugly way of accounting for
+        # the fact that the chromosomes may be coded differently between the genotype
+        # and the beta dictionary. Maybe we can find a better solution in the future.
+        common_chr_g, common_chr_b = match_chromosomes(self.genotype.keys(), beta.keys(), return_both=True)
 
-        if self.verbose and len(common_chroms) < 2:
+        if len(common_chr_g) < 1:
+            raise ValueError("No common chromosomes found between the genotype and the effect size estimates!")
+
+        if self.verbose and len(common_chr_g) < 2:
             print("> Generating polygenic scores...")
 
         pgs = None
 
-        for c in tqdm(common_chroms,
-                      total=len(common_chroms),
-                      desc='Generating polygenic scores',
-                      disable=not self.verbose or len(common_chroms) < 2):
+        for c_g, c_b in tqdm(zip(common_chr_g, common_chr_b),
+                             total=len(common_chr_g),
+                             desc='Generating polygenic scores',
+                             disable=not self.verbose or len(common_chr_g) < 2):
 
             if pgs is None:
-                pgs = self.genotype[c].score(beta[c])
+                pgs = self.genotype[c_g].score(beta[c_b], standardize_genotype=standardize_genotype)
             else:
-                pgs += self.genotype[c].score(beta[c])
+                pgs += self.genotype[c_g].score(beta[c_b], standardize_genotype=standardize_genotype)
 
         # If we only have a single set of betas, flatten the PGS vector:
-        if len(pgs.shape) > 1:
-            if pgs.shape[1] == 1:
-                pgs = pgs.flatten()
+        if len(pgs.shape) > 1 and pgs.shape[1] == 1:
+            pgs = pgs.flatten()
 
         return pgs
 
@@ -718,7 +817,7 @@ class GWADataLoader(object):
 
     def to_individual_table(self):
         """
-        Get a plink-style dataframe of individual IDs, in the form of
+        :return: A plink-style dataframe of individual IDs, in the form of
         Family ID (FID) and Individual ID (IID).
         """
 
@@ -726,7 +825,7 @@ class GWADataLoader(object):
 
     def to_phenotype_table(self):
         """
-        Get a plink-style dataframe with each individual's Family ID (FID),
+        :return: A plink-style dataframe with each individual's Family ID (FID),
         Individual ID (IID), and phenotype value.
         """
 
@@ -734,26 +833,28 @@ class GWADataLoader(object):
 
     def to_snp_table(self, col_subset=None, per_chromosome=False):
         """
-        Return a dataframe of SNP information for all variants
+        Get a dataframe of SNP data for all variants
         across different chromosomes.
 
         :param col_subset: The subset of columns to obtain.
         :param per_chromosome: If True, returns a dictionary where the key
         is the chromosome number and the value is the SNP table per
         chromosome.
+
+        :return: A dataframe (or dictionary of dataframes) of SNP data.
         """
 
         snp_tables = {}
 
         for c in self.chromosomes:
             if self.sumstats_table is not None:
-                snp_tables[c] = self.sumstats_table[c].get_table(col_subset=col_subset)
+                snp_tables[c] = self.sumstats_table[c].to_table(col_subset=col_subset)
             elif self.genotype is not None:
                 snp_tables[c] = self.genotype[c].get_snp_table(col_subset=col_subset)
             elif self.ld is not None:
                 snp_tables[c] = self.ld[c].to_snp_table(col_subset=col_subset)
             else:
-                raise Exception("GWADataLoader is not properly initialized!")
+                raise ValueError("GWADataLoader instance is not properly initialized!")
 
         if per_chromosome:
             return snp_tables
@@ -762,13 +863,15 @@ class GWADataLoader(object):
 
     def to_summary_statistics_table(self, col_subset=None, per_chromosome=False):
         """
-        Return a dataframe of the GWAS summary statistics for all variants
+        Get a dataframe of the GWAS summary statistics for all variants
         across different chromosomes.
 
         :param col_subset: The subset of columns (or summary statistics) to obtain.
         :param per_chromosome: If True, returns a dictionary where the key
         is the chromosome number and the value is the summary statistics table per
         chromosome.
+
+        :return: A dataframe (or dictionary of dataframes) of summary statistics.
         """
 
         assert self.sumstats_table is not None
@@ -776,7 +879,7 @@ class GWADataLoader(object):
         snp_tables = {}
 
         for c in self.chromosomes:
-            snp_tables[c] = self.sumstats_table[c].get_table(col_subset=col_subset)
+            snp_tables[c] = self.sumstats_table[c].to_table(col_subset=col_subset)
 
         if per_chromosome:
             return snp_tables
@@ -827,8 +930,8 @@ class GWADataLoader(object):
         """
         Split the `GWADataLoader` object by samples, if genotype or sample data
         is available. The user must provide a list or proportion of samples in each split,
-        and the method will return a list of `GWADataLoader` objects with only samples
-        within each split. This may be a useful utility for training/testing split or some
+        and the method will return a list of `GWADataLoader` objects with only the samples
+        designated for each split. This may be a useful utility for training/testing split or some
         other downstream tasks.
 
         :param proportions: A list with the proportion of samples in each split. Must add to 1.
@@ -838,12 +941,12 @@ class GWADataLoader(object):
         """
 
         if self.sample_table is None:
-            raise Exception("The sample table is not set!")
+            raise ValueError("The sample table is not set!")
 
         if groups is None:
             if proportions is None:
-                raise Exception("To split a `GWADataloader` object by samples, the user must provide either the list "
-                                "or proportion of individuals in each split.")
+                raise ValueError("To split a `GWADataloader` object by samples, the user must provide either the list "
+                                 "or proportion of individuals in each split.")
             else:
 
                 # Assign each sample to a different split randomly by drawing from a multinomial:
@@ -855,7 +958,7 @@ class GWADataLoader(object):
         for i, g in enumerate(groups):
 
             if len(g) < 1:
-                raise Exception(f"Group {i} is empty! Please ensure that all splits have at least one sample.")
+                raise ValueError(f"Group {i} is empty! Please ensure that all splits have at least one sample.")
 
             if (i + 1) == len(groups) and not keep_original:
                 new_gdl = self
@@ -874,13 +977,15 @@ class GWADataLoader(object):
         set of SNPs or samples. This utility method is meant to enable the user to
         align multiple data sources for downstream analyses.
 
-        NOTE: Experimental for now, would like to add more features here in the near future.
-
         :param other_gdls: A `GWADataLoader` or list of `GWADataLoader` objects.
         :param axis: The axis on which to perform the alignment (can be `sample` for aligning individuals or
         `SNP` for aligning variants across the datasets).
         :param how: The type of join to perform across the datasets. For now, we support an inner join sort
         of operation.
+
+        !!! warning
+            Experimental for now, would like to add more features here in the near future.
+
         """
 
         if isinstance(other_gdls, GWADataLoader):

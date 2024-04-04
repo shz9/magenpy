@@ -1,8 +1,8 @@
 import numpy as np
-import magenpy as mgp
+from ...GWADataLoader import GWADataLoader
 
 
-def simple_ldsc(gdl: mgp.GWADataLoader):
+def simple_ldsc(gdl: GWADataLoader):
     """
     Provides an estimate of SNP heritability from summary statistics using
     a simplified version of the LD Score Regression framework.
@@ -10,10 +10,10 @@ def simple_ldsc(gdl: mgp.GWADataLoader):
     Where the response is the Chi-Squared statistic for SNP j
     and the variable is its LD score.
 
-    NOTE: For now, we constrain the slope to 1.
-
     :param gdl: An instance of `GWADataLoader` with the LD information and
     summary statistics initialized properly.
+
+    :return: The estimated SNP heritability.
     """
 
     # Check data types:
@@ -36,44 +36,28 @@ def simple_ldsc(gdl: mgp.GWADataLoader):
 
 
 class LDSCRegression(object):
+    """
+    Perform LD Score Regression using the jackknife method.
+    """
 
-    def __init__(self, gdl: mgp.GWADataLoader, n_blocks=200, max_chisq=None):
+    def __init__(self, gdl: GWADataLoader, n_blocks=200, max_chisq=None):
         """
-        Incomplete...
+        :param gdl: An instance of GWADataLoader
+        :param n_blocks: The number of blocks to use for the jackknife method.
+        :param max_chisq: The maximum Chi-Squared statistic to consider.
         """
 
         self.gdl = gdl
         self.n_blocks = n_blocks
 
-        # Extract the data from the GDL object:
-
-        chroms = self.gdl.chromosomes
-
-        if self.gdl.annotation is not None:
-            self.ld_scores = np.concatenate([
-                self.gdl.ld[c].compute_ld_scores(
-                    annotations=self.gdl.annotation[c].values(add_intercept=True)
-                )
-                for c in chroms
-            ])
-        else:
-            self.ld_scores = np.concatenate([self.gdl.ld[c].ld_score.reshape(-1, 1) for c in chroms])
-
-        self.chisq = np.concatenate([self.gdl.sumstats_table[c].get_chisq_statistic() for c in chroms])
-        self.n = np.concatenate([self.gdl.sumstats_table[c].n_per_snp for c in chroms])
-
-        if max_chisq is None:
-            max_chisq = max(0.001*self.n.max(), 80)
-
-        chisq_cond = self.chisq < max_chisq
-
-        self.ld_scores = self.ld_scores[chisq_cond, :]
-        self.chisq = self.chisq[chisq_cond]
-        self.n = self.n[chisq_cond]
+        # ...
 
     def fit(self):
         """
-        TODO: Implement the jackknife estimator here...
+        Perform LD Score Regression estimation using the jackknife method.
+
+        :raises NotImplementedError: If method is not implemented.
         """
-        pass
+
+        raise NotImplementedError
 

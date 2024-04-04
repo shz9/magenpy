@@ -1,21 +1,18 @@
-"""
-Author: Shadi Zabad
-Date: March 2021
-"""
 
 import pandas as pd
 import numpy as np
-from magenpy import GWADataLoader
-from magenpy.simulation.GWASimulator import GWASimulator
+from ..GWADataLoader import GWADataLoader
+from .PhenotypeSimulator import PhenotypeSimulator
 
 
-class MulticohortGWASimulator(GWADataLoader):
+class MultiCohortPhenotypeSimulator(GWADataLoader):
     """
-    A module for simulating GWAS data for separate cohorts.
+    A module for simulating GWAS data for separate cohorts or clusters of the data.
     This includes scenarios such as multi-population or multi-ethnic datasets, or 
     datasets that can be stratified by a discrete variable.
 
-    NOTE: Incomplete code.. requires more testing.
+    !!! warning
+        This code is experimental and needs much further validation.
 
     """
 
@@ -47,7 +44,7 @@ class MulticohortGWASimulator(GWADataLoader):
 
         # Rho can be either a scalar or a matrix that determines the patterns of
         # correlations between effect sizes in different clusters.
-        if type(rho) == np.float:
+        if np.issubdtype(type(rho), np.floating):
             self.rho = rho*np.ones(shape=(len(self.clusters), len(self.clusters)))
             np.fill_diagonal(self.rho, 1.)
         else:
@@ -63,9 +60,9 @@ class MulticohortGWASimulator(GWADataLoader):
             if self.ref_cluster is None:
                 self.ref_cluster = c
 
-            self.cluster_simulators[c] = GWASimulator(bed_files,
-                                                      keep_samples=self.get_samples_in_cluster(c),
-                                                      **kwargs)
+            self.cluster_simulators[c] = PhenotypeSimulator(bed_files,
+                                                            keep_samples=self.get_samples_in_cluster(c),
+                                                            **kwargs)
 
     @property
     def clusters(self):
@@ -133,7 +130,7 @@ class MulticohortGWASimulator(GWADataLoader):
             betas = np.random.multivariate_normal(np.zeros(self.rho.shape[0]), cov=self.rho, size=c_size)
             for i, c in enumerate(self.clusters):
                 self.cluster_simulators[c].beta[ch] = (
-                        self.cluster_simulators[c].get_causal_status()[ch].astype(np.int)*betas[:, i]
+                        self.cluster_simulators[c].get_causal_status()[ch].astype(np.int32)*betas[:, i]
                 )
 
     def simulate(self, perform_gwas=False):

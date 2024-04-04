@@ -1,7 +1,5 @@
 import numpy as np
 import pandas as pd
-import collections
-import six
 
 
 def generate_slice_dictionary(vec):
@@ -39,7 +37,6 @@ def intersect_arrays(arr1, arr2, return_index=False):
     :param arr1: The first array
     :param arr2: The second array
     :param return_index: Return the index of shared elements in the first array
-    :return:
     """
 
     # NOTE: For best and consistent results, we cast all data types to `str`
@@ -55,7 +52,15 @@ def intersect_arrays(arr1, arr2, return_index=False):
 
 
 def iterable(arg):
+    """
+    Check if an object is iterable (but not a string).
+    :param arg: A python object.
+    :return: True if the object is iterable, False otherwise.
+    """
+
+    import collections.abc
+
     return (
-        isinstance(arg, collections.Iterable)
-        and not isinstance(arg, six.string_types)
+        isinstance(arg, collections.abc.Iterable)
+        and not isinstance(arg, str)
     )

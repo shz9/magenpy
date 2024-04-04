@@ -9,106 +9,192 @@
 # cython: infer_types=True
 
 from libc.math cimport exp
+from cython cimport integral
+cimport cython
 import numpy as np
-cimport numpy as np
 
 
-def zarr_islice(arr, start=None, end=None):
-
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.exceptval(check=False)
+cpdef filter_ut_csr_matrix_low_memory(integral[::1] indptr, char[::1] bool_mask):
     """
-    This is copied from the official, but not yet released implementation of
-    i_slice in Zarr codebase:
-    https://github.com/zarr-developers/zarr-python/blob/e79e75ca8f07c95a5deede51f7074f699aa41149/zarr/core.py#L463
-    :param arr: A Zarr array
-    :param start: Start index
-    :param end: End index
+    This is a utility function to generate a mask with the purpose of filtering 
+    the data array of upper-triangular CSR matrices. The function also generates a new 
+    indptr array that reflects the filter requested by the user.
+
+    The reason we have this implementation is to avoid row/column filtering with 
+    scipy's native functionality for CSR matrices, which involves using the `indices` 
+    array, which can take substantial amounts of memory that is not needed for 
+    matrices that have special structure, such as Linkage-Disequilibrium matrices.
+
+    :param indptr: The index pointer array for the CSR matrix to be filtered.
+    :param bool_mask: A boolean mask of 0s and 1s represented as int8.
     """
 
-    if len(arr.shape) == 0:
-        # Same error as numpy
-        raise TypeError("iteration over a 0-d array")
-    if start is None:
-        start = 0
-    if end is None or end > arr.shape[0]:
-        end = arr.shape[0]
 
-    cdef unsigned int j, chunk_size = arr.chunks[0]
-    chunk = None
+    cdef:
+        long i, curr_row, row_bound, new_indptr_idx = 1, curr_shape=indptr.shape[0] - 1
+        long[::1] new_indptr = np.zeros(np.count_nonzero(bool_mask) + 1, dtype=np.int64)
+        char[::1] data_mask = np.zeros(indptr[curr_shape], dtype=np.int8)
 
-    for j in range(start, end):
-        if j % chunk_size == 0:
-            chunk = arr[j: j + chunk_size]
-        elif chunk is None:
-            chunk_start = j - j % chunk_size
-            chunk_end = chunk_start + chunk_size
-            chunk = arr[chunk_start:chunk_end]
-        yield chunk[j % chunk_size]
+    with nogil:
+        # For each row in the current matrix:
+        for curr_row in range(curr_shape):
 
+            # If the row is to be included in the new matrix:
+            if bool_mask[curr_row]:
 
+                # Useful quantity to convert the data array index `i` to the
+                # equivalent row index in the `bool` mask:
+                row_bound = curr_row - indptr[curr_row] + 1
+
+                # For the new indptr array, copy the value from the previous row:
+                new_indptr[new_indptr_idx] = new_indptr[new_indptr_idx - 1]
+
+                # For each entry for this row in the data array
+                for i in range(indptr[curr_row], indptr[curr_row + 1]):
+
+                    # If the entry isn't filtered, make sure it's included in the new matrix
+                    # And increase the `indptr` by one unit:
+                    if bool_mask[row_bound + i]:
+                        data_mask[i] = 1
+                        new_indptr[new_indptr_idx] += 1
+
+                new_indptr_idx += 1
+
+    return np.asarray(data_mask).astype(bool), np.asarray(new_indptr)
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.exceptval(check=False)
+cpdef expand_ranges(integral[::1] start, integral[::1] end, long output_size):
+    """
+    Given a set of start and end indices, expand them into one long vector that contains 
+    the indices between all start and end positions.
+    
+    :param start: A vector with the start indices.
+    :param end: A vector with the end indices.
+    :param output_size: The size of the output vector (equivalent to the sum of the lengths
+                        of all ranges).
+    """
+
+    cdef:
+        integral i, j, size=start.shape[0]
+        long out_idx = 0
+        integral[::1] output
+
+    if integral is int:
+        output = np.empty(output_size, dtype=np.int32)
+    else:
+        output = np.empty(output_size, dtype=np.int64)
+
+    with nogil:
+        for i in range(size):
+            for j in range(start[i], end[i]):
+                output[out_idx] = j
+                out_idx += 1
+
+    return np.asarray(output)
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.cdivision(True)
+@cython.exceptval(check=False)
 cpdef find_ld_block_boundaries(long[:] pos, long[:, :] block_boundaries):
+    """
+    Find the LD boundaries for the blockwise estimator of LD, i.e., the 
+    indices of the leftmost and rightmost neighbors for each SNP.
+    
+    :param pos: A vector with the position of each genetic variant.
+    :param block_boundaries: A matrix with the boundaries of each LD block.
+    """
 
-    cdef unsigned int i, j, ldb_idx, block_start, block_end, B = len(block_boundaries), M = len(pos)
-    cdef long[:] v_min = np.zeros_like(pos, dtype=np.int)
-    cdef long[:] v_max = M*np.ones_like(pos, dtype=np.int)
+    cdef:
+        int i, j, ldb_idx, block_start, block_end, B = block_boundaries.shape[0], M = pos.shape[0]
+        long[:] v_min = np.zeros_like(pos, dtype=np.int64)
+        long[:] v_max = M*np.ones_like(pos, dtype=np.int64)
 
-    for i in range(M):
+    with nogil:
+        for i in range(M):
 
-        # Find the positional boundaries for SNP i:
-        for ldb_idx in range(B):
-            if block_boundaries[ldb_idx, 0] <= pos[i] < block_boundaries[ldb_idx, 1]:
-                block_start, block_end = block_boundaries[ldb_idx, 0], block_boundaries[ldb_idx, 1]
-                break
+            # Find the positional boundaries for SNP i:
+            for ldb_idx in range(B):
+                if block_boundaries[ldb_idx, 0] <= pos[i] < block_boundaries[ldb_idx, 1]:
+                    block_start, block_end = block_boundaries[ldb_idx, 0], block_boundaries[ldb_idx, 1]
+                    break
 
-        for j in range(i, M):
-            if pos[j] >= block_end:
-                v_max[i] = j
-                break
+            for j in range(i, M):
+                if pos[j] >= block_end:
+                    v_max[i] = j
+                    break
 
-        for j in range(i, -1, -1):
-            if pos[j] < block_start:
-                v_min[i] = j + 1
-                break
+            for j in range(i, -1, -1):
+                if pos[j] < block_start:
+                    v_min[i] = j + 1
+                    break
 
     return np.array((v_min, v_max))
 
 
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.cdivision(True)
+@cython.exceptval(check=False)
 cpdef find_windowed_ld_boundaries(double[:] pos, double max_dist):
+    """
+    Find the LD boundaries for the windowed estimator of LD, i.e., the 
+    indices of the leftmost and rightmost neighbors for each SNP.
+    
+    :param pos: A vector with the position of each genetic variant.
+    :param max_dist: The maximum distance between SNPs to consider them neighbors.
+    """
 
-    cdef unsigned int i, j, M = len(pos)
-    cdef long[:] v_min = np.zeros_like(pos, dtype=np.int)
-    cdef long[:] v_max = M*np.ones_like(pos, dtype=np.int)
+    cdef:
+        int i, j, M = pos.shape[0]
+        long[:] v_min = np.zeros_like(pos, dtype=np.int64)
+        long[:] v_max = M*np.ones_like(pos, dtype=np.int64)
 
-    for i in range(M):
+    with nogil:
+        for i in range(M):
 
-        for j in range(i, M):
-            if pos[j] - pos[i] > max_dist:
-                v_max[i] = j
-                break
+            for j in range(i, M):
+                if pos[j] - pos[i] > max_dist:
+                    v_max[i] = j
+                    break
 
-        for j in range(i, -1, -1):
-            if pos[i] - pos[j] > max_dist:
-                v_min[i] = j + 1
-                break
+            for j in range(i, -1, -1):
+                if pos[i] - pos[j] > max_dist:
+                    v_min[i] = j + 1
+                    break
 
     return np.array((v_min, v_max))
 
-
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.cdivision(True)
+@cython.exceptval(check=False)
 cpdef find_shrinkage_ld_boundaries(double[:] cm_pos,
-                                   double genmap_Ne,
+                                   double genmap_ne,
                                    int genmap_sample_size,
                                    double cutoff):
     """
-    Find the LD boundaries for the shrinkage estimator of Wen and Stephens (2010)
+    Find the LD boundaries for the shrinkage estimator of Wen and Stephens (2010).
     
     :param cm_pos: A vector with the position of each genetic variant in centi Morgan.
-    :param genmap_Ne: The effective population size for the genetic map sample.
+    :param genmap_ne: The effective population size for the genetic map sample.
     :param genmap_sample_size: The sample size used to estimate the genetic map.
     :param cutoff: The threshold below which we set the shrinkage factor to zero.
     """
 
-    cdef unsigned int i, j, M = len(cm_pos)
-    cdef long[:] v_min = np.zeros_like(cm_pos, dtype=np.int)
-    cdef long[:] v_max = M*np.ones_like(cm_pos, dtype=np.int)
+    cdef unsigned int i, j, M = cm_pos.shape[0]
+    cdef long[:] v_min = np.zeros_like(cm_pos, dtype=int)
+    cdef long[:] v_max = M*np.ones_like(cm_pos, dtype=int)
 
     # The multiplicative term for the shrinkage factor
     # The shrinkage factor is 4 * Ne * (rho_ij/100) / (2*m)
@@ -119,18 +205,19 @@ cpdef find_shrinkage_ld_boundaries(double[:] cm_pos,
     # to the distance between SNPs is: 4*Ne/(200*m), which is equivalent to 0.02*Ne/m
     # See also: https://github.com/stephenslab/rss/blob/master/misc/get_corr.R
     # and Wen and Stephens (2010)
-    cdef double mult_term = 0.02 * genmap_Ne / genmap_sample_size
+    cdef double mult_term = 0.02 * genmap_ne / genmap_sample_size
 
-    for i in range(M):
+    with nogil:
+        for i in range(M):
 
-        for j in range(i, M):
-            if exp(-mult_term*(cm_pos[j] - cm_pos[i])) < cutoff:
-                v_max[i] = j
-                break
+            for j in range(i, M):
+                if exp(-mult_term*(cm_pos[j] - cm_pos[i])) < cutoff:
+                    v_max[i] = j
+                    break
 
-        for j in range(i, -1, -1):
-            if exp(-mult_term*(cm_pos[i] - cm_pos[j])) < cutoff:
-                v_min[i] = j + 1
-                break
+            for j in range(i, -1, -1):
+                if exp(-mult_term*(cm_pos[i] - cm_pos[j])) < cutoff:
+                    v_min[i] = j + 1
+                    break
 
     return np.array((v_min, v_max))

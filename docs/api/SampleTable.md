@@ -1,0 +1,1 @@
+::: magenpy.SampleTable.SampleTable

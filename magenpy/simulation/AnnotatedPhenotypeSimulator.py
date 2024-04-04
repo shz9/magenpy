@@ -1,22 +1,31 @@
 
 import numpy as np
-from magenpy.simulation.GWASimulator import GWASimulator
+from .PhenotypeSimulator import PhenotypeSimulator
 
 
-class AnnotatedGWASimulator(GWASimulator):
+class AnnotatedPhenotypeSimulator(PhenotypeSimulator):
     """
     Simulate complex traits by incorporating genomic functional
     annotations into the mixture densities that govern the effect size
     of each variant on the trait.
 
-    NOTE: This code is experimental and needs much further validation.
+    !!! warning
+        This code is experimental and needs much further validation.
+
     """
 
     def __init__(self, bed_files, **kwargs):
+        """
+        Create an instance of the AnnotatedPhenotypeSimulator class.
+
+        :param bed_files: A list of BED files that contain the genotype data.
+        :param kwargs: Additional keyword arguments for the PhenotypeSimulator class.
+        """
+
         super().__init__(bed_files, **kwargs)
 
         # For now, we will restrict to 2 mixture components.
-        assert self.n_mixtures == 2
+        assert self.n_components == 2
 
         self.w_h2 = None  # The annotation weights for the per-SNP heritability
         self.w_pi = None  # The annotation weights for the per-SNP causal probability
@@ -68,6 +77,9 @@ class AnnotatedGWASimulator(GWASimulator):
         self.w_pi = np.log(np.array(enr))
 
     def set_per_snp_heritability(self):
+        """
+        Set the per-SNP heritability values using the annotation weights.
+        """
 
         if self.w_h2 is None:
             return super().set_per_snp_heritability()
@@ -79,6 +91,9 @@ class AnnotatedGWASimulator(GWASimulator):
                                          a_min=0., a_max=np.inf)
 
     def set_per_snp_mixture_probability(self):
+        """
+        Set the per-SNP mixture probabilities using the annotation weights.
+        """
 
         if self.w_pi is None:
             return super().set_per_snp_mixture_probability()
@@ -91,6 +106,9 @@ class AnnotatedGWASimulator(GWASimulator):
             self.per_snp_pi[c] = np.array([1. - prob, prob]).T
 
     def get_heritability_enrichment(self):
+        """
+        Estimate the enrichment of heritability per annotation.
+        """
 
         tabs = self.to_true_beta_table(per_chromosome=True)
         total_heritability = sum([tab['Heritability'].sum() for c, tab in tabs.items()])

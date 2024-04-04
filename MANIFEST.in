@@ -2,12 +2,13 @@ include MANIFEST.in
 include requirements*.txt
 include magenpy/config/*.ini
 include LICENSE
-include README.md
+include *.md
 include setup.py
 
 graft magenpy
 
 global-exclude *.c
+global-exclude *.cpp
 global-exclude *.so
 global-exclude *.pyd
 global-exclude *.pyc

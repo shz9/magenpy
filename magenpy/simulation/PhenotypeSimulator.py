@@ -1,34 +1,63 @@
-"""
-Author: Shadi Zabad
-Date: March 2021
-"""
 
 import warnings
 import numpy as np
 import pandas as pd
-from magenpy.GWADataLoader import GWADataLoader
+from ..GWADataLoader import GWADataLoader
 
 
-class GWASimulator(GWADataLoader):
+class PhenotypeSimulator(GWADataLoader):
+    """
+    A wrapper class that supports simulating complex traits with a variety of
+    genetic architectures and heritability values, using the standard linear model. The
+    basic implementation supports simulating effect sizes from a sparse Gaussian mixture density,
+    allowing some variants to have larger effects than others. The class also supports simulating
+    binary phenotypes (case-control) by thresholding the continuous phenotype at a specified threshold.
+
+    To be concrete, the generative model for the simulation is as follows:
+
+    1) Simulate the mixture assignment for each variant based on the mixing proportions `pi`.
+    2) Simulate the effect sizes for each variant from the corresponding Gaussian density that they were assigned.
+    3) Compute the polygenic score for each individual based on the simulated effect sizes.
+    4) Simulate the residual component of the phenotype, in such a way that the total heritability is preserved.
+
+    !!! seealso "See Also"
+        * [GWADataLoader][magenpy.GWADataLoader.GWADataLoader]
+
+    :ivar pi: The mixing proportions for the Gaussian mixture density.
+    :ivar h2: The trait SNP heritability, or proportion of variance explained by SNPs.
+    :ivar d: The variance multipliers for each component of the Gaussian mixture density.
+    :ivar prevalence: The (disease) prevalence for binary (case-control) phenotypes.
+    :ivar per_snp_h2: The per-SNP heritability for each variant in the dataset.
+    :ivar per_snp_pi: The per-SNP mixing proportions for each variant in the dataset.
+    :ivar beta: The effect sizes for each variant in the dataset.
+    :ivar mixture_assignment: The assignment of each variant to a mixture component.
+
+    """
 
     def __init__(self,
                  bed_files,
                  h2=0.2,
-                 pi=(0.9, 0.1),
+                 pi=0.1,
                  d=(0., 1.),
                  prevalence=0.15,
                  **kwargs):
         """
-        Simulate phenotypes using the linear additive model.
+        Initialize the PhenotypeSimulator object with the necessary parameters.
 
-        :param bed_files: A path (or list of paths) to PLINK BED files.
+        :param bed_files: A path (or list of paths) to PLINK BED files containing the genotype information.
         :param h2: The trait SNP heritability, or proportion of variance explained by SNPs.
-        :param pi: The mixture proportions for Gaussian mixture density.
-        :param d:  The variance multipliers for each component of the Gaussian mixture density.
+        :param pi: The mixing proportions for the mixture of Gaussians (our model for the distribution of effect sizes).
+        If a float is provided, it is converted to a tuple (1-pi, pi), where pi is the proportion of causal variants.
+        :param d:  The variance multipliers for each component of the Gaussian mixture density. By default,
+        all components have the same variance multiplier.
         :param prevalence: The (disease) prevalence for binary (case-control) phenotypes.
         """
 
         super().__init__(bed_files, **kwargs)
+
+        # If pi is float, convert it to a tuple:
+        if isinstance(pi, float):
+            pi = (1. - pi, pi)
 
         self.pi = pi
         self.h2 = h2
@@ -47,7 +76,10 @@ class GWASimulator(GWADataLoader):
         self.mixture_assignment = None
 
     @property
-    def n_mixtures(self):
+    def n_components(self):
+        """
+        :return: The number of Gaussian mixture components for the effect size distribution.
+        """
         return len(self.pi)
 
     def set_pi(self, new_pi):
@@ -67,7 +99,8 @@ class GWASimulator(GWADataLoader):
 
     def set_per_snp_mixture_probability(self):
         """
-        Set the per-SNP mixture probability for each variant in the dataset.
+        Set the per-SNP mixing proportions for each variant in the dataset.
+        This is a convenience method that may come in handy for more flexible generative models.
         """
 
         self.per_snp_pi = {}
@@ -77,7 +110,8 @@ class GWASimulator(GWADataLoader):
 
     def set_per_snp_heritability(self):
         """
-        Set the per-SNP heritability for each variant in the dataset.
+        Set the per-SNP heritability (effect size variance) for each variant in the dataset.
+        This is a convenience method that may come in handy for more flexible generative models.
         """
 
         assert self.mixture_assignment is not None
@@ -97,8 +131,11 @@ class GWASimulator(GWADataLoader):
 
     def get_causal_status(self):
         """
-        This method returns a dictionary where the keys are the chromosome numbers
-        and the values are of binary vectors indicating which SNPs are causal for the phenotype.
+        :return: A dictionary where the keys are the chromosome numbers
+        and the values are binary vectors indicating which SNPs are
+        causal for the simulated phenotype.
+
+        :raises AssertionError: If the mixture assignment is not set.
         """
 
         assert self.mixture_assignment is not None
@@ -118,12 +155,14 @@ class GWASimulator(GWADataLoader):
 
     def set_causal_snps(self, causal_snps):
         """
-        A utility method to set the causal SNPs in the simulation based on an array or
-        list of SNPs specified by the user. The method takes an iterable of `causal_snps`
+        A utility method to set the causal variants in the simulation based on an array or
+        list of SNPs specified by the user. The method takes an iterable (e.g. list or array) of `causal_snps`
         and then creates a new mixture assignment object where only the `causal_snps`
         contribute to the phenotype.
 
-        :param causal_snps: A list or array of SNP IDs.
+        :param causal_snps: A list or array of SNP rsIDs.
+        :raises ValueError: If all mixture components are causal.
+
         """
 
         # Get the index of the mixture component whose multiplier is zero (i.e. the null component):
@@ -141,9 +180,9 @@ class GWASimulator(GWADataLoader):
         pis /= pis.sum()
 
         # Initialize new mixture assignment object:
-        new_assignment = {c: np.zeros((s, self.n_mixtures)) for c, s in self.shapes.items()}
+        new_assignment = {c: np.zeros((s, self.n_components)) for c, s in self.shapes.items()}
 
-        from magenpy.utils.compute_utils import intersect_arrays
+        from ..utils.compute_utils import intersect_arrays
 
         n_causal_set = 0
 
@@ -169,21 +208,23 @@ class GWASimulator(GWADataLoader):
 
     def set_mixture_assignment(self, new_assignment):
         """
-        Set the mixture assignments according to user-provided dictionary.
+        Set the mixture assignments according to user-provided dictionary. The mixture
+        assignment indicates which mixture component the effect size of a particular
+        variant comes from.
         :param new_assignment: A dictionary where the keys are the chromosomes and
         the values are the mixture assignment for each SNP on that chromosome.
         """
 
         # Check that the shapes match pre-specified information:
         for c, c_size in self.shapes.items():
-            assert new_assignment[c].shape == (c_size, self.n_mixtures)
+            assert new_assignment[c].shape == (c_size, self.n_components)
 
         self.mixture_assignment = new_assignment
 
     def simulate_mixture_assignment(self):
         """
         Simulate assigning SNPs to the various mixture components
-        with probabilities given by `pi`.
+        with probabilities given by mixing proportions `pi`.
         """
 
         if self.per_snp_pi is None or len(self.per_snp_pi) < 1:
@@ -191,7 +232,7 @@ class GWASimulator(GWADataLoader):
 
         self.mixture_assignment = {}
 
-        from magenpy.utils.model_utils import multinomial_rvs
+        from ..utils.model_utils import multinomial_rvs
 
         for c, c_size in self.shapes.items():
 
@@ -201,9 +242,10 @@ class GWASimulator(GWADataLoader):
 
     def set_beta(self, new_beta):
         """
-        Set the beta according to user-provided dictionary.
+        Set the variant effect sizes (beta) according to user-provided dictionary.
+
         :param new_beta: A dictionary where the keys are the chromosomes and
-        the values are the beta for each SNP on that chromosome.
+        the values are the beta (effect size) for each SNP on that chromosome.
         """
 
         # Check that the shapes match pre-specified information:
@@ -214,8 +256,10 @@ class GWASimulator(GWADataLoader):
 
     def simulate_beta(self):
         """
-        Simulate the causal effect size for the variants included
-        in the dataset.
+        Simulate the causal effect size for variants included
+        in the dataset. Here, the variant effect size is drawn from
+        a Gaussian density with mean zero and scale given by
+        the root of per-SNP heritability.
         """
 
         if self.per_snp_h2 is None or len(self.per_snp_h2) < 1:
@@ -231,10 +275,17 @@ class GWASimulator(GWADataLoader):
 
         return self.beta
 
-    def simulate_phenotypes(self):
+    def simulate_phenotype(self):
         """
-        Simulate complex phenotypes for the samples, given their genotype information and 
-        fixed effect sizes `beta` that were simulated previously.
+        Simulate complex phenotypes for the samples present in the genotype matrix, given their
+        genotype information and fixed effect sizes `beta` that were simulated previous steps.
+
+        Given the simulated effect sizes, the phenotype is generated as follows:
+
+        `Y = XB + e`
+
+        Where `Y` is the vector of phenotypes, `X` is the genotype matrix, `B` is the vector of effect sizes,
+        and `e` represents the residual effects.
         """
 
         assert self.beta is not None
@@ -270,7 +321,10 @@ class GWASimulator(GWADataLoader):
         
         return new_y
 
-    def simulate(self, reset_beta=True, reset_mixture_assignment=True, perform_gwas=False):
+    def simulate(self,
+                 reset_beta=True,
+                 reset_mixture_assignment=True,
+                 perform_gwas=False):
         """
         A convenience method to simulate all the components of the generative model.
         Specifically, the simulation follows the standard linear model, where the phenotype is 
@@ -303,7 +357,7 @@ class GWASimulator(GWADataLoader):
             self.simulate_beta()
 
         # Simulate the phenotype
-        self.simulate_phenotypes()
+        self.simulate_phenotype()
 
         if perform_gwas:
             # Perform genome-wide association testing...
@@ -311,9 +365,10 @@ class GWASimulator(GWADataLoader):
 
     def to_true_beta_table(self, per_chromosome=False):
         """
-        Export the simulated true effect sizes and causal status
-         into a pandas table.
-        :param per_chromosome: If True, return a dictionary of tables for each chromosome.
+        Export the simulated true effect sizes and causal status into a pandas dataframe.
+        :param per_chromosome: If True, return a dictionary of tables for each chromosome separately.
+
+        :return: A pandas DataFrame with the true effect sizes and causal status for each variant.
         """
 
         assert self.beta is not None

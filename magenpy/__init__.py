@@ -2,21 +2,22 @@ import glob
 import configparser
 
 # Data structures:
-from magenpy.AnnotationMatrix import AnnotationMatrix
-from magenpy.LDMatrix import LDMatrix
-from magenpy.GWADataLoader import GWADataLoader
-from magenpy.SumstatsTable import SumstatsTable
-from magenpy.SampleTable import SampleTable
+from .AnnotationMatrix import AnnotationMatrix
+from .LDMatrix import LDMatrix
+from .GWADataLoader import GWADataLoader
+from .SumstatsTable import SumstatsTable
+from .SampleTable import SampleTable
 
 # Simulation:
 
-from magenpy.simulation.GWASimulator import GWASimulator
+from .simulation.PhenotypeSimulator import PhenotypeSimulator
 
 # Data utilities:
 
-from magenpy.utils.data_utils import *
+from .utils.data_utils import *
 
-__version__ = '0.0.12'
+__version__ = '0.1.0'
+__release_date__ = 'April 2024'
 
 
 config = configparser.ConfigParser()

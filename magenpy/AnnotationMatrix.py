@@ -2,6 +2,22 @@ import numpy as np
 
 
 class AnnotationMatrix(object):
+    """
+    A wrapper class for handling annotation matrices, which are essentially tables of
+    features for each variant in the genome. These features include information such as
+    whether the variant is in coding regions, enhancers, etc. It can also include continuous
+    features derived from experimental assays or other sources.
+
+    The purpose of this class is to present a unified and consistent interface for handling
+    annotations across different tools and applications. It should be able to read and write
+    annotation matrices in different formats, filter annotations, and perform basic operations
+    on the annotation matrix. It should also allow users to define new custom annotations
+    that can be used for downstream statistical genetics applications.
+
+    :ivar table: A pandas dataframe containing the annotation information.
+    :ivar _annotations: A list or array of column namees to consider as annotations. If not provided,
+    will be inferred heuristically, though we recommend that the user specify this information.
+    """
 
     def __init__(self, annotation_table=None, annotations=None):
         """
@@ -25,7 +41,7 @@ class AnnotationMatrix(object):
     def from_file(cls, annot_file, annot_format='magenpy', annot_parser=None,
                   **parse_kwargs):
         """
-        Takes an annotation file and initializes an annotation matrix object from it.
+        Initialize an AnnotationMatrix object from a file.
 
         :param annot_file: The path to the annotation file.
         :param annot_format: The format of the annotation file. For now, we mainly support
@@ -33,6 +49,8 @@ class AnnotationMatrix(object):
         :param annot_parser: An `AnnotationMatrixParser` derived object, which can be tailored to
         specific annotation formats that the user has.
         :param parse_kwargs: arguments for the pandas `read_csv` function, such as the delimiter.
+
+        :return: An instance of the `AnnotationMatrix` class.
         """
 
         from .parsers.annotation_parsers import AnnotationMatrixParser, LDSCAnnotationMatrixParser
@@ -53,14 +71,25 @@ class AnnotationMatrix(object):
 
     @property
     def shape(self):
+        """
+        :return: The dimensions of the annotation matrix (number of variants x number of annotations).
+        """
         return self.n_snps, self.n_annotations
 
     @property
     def n_snps(self):
+        """
+        :return: The number of variants in the annotation matrix.
+        """
         return len(self.table)
 
     @property
     def chromosome(self):
+        """
+        A convenience method to get the chromosome if there is only one chromosome in the annotation matrix.
+
+        :return: The chromosome number if there is only one chromosome in the annotation matrix. Otherwise, None.
+        """
         chrom = self.chromosomes
         if chrom is not None:
             if len(chrom) == 1:
@@ -68,15 +97,24 @@ class AnnotationMatrix(object):
 
     @property
     def chromosomes(self):
+        """
+        :return: The list of unique chromosomes in the annotation matrix.
+        """
         if 'CHR' in self.table.columns:
             return self.table['CHR'].unique()
 
     @property
     def snps(self):
+        """
+        :return: The list of SNP rsIDs in the annotation matrix.
+        """
         return self.table['SNP'].values
 
     @property
     def n_annotations(self):
+        """
+        :return: The number of annotations in the annotation matrix.
+        """
         if self.annotations is None:
             return 0
         else:
@@ -84,19 +122,28 @@ class AnnotationMatrix(object):
 
     @property
     def binary_annotations(self):
+        """
+        :return: A list of binary (0/1) annotations in the annotation matrix.
+        """
         assert self.annotations is not None
         return np.array([c for c in self.annotations
                          if len(self.table[c].unique()) == 2])
 
     @property
     def annotations(self):
+        """
+        :return: The list of annotation names or IDs in the annotation matrix.
+        """
         return self._annotations
 
     def values(self, add_intercept=False):
         """
-        Returns the annotation matrix.
         :param add_intercept: Adds a base annotation corresponding to the intercept.
+
+        :return: The annotation matrix as a numpy matrix.
+        :raises KeyError: If no annotations are defined in the table.
         """
+
         if self.annotations is None:
             raise KeyError("No annotations are defined in this table!")
         annot_mat = self.table[self.annotations].values
@@ -111,7 +158,7 @@ class AnnotationMatrix(object):
         either a list of variants to extract or the path to a file
         with the list of variants to extract.
 
-        :param extract_snps: A list (or array) of SNP IDs to keep in the annotation matrix.
+        :param extract_snps: A list or array of SNP IDs to keep in the annotation matrix.
         :param extract_file: The path to a file with the list of variants to extract.
         """
 
@@ -121,7 +168,7 @@ class AnnotationMatrix(object):
             from .parsers.misc_parsers import read_snp_filter_file
             extract_snps = read_snp_filter_file(extract_file)
 
-        from magenpy.utils.compute_utils import intersect_arrays
+        from .utils.compute_utils import intersect_arrays
 
         arr_idx = intersect_arrays(self.snps, extract_snps, return_index=True)
 
@@ -130,7 +177,7 @@ class AnnotationMatrix(object):
     def filter_annotations(self, keep_annotations):
         """
         Filter the list of annotations in the matrix.
-        :param keep_annotations: A list or vector of annotations to keep.
+        :param keep_annotations: A list or array of annotations to keep.
         """
 
         if self.annotations is None:
@@ -142,6 +189,7 @@ class AnnotationMatrix(object):
     def add_annotation(self, annot_vec, annotation_name):
         """
         Add an annotation vector or list to the AnnotationMatrix object.
+
         :param annot_vec: A vector/list/Series containing the annotation information for each SNP in the
         AnnotationMatrix. For now, it's the responsibility of the user to make sure that the annotation
         list or vector are sorted properly.
@@ -170,12 +218,15 @@ class AnnotationMatrix(object):
 
         CHR StartCoordinate EndCoordinate ...
 
-        NOTE: This implementation is quite slow at the moment. May need to find more efficient
-        ways to do the merge over list of ranges.
+        !!! note
+            This implementation is quite slow at the moment. May need to find more efficient
+            ways to do the merge over list of ranges.
 
         :param bed_file: The path to the BED file containing the annotation coordinates.
         :param annotation_name: The name of the annotation to create. Make sure the name is not already
         in the matrix!
+
+        :raises AssertionError: If the annotation name is already in the matrix.
         """
 
         from .parsers.annotation_parsers import parse_annotation_bed_file
@@ -199,7 +250,7 @@ class AnnotationMatrix(object):
                 return False
 
             check = (chr_range.Start <= row['POS']) & (chr_range.End >= row['POS'])
-            return int(check.any())
+            return int(np.any(check))
 
         self.table[annotation_name] = self.table.apply(annotation_overlap, axis=1)
 
@@ -210,15 +261,17 @@ class AnnotationMatrix(object):
 
     def get_binary_annotation_index(self, bin_annot):
         """
-        Get the indices of all SNPs that belong to binary annotation `bin_annot`
+        :param bin_annot: The name of the binary annotation for which to fetch the relevant variants.
+        :return: The indices of all variants that belong to binary annotation `bin_annot`
         """
         assert bin_annot in self.binary_annotations
         return np.where(self.table[bin_annot] == 1)[0]
 
     def split_by_chromosome(self):
         """
-        Split the annotation matrix by chromosome, so that we would
-        have a separate `AnnotationMatrix` object for each chromosome.
+        Split the annotation matrix by chromosome.
+
+        :return: A dictionary of `AnnotationMatrix` objects, where the keys are the chromosome numbers.
         """
 
         if 'CHR' in self.table.columns:
@@ -233,7 +286,7 @@ class AnnotationMatrix(object):
 
     def to_file(self, output_path, col_subset=None, compress=True, **to_csv_kwargs):
         """
-        Write the annotation matrix to file.
+        A convenience method to write the annotation matrix to a file.
 
         :param output_path: The path and prefix to the file where to write the annotation matrix.
         :param col_subset: A subset of the columns to write to file.

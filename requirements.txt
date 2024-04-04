@@ -2,10 +2,7 @@ dask
 scipy
 numpy
 pandas
-pandas-plink==2.2.4
+pandas-plink
 psutil
 tqdm
 zarr
-requests
-rechunker
-

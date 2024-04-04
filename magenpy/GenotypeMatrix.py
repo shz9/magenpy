@@ -1,4 +1,3 @@
-
 from typing import Union
 import tempfile
 import pandas as pd
@@ -8,12 +7,53 @@ from .SampleTable import SampleTable
 
 
 class GenotypeMatrix(object):
+    """
+    A class to represent a genotype matrix. The genotype matrix is a matrix of
+    where the rows represent samples and the columns represent genetic variants.
+    In general, genotype matrices are assumed to reside on disk and this class
+    provides a convenient interface to interact with and perform computations
+    on the genotype matrix.
+
+    Currently, we assume that the genotype matrix is stored using plink's BED
+    file format, with associated tables for the samples (i.e. FAM file) and genetic
+    variants (i.e. BIM file). Classes that inherit from this generic class support
+    various backends to access and performing computations on this genotype data.
+
+    !!! seealso "See Also"
+            * [xarrayGenotypeMatrix][magenpy.GenotypeMatrix.xarrayGenotypeMatrix]
+            * [plinkBEDGenotypeMatrix][magenpy.GenotypeMatrix.plinkBEDGenotypeMatrix]
+
+    :ivar sample_table: A table containing information about the samples in the genotype matrix
+    (initially read from the FAM file).
+    :ivar snp_table: A table containing information about the genetic variants in the genotype matrix
+    (initially read from the BIM file).
+    :ivar bed_file: The path to the plink BED file containing the genotype matrix.
+    :ivar _genome_build: The genome build or assembly under which the SNP coordinates are defined.
+    :ivar temp_dir: The directory where temporary files will be stored (if needed).
+    :ivar cleanup_dir_list: A list of directories to clean up after execution.
+    :ivar threads: The number of threads to use for parallel computations.
+
+    """
 
     def __init__(self,
                  sample_table: Union[pd.DataFrame, SampleTable, None] = None,
                  snp_table: Union[pd.DataFrame, None] = None,
                  temp_dir: str = 'temp',
+                 bed_file: str = None,
+                 genome_build=None,
+                 threads=1,
                  **kwargs):
+        """
+        Initialize a GenotypeMatrix object.
+
+        :param sample_table: A table containing information about the samples in the genotype matrix.
+        :param snp_table: A table containing information about the genetic variants in the genotype matrix.
+        :param temp_dir: The directory where temporary files will be stored (if needed).
+        :param bed_file: The path to the plink BED file containing the genotype matrix.
+        :param genome_build: The genome build or assembly under which the SNP coordinates are defined.
+        :param threads: The number of threads to use for parallel computations.
+        :param kwargs: Additional keyword arguments.
+        """
 
         self.sample_table: Union[pd.DataFrame, SampleTable, None] = None
         self.snp_table: Union[pd.DataFrame, None] = snp_table
@@ -21,22 +61,36 @@ class GenotypeMatrix(object):
         if sample_table is not None:
             self.set_sample_table(sample_table)
 
+        if snp_table is not None:
+            self.snp_table['original_index'] = np.arange(len(self.snp_table))
+
         from .utils.system_utils import makedir
+
         makedir(temp_dir)
+
+        self.bed_file = bed_file
+        self._genome_build = genome_build
         self.temp_dir = temp_dir
         self.cleanup_dir_list = []  # Directories to clean up after execution.
 
+        self.threads = threads
+
     @classmethod
-    def from_file(cls, file_path, temp_dir='temp'):
+    def from_file(cls, file_path, temp_dir='temp', **kwargs):
         """
-        Read and parse the genotype matrix information from file.
+        Initialize a genotype matrix object by passing a file path + other keyword arguments.
+        :param file_path: The path to the plink BED file.
+        :type file_path: str
+        :param temp_dir: The directory where temporary files will be stored.
+        :type temp_dir: str
+        :param kwargs: Additional keyword arguments.
         """
         raise NotImplementedError
 
     @property
     def shape(self):
         """
-        The shape of the genotype matrix. Rows correspond to the
+        :return: The shape of the genotype matrix. Rows correspond to the
         number of samples and columns to the number of SNPs.
         """
         return self.n, self.m
@@ -44,50 +98,77 @@ class GenotypeMatrix(object):
     @property
     def n(self):
         """
-        The sample size, see also `.sample_size()`
+        !!! seealso "See Also"
+            * [sample_size][magenpy.GenotypeMatrix.GenotypeMatrix.sample_size]
+
+        :return: The sample size or number of individuals in the genotype matrix.
         """
         return self.sample_table.n
 
     @property
     def sample_size(self):
         """
-        The sample size of the genotype matrix. See also `.n()`.
+        !!! seealso "See Also"
+            * [n][magenpy.GenotypeMatrix.GenotypeMatrix.n]
+
+        :return: The sample size or number of individuals in the genotype matrix.
         """
         return self.n
 
     @property
     def samples(self):
         """
-        Obtain a vector of sample IDs.
+        :return: An array of sample IDs in the genotype matrix.
         """
         return self.sample_table.iid
 
     @property
     def m(self):
         """
-        The number of SNPs, see also `n_snps`
+
+        !!! seealso "See Also"
+            * [n_snps][magenpy.GenotypeMatrix.GenotypeMatrix.n_snps]
+
+        :return: The number of variants in the genotype matrix.
         """
         if self.snp_table is not None:
             return len(self.snp_table)
 
     @property
     def n_snps(self):
+        """
+        !!! seealso "See Also"
+            * [m][magenpy.GenotypeMatrix.GenotypeMatrix.m]
+
+        :return: The number of variants in the genotype matrix.
+        """
         return self.m
+
+    @property
+    def genome_build(self):
+        """
+        :return: The genome build or assembly under which the SNP coordinates are defined.
+        """
+        return self._genome_build
 
     @property
     def chromosome(self):
         """
-        If the genotype matrix is comprised of a single chromosome, return the chromosome number.
+        :return: The chromosome associated with the variants in the genotype matrix.
+
+        ..note::
+        This is a convenience method that assumes that the genotype matrix contains variants
+        from a single chromosome. If there are multiple chromosomes, the method will return `None`.
+
         """
         chrom = self.chromosomes
-        if chrom is not None:
-            if len(chrom) == 1:
-                return chrom[0]
+        if chrom is not None and len(chrom) == 1:
+            return chrom[0]
 
     @property
     def chromosomes(self):
         """
-        Return the unique set of chromosomes comprising the genotype matrix.
+        :return: The unique set of chromosomes comprising the genotype matrix.
         """
         chrom = self.get_snp_attribute('CHR')
         if chrom is not None:
@@ -96,21 +177,22 @@ class GenotypeMatrix(object):
     @property
     def snps(self):
         """
-        Return the SNP IDs.
+        :return: The SNP rsIDs for variants in the genotype matrix.
         """
         return self.get_snp_attribute('SNP')
 
     @property
     def bp_pos(self):
         """
-        The position for the genetic variants in base pairs.
+        :return: The basepair position for the genetic variants in the genotype matrix.
         """
         return self.get_snp_attribute('POS')
 
     @property
     def cm_pos(self):
         """
-        The position for the genetic variants in Centi Morgan.
+        :return: The position of genetic variants in the genotype matrix in units of Centi Morgan.
+        :raises KeyError: If the genetic distance is not set in the genotype file.
         """
         cm = self.get_snp_attribute('cM')
         if len(set(cm)) == 1:
@@ -121,42 +203,67 @@ class GenotypeMatrix(object):
     @property
     def a1(self):
         """
-        Return the effect allele `A1`. See also `.alt_allele()`, `.effect_allele()`.
+        !!! seealso "See Also"
+            * [alt_allele][magenpy.GenotypeMatrix.GenotypeMatrix.alt_allele]
+            * [effect_allele][magenpy.GenotypeMatrix.GenotypeMatrix.effect_allele]
+
+        :return: The effect allele `A1` for each genetic variant.
+
         """
         return self.get_snp_attribute('A1')
 
     @property
     def a2(self):
         """
-        Return the reference allele `A2`. See also `.ref_allele()`.
+
+        !!! seealso "See Also"
+            * [ref_allele][magenpy.GenotypeMatrix.GenotypeMatrix.ref_allele]
+
+        :return: The reference allele `A2` for each genetic variant.
+
         """
         return self.get_snp_attribute('A2')
 
     @property
     def ref_allele(self):
         """
-        Return the reference allele `A2`. See also `.a2()`.
+
+        !!! seealso "See Also"
+            * [a2][magenpy.GenotypeMatrix.GenotypeMatrix.a2]
+
+        :return: The reference allele `A2` for each genetic variant.
         """
         return self.a2
 
     @property
     def alt_allele(self):
         """
-        Return the alternative (i.e. effect) allele `A1`. See also `.a1()`, `.effect_allele()`.
+        !!! seealso "See Also"
+            * [effect_allele][magenpy.GenotypeMatrix.GenotypeMatrix.effect_allele]
+            * [a1][magenpy.GenotypeMatrix.GenotypeMatrix.a1]
+
+        :return: The effect allele `A1` for each genetic variant.
+
         """
         return self.a1
 
     @property
     def effect_allele(self):
         """
-        Return the effect allele `A1`. See also `.a1()`, `.alt_allele()`.
+
+        !!! seealso "See Also"
+            * [alt_allele][magenpy.GenotypeMatrix.GenotypeMatrix.alt_allele]
+            * [a1][magenpy.GenotypeMatrix.GenotypeMatrix.a1]
+
+        :return: The effect allele `A1` for each genetic variant.
+
         """
         return self.a1
 
     @property
     def n_per_snp(self):
         """
-        Sample size per genetic variant (this accounts for missing values).
+        :return: Sample size per genetic variant (accounting for potential missing values).
         """
         n = self.get_snp_attribute('N')
         if n is not None:
@@ -168,7 +275,7 @@ class GenotypeMatrix(object):
     @property
     def maf(self):
         """
-        Minor allele frequency
+        :return: The minor allele frequency (MAF) of each variant in the genotype matrix.
         """
         maf = self.get_snp_attribute('MAF')
         if maf is not None:
@@ -180,19 +287,22 @@ class GenotypeMatrix(object):
     @property
     def maf_var(self):
         """
-        The variance in minor allele frequency.
+        :return: The variance in minor allele frequency (MAF) of each variant in the genotype matrix.
         """
         return 2. * self.maf * (1. - self.maf)
 
     def estimate_memory_allocation(self, dtype=np.float32):
         """
-        Estimate the size of the genotype matrix in MB
+        :return: An estimate of the memory allocation for the genotype matrix in megabytes.
         """
         return self.n * self.m * np.dtype(dtype).itemsize / 1024 ** 2
 
     def get_snp_table(self, col_subset=None):
         """
-        Return the SNP table or a subset of its columns.
+        A convenience method to extract SNP-related information from the genotype matrix.
+        :param col_subset: A list of columns to extract from the SNP table.
+
+        :return: A `pandas` DataFrame with the requested columns.
         """
 
         if col_subset is None:
@@ -221,21 +331,33 @@ class GenotypeMatrix(object):
 
     def get_snp_attribute(self, attr):
         """
-        A utility function to extract a given column from the SNP table.
-        """
-        if self.snp_table is not None:
-            if attr in self.snp_table.columns:
-                return self.snp_table[attr].values
 
-    def compute_ld(self, estimator, output_dir, **ld_kwargs):
+        :param attr: The name of the attribute to extract from the SNP table.
+        :return: The values of a specific attribute for each variant in the genotype matrix.
         """
+        if self.snp_table is not None and attr in self.snp_table.columns:
+            return self.snp_table[attr].values
+
+    def compute_ld(self,
+                   estimator,
+                   output_dir,
+                   dtype='int16',
+                   compressor_name='lz4',
+                   compression_level=5,
+                   **ld_kwargs):
+        """
+
         Compute the Linkage-Disequilibrium (LD) or SNP-by-SNP correlation matrix
-        for the genotype matrix.
+        for the variants defined in the genotype matrix.
 
         :param estimator: The estimator for the LD matrix. We currently support
         4 different estimators: `sample`, `windowed`, `shrinkage`, and `block`.
         :param output_dir: The output directory where the Zarr array containing the
         entries of the LD matrix will be stored.
+        :param dtype: The data type for the entries of the LD matrix (supported data types are float32, float64
+        and integer quantized data types int8 and int16).
+        :param compressor_name: The name of the compressor to use for the Zarr array.
+        :param compression_level: The compression level for the Zarr array (1-9)
         :param ld_kwargs: keyword arguments for the various LD estimators. Consult
         the implementations of `WindowedLD`, `ShrinkageLD`, and `BlockLD` for details.
         """
@@ -257,13 +379,21 @@ class GenotypeMatrix(object):
         tmp_ld_dir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix='ld_')
         self.cleanup_dir_list.append(tmp_ld_dir)
 
-        return ld_est.compute(output_dir, temp_dir=tmp_ld_dir.name)
+        return ld_est.compute(output_dir,
+                              temp_dir=tmp_ld_dir.name,
+                              dtype=dtype,
+                              compressor_name=compressor_name,
+                              compression_level=compression_level)
 
     def set_sample_table(self, sample_table):
         """
-        A convenience method set the sample table for genotype matrix.
+        A convenience method set the sample table for the genotype matrix.
         This may be useful for syncing sample tables across different Genotype matrices
         corresponding to different chromosomes or genomic regions.
+
+        :param sample_table: An instance of SampleTable or a pandas dataframe containing
+        information about the samples in the genotype matrix.
+
         """
 
         if isinstance(sample_table, SampleTable):
@@ -271,12 +401,14 @@ class GenotypeMatrix(object):
         elif isinstance(sample_table, pd.DataFrame):
             self.sample_table = SampleTable(sample_table)
         else:
-            raise Exception("The sample table is invalid!")
+            raise ValueError("The sample table is invalid! "
+                             "Has to be either an instance of "
+                             "SampleTable or pandas DataFrame.")
 
     def filter_snps(self, extract_snps=None, extract_file=None):
         """
         Filter variants from the genotype matrix. User must specify
-        either a list of variants to extract or the path to a file
+        either a list of variants to extract or the path to a plink-style file
         with the list of variants to extract.
 
         :param extract_snps: A list (or array) of SNP IDs to keep in the genotype matrix.
@@ -293,35 +425,37 @@ class GenotypeMatrix(object):
 
     def filter_by_allele_frequency(self, min_maf=None, min_mac=1):
         """
-        Filter variants by minimum minor allele frequency or allele count
+        Filter variants by minimum minor allele frequency or allele count cutoffs.
+
         :param min_maf: Minimum minor allele frequency
         :param min_mac: Minimum minor allele count (1 by default)
         """
 
         if min_mac or min_maf:
+
             maf = self.maf
             n = self.n_per_snp
 
-        keep_flag = None
+            keep_flag = None
 
-        if min_mac:
-            mac = (2*maf*n).astype(np.int64)
-            keep_flag = (mac >= min_mac) & ((2*n - mac) >= min_mac)
+            if min_mac:
+                mac = (2*maf*n).astype(np.int64)
+                keep_flag = (mac >= min_mac) & ((2*n - mac) >= min_mac)
 
-        if min_maf:
+            if min_maf:
 
-            maf_cond = (maf >= min_maf) & (1. - maf >= min_maf)
+                maf_cond = (maf >= min_maf) & (1. - maf >= min_maf)
+                if keep_flag is not None:
+                    keep_flag = keep_flag & maf_cond
+                else:
+                    keep_flag = maf_cond
+
             if keep_flag is not None:
-                keep_flag = keep_flag & maf_cond
-            else:
-                keep_flag = maf_cond
-
-        if keep_flag is not None:
-            self.filter_snps(extract_snps=self.snps[keep_flag])
+                self.filter_snps(extract_snps=self.snps[keep_flag])
 
     def drop_duplicated_snps(self):
         """
-        Drop variants with duplicated SNP IDs.
+        A convenience method to drop variants with duplicated SNP rsIDs.
         """
 
         u_snps, counts = np.unique(self.snps, return_counts=True)
@@ -332,7 +466,7 @@ class GenotypeMatrix(object):
     def filter_samples(self, keep_samples=None, keep_file=None):
         """
         Filter samples from the genotype matrix. User must specify
-        either a list of samples to keep or the path to a file
+        either a list of samples to keep or the path to a plink-style file
         with the list of samples to keep.
 
         :param keep_samples: A list (or array) of sample IDs to keep in the genotype matrix.
@@ -354,14 +488,18 @@ class GenotypeMatrix(object):
         """
         Perform genome-wide association testing of all variants against the phenotype.
 
-        :param gwa_kwargs: Keyword arguments to pass to the GWA functions. Consult stats.gwa.utils
+        :param gwa_kwargs: Keyword arguments to pass to the GWA functions. Consult `stats.gwa.utils`
         for relevant keyword arguments for each backend.
+
+        :raises NotImplementedError: If the method is not implemented in the subclass.
         """
         raise NotImplementedError
 
     def compute_allele_frequency(self):
         """
         Compute the allele frequency of each variant or SNP in the genotype matrix.
+
+        :raises NotImplementedError: If the method is not implemented in the subclass.
         """
         raise NotImplementedError
 
@@ -369,6 +507,8 @@ class GenotypeMatrix(object):
         """
         Compute the sample size for each variant in the genotype matrix, accounting for
         potential missing values.
+
+        :raises NotImplementedError: If the method is not implemented in the subclass.
         """
         raise NotImplementedError
 
@@ -378,6 +518,8 @@ class GenotypeMatrix(object):
         have a separate `GenotypeMatrix` objects for each chromosome.
         This method returns a dictionary where the key is the chromosome number
         and the value is an object of `GenotypeMatrix` for that chromosome.
+
+        :return: A dictionary of `GenotypeMatrix` objects, one for each chromosome.
         """
 
         chromosome = self.chromosome
@@ -398,23 +540,69 @@ class GenotypeMatrix(object):
         Clean up all temporary files and directories
         """
 
-        for tmpdir in self.cleanup_dir_list:
+        for tmp in self.cleanup_dir_list:
             try:
-                tmpdir.cleanup()
+                tmp.cleanup()
             except FileNotFoundError:
                 continue
 
 
 class xarrayGenotypeMatrix(GenotypeMatrix):
+    """
+    A class that defines methods and interfaces for interacting with genotype matrices
+    using the `xarray` library. In particular, the class leverages functionality provided by
+    the `pandas-plink` package to represent on-disk genotype matrices as chunked multidimensional
+    arrays that can be queried and manipulated efficiently and in parallel.
 
-    def __init__(self, sample_table=None, snp_table=None, temp_dir='temp', xr_mat=None):
-        super().__init__(sample_table=sample_table, snp_table=snp_table, temp_dir=temp_dir)
+    This class inherits all the attributes of the `GenotypeMatrix` class.
+
+    :ivar xr_mat: The `xarray` object representing the genotype matrix.
+
+    """
+
+    def __init__(self,
+                 sample_table=None,
+                 snp_table=None,
+                 bed_file=None,
+                 temp_dir='temp',
+                 xr_mat=None,
+                 genome_build=None,
+                 threads=1):
+        """
+        Initialize an xarrayGenotypeMatrix object.
+
+        :param sample_table: A table containing information about the samples in the genotype matrix.
+        :param snp_table: A table containing information about the genetic variants in the genotype matrix.
+        :param bed_file: The path to the plink BED file containing the genotype matrix.
+        :param temp_dir: The directory where temporary files will be stored (if needed).
+        :param xr_mat: The xarray object representing the genotype matrix.
+        :param genome_build: The genome build or assembly under which the SNP coordinates are defined.
+        :param threads: The number of threads to use for parallel computations.
+        """
+
+        super().__init__(sample_table=sample_table,
+                         snp_table=snp_table,
+                         temp_dir=temp_dir,
+                         bed_file=bed_file,
+                         genome_build=genome_build,
+                         threads=threads)
 
         # xarray matrix object, as defined by pandas-plink:
         self.xr_mat = xr_mat
 
     @classmethod
-    def from_file(cls, file_path, temp_dir='temp'):
+    def from_file(cls, file_path, temp_dir='temp', **kwargs):
+        """
+        Create a GenotypeMatrix object using a PLINK BED file with the help
+        of the data structures defined in `pandas_plink`. The genotype matrix
+        will be represented implicitly in an `xarray` object, and we will use it
+        to perform various computations. This method is a utility function to
+        construct the genotype matrix object from a plink BED file.
+
+        :param file_path: Path to the plink BED file.
+        :param temp_dir: The directory where the temporary files will be stored.
+        :param kwargs: Additional keyword arguments.
+        """
 
         from pandas_plink import read_plink1_bin
 
@@ -422,8 +610,6 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
             xr_gt = read_plink1_bin(file_path + ".bed", ref="a0", verbose=False)
         except ValueError:
             xr_gt = read_plink1_bin(file_path, ref="a0", verbose=False)
-        except Exception as e:
-            raise e
 
         # Set the sample table:
         sample_table = xr_gt.sample.coords.to_dataset().to_dataframe()
@@ -448,24 +634,30 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
             'CHR': int,
             'SNP': str,
             'cM': float,
-            'POS': np.int,
+            'POS': int,
             'A1': str,
             'A2': str
         })
 
-        # Set the index to be the SNP ID:
-        xr_gt = xr_gt.set_index(variant='snp')
-
         g_mat = cls(sample_table=SampleTable(sample_table),
                     snp_table=snp_table,
                     temp_dir=temp_dir,
-                    xr_mat=xr_gt)
+                    bed_file=file_path,
+                    xr_mat=xr_gt,
+                    **kwargs)
 
         return g_mat
 
     def set_sample_table(self, sample_table):
+        """
+        A convenience method set the sample table for the genotype matrix.
+        This is useful for cases when we need to sync the sample table across chromosomes.
 
-        super(xarrayGenotypeMatrix, self).set_sample_table(sample_table)
+        :param sample_table: An instance of SampleTable or a pandas dataframe containing
+        information about the samples in the genotype matrix.
+        """
+
+        super().set_sample_table(sample_table)
 
         try:
             if self.n != self.xr_mat.shape[0]:
@@ -474,14 +666,52 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
             pass
 
     def filter_snps(self, extract_snps=None, extract_file=None):
+        """
+        Filter variants from the genotype matrix. User must specify either a list of variants to
+        extract or the path to a file with the list of variants to extract.
 
-        super(xarrayGenotypeMatrix, self).filter_snps(extract_snps=extract_snps, extract_file=extract_file)
-        self.xr_mat = self.xr_mat.sel(variant=self.snps)
+        :param extract_snps: A list or array of SNP rsIDs to keep in the genotype matrix.
+        :param extract_file: The path to a file with the list of variants to extract.
+        """
+
+        super().filter_snps(extract_snps=extract_snps, extract_file=extract_file)
+        self.xr_mat = self.xr_mat.sel(variant=np.isin(self.xr_mat.variant.coords['snp'], self.snps))
 
     def filter_samples(self, keep_samples=None, keep_file=None):
+        """
+        Filter samples from the genotype matrix.
+        User must specify either a list of samples to keep or the path to a file with the list of samples to keep.
 
-        super(xarrayGenotypeMatrix, self).filter_samples(keep_samples=keep_samples, keep_file=keep_file)
+        :param keep_samples: A list (or array) of sample IDs to keep in the genotype matrix.
+        :param keep_file: The path to a file with the list of samples to keep.
+        """
+
+        super().filter_samples(keep_samples=keep_samples, keep_file=keep_file)
         self.xr_mat = self.xr_mat.sel(sample=self.samples)
+
+    def to_numpy(self, dtype=np.int8):
+        """
+        Convert the genotype matrix to a numpy array.
+        :param dtype: The data type of the numpy array. Default: Int8
+
+        :return: A numpy array representation of the genotype matrix.
+        """
+
+        return self.xr_mat.data.astype(dtype).compute()
+
+    def to_csr(self, dtype=np.int8):
+        """
+        Convert the genotype matrix to a scipy sparse CSR matrix.
+        :param dtype: The data type of the scipy array. Default: Int8
+
+        :return: A `scipy` sparse CSR matrix representation of the genotype matrix.
+        """
+
+        mat = self.to_numpy(dtype=dtype)
+
+        from scipy.sparse import csr_matrix
+
+        return csr_matrix(mat)
 
     def score(self, beta, standardize_genotype=False, skip_na=True):
         """
@@ -489,6 +719,9 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
         :param beta: A vector or matrix of effect sizes for each variant in the genotype matrix.
         :param standardize_genotype: If True, standardize the genotype when computing the polygenic score.
         :param skip_na: If True, skip missing values when computing the polygenic score.
+
+        :return: The polygenic score (PGS) for each sample in the genotype matrix.
+
         """
 
         import dask.array as da
@@ -507,34 +740,80 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
         return pgs
 
     def perform_gwas(self, **gwa_kwargs):
+        """
+        A convenience method that calls specialized utility functions that perform
+        genome-wide association testing of all variants against the phenotype.
 
-        from magenpy.stats.gwa.utils import perform_gwa_xarray
+        :return: A Summary statistics table containing the results of the association testing.
+        """
+
+        from .stats.gwa.utils import perform_gwa_xarray
         return perform_gwa_xarray(self, **gwa_kwargs)
 
     def compute_allele_frequency(self):
+        """
+        A convenience method that calls specialized utility functions that
+        compute the allele frequency of each variant or SNP in the genotype matrix.
+        """
         self.snp_table['MAF'] = (self.xr_mat.sum(axis=0) / (2. * self.n_per_snp)).compute().values
 
     def compute_sample_size_per_snp(self):
+        """
+        A convenience method that calls specialized utility functions that compute
+        the sample size for each variant in the genotype matrix, accounting for
+        potential missing values.
+        """
         self.snp_table['N'] = self.xr_mat.shape[0] - self.xr_mat.isnull().sum(axis=0).compute().values
 
     def split_by_chromosome(self):
-        split = super(xarrayGenotypeMatrix, self).split_by_chromosome()
+        """
+        Split the genotype matrix by chromosome.
+        :return: A dictionary of `xarrayGenotypeMatrix` objects, one for each chromosome.
+        """
+        split = super().split_by_chromosome()
 
         for c, gt in split.items():
+            gt.xr_mat = self.xr_mat
             if len(split) > 1:
-                gt.xr_mat = self.xr_mat.sel(variant=gt.snps)
-            else:
-                gt.xr_mat = self.xr_mat
+                gt.filter_snps(extract_snps=gt.snps)
 
         return split
 
 
 class plinkBEDGenotypeMatrix(GenotypeMatrix):
+    """
+    A class that defines methods and interfaces for interacting with genotype matrices
+    using `plink2` software. This class provides a convenient interface to perform various
+    computations on genotype matrices stored in the plink BED format.
 
-    def __init__(self, sample_table=None, snp_table=None, temp_dir='temp', bed_file=None):
-        super().__init__(sample_table=sample_table, snp_table=snp_table, temp_dir=temp_dir)
+    This class inherits all the attributes of the `GenotypeMatrix` class.
+    """
 
-        self.bed_file = bed_file
+    def __init__(self,
+                 sample_table=None,
+                 snp_table=None,
+                 temp_dir='temp',
+                 bed_file=None,
+                 genome_build=None,
+                 threads=1):
+        """
+        Initialize a `plinkBEDGenotypeMatrix` object.
+
+        :param sample_table: A table containing information about the samples in the genotype matrix.
+        :param snp_table: A table containing information about the genetic variants in the genotype matrix.
+        :param temp_dir: The directory where temporary files will be stored (if needed).
+        :param bed_file: The path to the plink BED file containing the genotype matrix.
+        :param genome_build: The genome build or assembly under which the SNP coordinates are defined.
+        :param threads: The number of threads to use for parallel computations.
+        """
+
+        super().__init__(sample_table=sample_table,
+                         snp_table=snp_table,
+                         temp_dir=temp_dir,
+                         bed_file=bed_file,
+                         genome_build=genome_build,
+                         threads=threads)
+
         if self.bed_file is not None:
             self.bed_file = self.bed_file.replace('.bed', '')
 
@@ -545,13 +824,33 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
             self.snp_table = parse_bim_file(self.bed_file)
 
     @classmethod
-    def from_file(cls, file_path, temp_dir='temp'):
+    def from_file(cls, file_path, temp_dir='temp', **kwargs):
+        """
+        A convenience method to create a `plinkBEDGenotypeMatrix` object by
+         providing a path to a PLINK BED file.
 
-        p_gt = cls(bed_file=file_path, temp_dir=temp_dir)
+        :param file_path: The path to the plink BED file.
+        :param temp_dir: The directory where temporary files will be stored.
+        :param kwargs: Additional keyword arguments.
+        """
+
+        p_gt = cls(bed_file=file_path, temp_dir=temp_dir, **kwargs)
 
         return p_gt
 
     def score(self, beta, standardize_genotype=False):
+        """
+        Perform linear scoring on the genotype matrix. This function takes a vector (or matrix) of
+        effect sizes and returns the matrix-vector or matrix-matrix product of the genotype matrix
+        multiplied by the effect sizes.
+
+        This can be used for polygenic score calculation or projecting the genotype matrix.
+
+        :param beta: A vector or matrix of effect sizes for each variant in the genotype matrix.
+        :param standardize_genotype: If True, standardize the genotype when computing the polygenic score.
+
+        :return: The polygenic score (PGS) for each sample in the genotype matrix.
+        """
 
         from .stats.score.utils import score_plink2
 
@@ -562,8 +861,15 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
         return score_plink2(self, beta, standardize_genotype=standardize_genotype, temp_dir=tmp_score_dir.name)
 
     def perform_gwas(self, **gwa_kwargs):
+        """
+        Perform genome-wide association testing of all variants against the phenotype.
+        This method calls specialized functions that, in turn, call `plink2` to perform
+        the association testing.
 
-        from magenpy.stats.gwa.utils import perform_gwa_plink2
+        :return: A Summary statistics table containing the results of the association testing.
+        """
+
+        from .stats.gwa.utils import perform_gwa_plink2
 
         # Create a temporary directory where we store intermediate results:
         tmp_gwas_dir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix='gwas_')
@@ -572,8 +878,13 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
         return perform_gwa_plink2(self, temp_dir=tmp_gwas_dir.name, **gwa_kwargs)
 
     def compute_allele_frequency(self):
+        """
+        Compute the allele frequency of each variant or SNP in the genotype matrix.
+        This method calls specialized functions that, in turn, call `plink2` to compute
+        allele frequency.
+        """
 
-        from magenpy.stats.variant.utils import compute_allele_frequency_plink2
+        from .stats.variant.utils import compute_allele_frequency_plink2
 
         # Create a temporary directory where we store intermediate results:
         tmp_freq_dir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix='freq_')
@@ -582,7 +893,15 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
         self.snp_table['MAF'] = compute_allele_frequency_plink2(self, temp_dir=tmp_freq_dir.name)
 
     def compute_sample_size_per_snp(self):
-        from magenpy.stats.variant.utils import compute_sample_size_per_snp_plink2
+        """
+        Compute the sample size for each variant in the genotype matrix, accounting for
+        potential missing values.
+
+        This method calls specialized functions that, in turn, call `plink2` to compute sample
+        size per variant.
+        """
+
+        from .stats.variant.utils import compute_sample_size_per_snp_plink2
 
         # Create a temporary directory where we store intermediate results:
         tmp_miss_dir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix='miss_')
@@ -591,8 +910,12 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
         self.snp_table['N'] = compute_sample_size_per_snp_plink2(self, temp_dir=tmp_miss_dir.name)
 
     def split_by_chromosome(self):
+        """
+        Split the genotype matrix by chromosome.
+        :return: A dictionary of `plinkBEDGenotypeMatrix` objects, one for each chromosome.
+        """
 
-        split = super(plinkBEDGenotypeMatrix, self).split_by_chromosome()
+        split = super().split_by_chromosome()
 
         for c, gt in split.items():
             gt.bed_file = self.bed_file

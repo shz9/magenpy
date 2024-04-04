@@ -6,6 +6,11 @@ def read_snp_filter_file(filename, snp_id_col=0):
     """
     Read plink-style file listing variant IDs.
     The file should not have a header and only has a single column.
+
+    :param filename: The path to the file containing the SNP IDs
+    :type filename: str
+    :param snp_id_col: The column index containing the SNP IDs
+    :type snp_id_col: int
     """
 
     try:
@@ -22,6 +27,9 @@ def read_sample_filter_file(filename):
     The file should not have a header, be tab-separated, and has two
     columns corresponding to Family ID (FID) and Individual ID (IID).
     You may also pass a file with a single-column of Individual IDs instead.
+
+    :param filename: The path to the file containing the sample IDs
+    :type filename: str
     """
 
     keep_list = pd.read_csv(filename, sep="\t", header=None).values
@@ -40,13 +48,17 @@ def parse_ld_block_data(ldb_file_path):
     The parser assumes that the LD block files have the ldetect format:
     https://bitbucket.org/nygcresearch/ldetect-data/src/master/
 
-    :param ldb_file_path: The path to the LD blocks file
+    :param ldb_file_path: The path (or URL) to the LD blocks file
+    :type ldb_file_path: str
     """
 
     ld_blocks = {}
 
-    df = pd.read_csv(ldb_file_path, delim_whitespace=True,
-                     dtype={'chr': str, 'start': np.int64, 'end': np.int64})
+    df = pd.read_csv(ldb_file_path, sep=r'\s+')
+
+    df = df.loc[(df.start != 'None') & (df.stop != 'None')]
+    df = df.astype({'chr': str, 'start': np.int64, 'stop': np.int64})
+    df = df.sort_values('start')
 
     if df.isnull().values.any():
         raise ValueError("The LD block data contains missing information. This may result in invalid "
@@ -65,9 +77,10 @@ def parse_cluster_assignment_file(cluster_assignment_file):
     and contain three columns: FID, IID, and Cluster
 
     :param cluster_assignment_file: The path to the cluster assignment file.
+    :type cluster_assignment_file: str
     """
     try:
-        clusters = pd.read_csv(cluster_assignment_file, delim_whitespace=True)
+        clusters = pd.read_csv(cluster_assignment_file, sep=r'\s+')
         clusters.columns = ['FID', 'IID', 'Cluster']
     except Exception as e:
         raise e
