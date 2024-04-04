@@ -104,7 +104,7 @@ cpdef expand_ranges(integral[::1] start, integral[::1] end, long output_size):
 @cython.nonecheck(False)
 @cython.cdivision(True)
 @cython.exceptval(check=False)
-cpdef find_ld_block_boundaries(long[:] pos, long[:, :] block_boundaries):
+cpdef find_ld_block_boundaries(integral[:] pos, integral[:, :] block_boundaries):
     """
     Find the LD boundaries for the blockwise estimator of LD, i.e., the 
     indices of the leftmost and rightmost neighbors for each SNP.
@@ -114,7 +114,8 @@ cpdef find_ld_block_boundaries(long[:] pos, long[:, :] block_boundaries):
     """
 
     cdef:
-        int i, j, ldb_idx, block_start, block_end, B = block_boundaries.shape[0], M = pos.shape[0]
+        int i, j, ldb_idx, B = block_boundaries.shape[0], M = pos.shape[0]
+        integral block_start, block_end
         int[:] v_min = np.zeros_like(pos, dtype=np.int32)
         int[:] v_max = M*np.ones_like(pos, dtype=np.int32)
 

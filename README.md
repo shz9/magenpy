@@ -30,6 +30,6 @@ The package provides tools for:
 
 ### Helpful links
 
-- [Documentation](https://magenpy.github.io/magenpy/)
+- [Documentation](https://shz9.github.io/magenpy/)
 - [Citation / BibTeX records](./CITATION.md)
 - [Report issues/bugs](https://github.com/shz9/magenpy/issues)
