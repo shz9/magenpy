@@ -48,7 +48,10 @@ jobs:
           python-version: '3.11'
 
       - name: Build sdist
-        run: python -m pipx run build --sdist
+        run: |
+          python -m pip install --user pipx
+          python -m pipx ensurepath
+          python -m pipx run build --sdist
 
       - name: test install
         run: | 
