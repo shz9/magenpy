@@ -66,6 +66,12 @@ def perform_gwa_plink2(genotype_matrix,
         warnings.warn("The phenotype likelihood is not specified! "
                       "Assuming that the phenotype is continuous...")
 
+    # It can happen sometimes that some interfaces call this function
+    # with the `standardize_genotype` flag set to True. We remove this
+    # flag from the phenotype transformation kwargs to avoid errors:
+    if 'standardize_genotype' in phenotype_transform_kwargs:
+        del phenotype_transform_kwargs['standardize_genotype']
+
     # Transform the phenotype:
     phenotype, mask = chained_transform(s_table, **phenotype_transform_kwargs)
 
@@ -282,7 +288,7 @@ def perform_gwa_xarray(genotype_matrix,
 
     # Get the SNP table from the genotype_matrix object:
     sumstats_table = genotype_matrix.get_snp_table(
-        ['CHR', 'SNP', 'POS', 'A1', 'A2', 'N', 'MAF']
+        ['CHR', 'SNP', 'POS', 'A1', 'A2']
     )
 
     # -----------------------------------------------------------
@@ -290,31 +296,47 @@ def perform_gwa_xarray(genotype_matrix,
     # Transform the phenotype:
     phenotype, mask = chained_transform(genotype_matrix.sample_table, **phenotype_transform_kwargs)
 
-    # TODO: Figure out how to adjust the per-variant sample size based on the mask!
-
-    # Estimate the phenotypic variance:
-    sigma_sq_y = np.var(phenotype)
-
     # -----------------------------------------------------------
-    # Perform association testing using closed-form solutions:
+    # Prepare the genotype data for association testing:
 
     # Apply the mask to the genotype matrix:
     xr_mat = genotype_matrix.xr_mat[mask, :]
 
+    # Compute sample size per SNP:
+    n_per_snp = xr_mat.shape[0] - xr_mat.isnull().sum(axis=0).compute().values
+
+    # Compute minor allele frequency per SNP:
+    maf = xr_mat.sum(axis=0).compute().values / (2 * n_per_snp)
+
+    # Standardize or center the genotype matrix (account for missing values):
     if standardize_genotype:
-
         from ..transforms.genotype import standardize
-
-        sumstats_table['BETA'] = np.dot(standardize(xr_mat).T, phenotype) / sumstats_table['N'].values
-        sumstats_table['SE'] = np.sqrt(sigma_sq_y / sumstats_table['N'].values)
+        xr_mat = standardize(xr_mat, fill_na=True)
     else:
+        xr_mat = (xr_mat - 2.*maf).fillna(0.)
 
-        sumstats_table['BETA'] = (
-            np.dot(xr_mat.fillna(sumstats_table['MAF'].values).T, phenotype) /
-            sumstats_table['N'].values * genotype_matrix.maf_var
-        )
+    # Compute the sum of squares per SNP:
+    sum_x_sq = (xr_mat**2).sum(axis=0).compute().values
 
-        sumstats_table['SE'] = np.sqrt(sigma_sq_y / (sumstats_table['N'].values * genotype_matrix.maf_var))
+    # -----------------------------------------------------------
+    # Compute quantities for association testing:
+
+    slope = np.dot(xr_mat.T, phenotype - phenotype.mean()) / sum_x_sq
+    intercept = phenotype.mean()
+
+    y_hat = xr_mat*slope + intercept
+
+    s2 = ((phenotype.reshape(-1, 1) - y_hat)**2).sum(axis=0) / (n_per_snp - 2)
+
+    se = np.sqrt(s2 / sum_x_sq)
+
+    # -----------------------------------------------------------
+    # Populate the data in the summary statistics table:
+
+    sumstats_table['MAF'] = maf
+    sumstats_table['N'] = n_per_snp
+    sumstats_table['BETA'] = slope
+    sumstats_table['SE'] = se
 
     ss_table = SumstatsTable(sumstats_table)
     # Trigger computing z-score and p-values from the BETA and SE columns:

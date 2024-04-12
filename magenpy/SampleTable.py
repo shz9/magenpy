@@ -223,7 +223,7 @@ class SampleTable(object):
             covar_table['FID'] = covar_table['FID'].astype(type(self.fid[0]))
             covar_table['IID'] = covar_table['IID'].astype(type(self.iid[0]))
 
-            self.table = self.table.merge(covar_table)
+            self.table = self.table.merge(covar_table, on=['FID', 'IID'])
         else:
             self.table = covar_table
 
@@ -317,7 +317,7 @@ class SampleTable(object):
         assert self._covariate_cols is not None
 
         if covar_subset is None:
-            covar = self._covariate_cols
+            covar = list(self._covariate_cols)
         else:
             covar = list(set(self._covariate_cols).intersection(set(covar_subset)))
 
@@ -332,7 +332,7 @@ class SampleTable(object):
 
         :return: A numpy array with the covariate values.
         """
-        return self.get_covariates_table(covar_subset=covar_subset).iloc[:, 2:].values
+        return self.get_covariates_table(covar_subset=covar_subset).drop(['FID', 'IID'], axis=1).values
 
     def set_phenotype(self, phenotype, phenotype_likelihood=None):
         """

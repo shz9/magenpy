@@ -37,6 +37,7 @@ do
     # Run pytest
     python -m pytest -v
 
+    # Check the installed scripts
     magenpy_ld -h
     magenpy_simulate -h
 

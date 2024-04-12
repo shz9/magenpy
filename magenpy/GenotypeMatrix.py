@@ -475,6 +475,13 @@ class GenotypeMatrix(object):
 
         self.sample_table.filter_samples(keep_samples=keep_samples, keep_file=keep_file)
 
+        # IMPORTANT: After filtering samples, update SNP attributes that depend on the
+        # samples, such as MAF and N:
+        if 'N' in self.snp_table:
+            self.compute_sample_size_per_snp()
+        if 'MAF' in self.snp_table:
+            self.compute_allele_frequency()
+
     def score(self, beta, standardize_genotype=False):
         """
         Perform linear scoring, i.e. multiply the genotype matrix by the vector of effect sizes, `beta`.

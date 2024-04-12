@@ -8,18 +8,19 @@ import numpy as np
 def manhattan(input_data: Union[GWADataLoader, SumstatsTable],
               y=None,
               y_label=None,
+              scatter_kwargs=None,
+              #highlight_snps=None,
+              #highlight_snps_kwargs=None,
               chrom_sep_color='#f0f0f0',
-              snp_color='#808080',
-              snp_marker='o',
-              snp_alpha=0.3,
               add_bonf_line=True,
-              bonf_line_color='#b06a7a'):
+              bonf_line_kwargs=None):
 
     """
     Generate Manhattan plot where the x-axis is the genomic position (in BP)
     and the y-axis is the -log10(p-value) or some other statistic of the user's choice.
 
     TODO: Add functionality to highlight certain SNPs or markers on the plot.
+    TODO: Allow the user to plot other statistics on the y-axis.
 
     :param input_data: An instance of `SumstatsTable` or `GWADataLoader` from which data about the
     positions of the SNPs will be extracted.
@@ -27,11 +28,10 @@ def manhattan(input_data: Union[GWADataLoader, SumstatsTable],
     will be plotted by default.
     :param y_label: A label for the quantity or statistic that will be plotted on the y-axis.
     :param chrom_sep_color: The color for the chromosome separator block.
-    :param snp_color: The color of the dots on the Manhattan plot.
-    :param snp_marker: The shape of the marker on the Manhattan plot.
-    :param snp_alpha: The opacity level for the markers.
+    :param scatter_kwargs: A dictionary of keyword arguments to pass to the `plt.scatter` function.
+    This can be used to customize the appearance of the points on the scatter plot.
     :param add_bonf_line: If True, add a line indicating the Bonferroni significance threshold.
-    :param bonf_line_color: The color of the Bonferroni significance threshold line.
+    :param bonf_line_kwargs: The color of the Bonferroni significance threshold line.
 
     """
 
@@ -41,6 +41,23 @@ def manhattan(input_data: Union[GWADataLoader, SumstatsTable],
         pos = {c: ss.bp_pos for c, ss in input_data.sumstats_table.items()}
     else:
         raise ValueError("The input data must be an instance of `SumstatsTable` or `GWADataLoader`.")
+
+    # -------------------------------------------------------
+    # Add custom scatter plot arguments (if not provided)
+    if scatter_kwargs is None:
+        scatter_kwargs = {'marker': '.', 'alpha': 0.3, 'color': '#808080'}
+    else:
+        # Only update the keys that are not already present in the dictionary:
+        scatter_kwargs = {**scatter_kwargs, **{'marker': '.', 'alpha': 0.3, 'color': '#808080'}}
+
+    # Add custom Bonferroni line arguments (if not provided)
+    if bonf_line_kwargs is None:
+        bonf_line_kwargs = {'color': '#b06a7a', 'ls': '--', 'zorder': 1}
+    else:
+        # Only update the keys that are not already present in the dictionary:
+        bonf_line_kwargs = {**bonf_line_kwargs, **{'color': '#b06a7a', 'ls': '--', 'zorder': 1}}
+
+    # -------------------------------------------------------
 
     starting_pos = 0
     ticks = []
@@ -52,8 +69,8 @@ def manhattan(input_data: Union[GWADataLoader, SumstatsTable],
         # with -log10(p_value) on the Y-axis.
 
         if add_bonf_line:
-            # Add bonferroni significance threshold line:
-            plt.axhline(-np.log10(0.05 / 1e6), ls='--', zorder=1, color=bonf_line_color)
+            # Add Bonferroni significance threshold line:
+            plt.axhline(-np.log10(0.05 / 1e6), bonf_line_kwargs)
 
         if isinstance(input_data, SumstatsTable):
             y = {c: ss.log10_p_value for c, ss in input_data.split_by_chromosome().items()}
@@ -76,9 +93,9 @@ def manhattan(input_data: Union[GWADataLoader, SumstatsTable],
 
         ticks.append((xmin + xmax) / 2)
 
-        plt.scatter(pos[c] + starting_pos, y[c],
-                    c=snp_color, alpha=snp_alpha, label=None,
-                    marker=snp_marker)
+        plt.scatter(pos[c] + starting_pos,
+                    y[c],
+                    scatter_kwargs)
 
         #if hl_snps is not None:
         #    plt.scatter((pos + starting_pos)[hl_snps[c]], y[c][hl_snps[c]],

@@ -16,7 +16,7 @@ from .simulation.PhenotypeSimulator import PhenotypeSimulator
 
 from .utils.data_utils import *
 
-__version__ = '0.1.0'
+__version__ = '0.1.1'
 __release_date__ = 'April 2024'
 
 
