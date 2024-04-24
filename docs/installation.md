@@ -58,3 +58,21 @@ source magenpy_env/bin/activate
 python -m pip install --upgrade pip
 python -m pip install magenpy>=0.1
 ```
+
+### Using `Docker` containers
+
+If you are using `Docker` containers, you can build a container with the `viprs` package 
+and all its dependencies by downloading the relevant `Dockerfile` from the 
+[repository](https://github.com/shz9/magenpy/tree/master/containers) and building it 
+as follows:
+
+```bash
+# Build the docker image:
+docker build -f cli.Dockerfile -t magenpy-cli .
+# Run the container in interactive mode:
+docker run -it magenpy-cli /bin/bash
+# Test that the package installed successfully:
+magenpy_ld -h
+```
+
+We plan to publish pre-built `Docker` images on `DockerHub` in the future.

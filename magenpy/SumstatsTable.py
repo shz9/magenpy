@@ -310,7 +310,7 @@ class SumstatsTable(object):
         return self.pval
 
     @property
-    def log10_p_value(self):
+    def negative_log10_p_value(self):
         """
         :return: The negative log10 of the p-value (-log10(p_value)) of association
         test of each variant on the phenotype.
@@ -623,7 +623,7 @@ class SumstatsTable(object):
             elif col == 'PVAL':
                 table['PVAL'] = self.p_value
             elif col == 'LOG10_PVAL':
-                table['LOG10_PVAL'] = self.log10_p_value
+                table['NLOG10_PVAL'] = self.negative_log10_p_value
             elif col == 'CHISQ':
                 table['CHISQ'] = self.get_chisq_statistic()
             elif col == 'MAF_VAR':

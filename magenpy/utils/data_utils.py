@@ -3,7 +3,7 @@ import os.path as osp
 
 def tgp_eur_data_path():
     """
-    Return the path of the attached 1000G genotype data for
+    :return: The path of the attached 1000G genotype data for
     European samples (N=378) and a subset of chromosome 22 (p=15938)
     """
     return osp.join(osp.dirname(osp.dirname(__file__)), 'data/1000G_eur_chr22')
@@ -11,7 +11,7 @@ def tgp_eur_data_path():
 
 def ukb_height_sumstats_path():
     """
-    Return the path of the attached GWAS summary statistics file
+    :return: The path of the attached GWAS summary statistics file
     for standing height. The file contains summary statistics for
     HapMap3 variants on CHR22 and is a snapshot of the summary statistics
     published on the fastGWA database:

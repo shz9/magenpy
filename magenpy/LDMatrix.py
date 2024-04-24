@@ -2,6 +2,7 @@ import zarr
 import os.path as osp
 import numpy as np
 import pandas as pd
+import warnings
 from scipy.sparse import csr_matrix, identity, triu, diags
 from .utils.model_utils import quantize, dequantize
 
@@ -712,13 +713,13 @@ class LDMatrix(object):
     @property
     def n_neighbors(self):
         """
-        The number of variants in the LD window for each SNP.
-
         !!! seealso "See Also"
             * [window_size][magenpy.LDMatrix.LDMatrix.window_size]
 
         !!! note
             This includes the variant itself if the matrix is in memory and is symmetric.
+
+        :return: The number of variants in the LD window for each SNP.
 
         """
         return self.window_size()
@@ -726,13 +727,18 @@ class LDMatrix(object):
     @property
     def csr_matrix(self):
         """
-        :return: The in-memory CSR matrix object.
-
         ..note ::
             If the LD matrix is not in-memory, then it'll be loaded using default settings.
+            This means that the matrix will be loaded as upper-triangular matrix with
+            default data type. To customize the loading, call the `.load(...)` method before
+            accessing the CSR matrix in this way.
 
+        :return: The in-memory CSR matrix object.
         """
         if self._mat is None:
+            warnings.warn("> Warning: Loading LD matrix with default settings. "
+                          "To customize, call the `.load(...)` method before invoking `.csr_matrix`.",
+                          stacklevel=2)
             self.load()
         return self._mat
 
@@ -833,7 +839,20 @@ class LDMatrix(object):
         if self.in_memory:
             self.load(force_reload=True,
                       return_symmetric=self.is_symmetric,
-                      fill_diag=self.is_symmetric)
+                      fill_diag=self.is_symmetric,
+                      dtype=self.dtype)
+
+    def reset_mask(self):
+        """
+        Reset the mask to its default value (None).
+        """
+        self._mask = None
+
+        if self.in_memory:
+            self.load(force_reload=True,
+                      return_symmetric=self.is_symmetric,
+                      fill_diag=self.is_symmetric,
+                      dtype=self.dtype)
 
     def to_snp_table(self, col_subset=None):
         """
@@ -1409,11 +1428,11 @@ class LDMatrix(object):
         return True
 
     def __getstate__(self):
-        return self.store.path, self.in_memory, self.is_symmetric, self._mask
+        return self.store.path, self.in_memory, self.is_symmetric, self._mask, self.dtype
 
     def __setstate__(self, state):
 
-        path, in_mem, is_symmetric, mask = state
+        path, in_mem, is_symmetric, mask, dtype = state
 
         self._zg = zarr.open_group(path, mode='r')
         self.in_memory = in_mem
@@ -1426,7 +1445,7 @@ class LDMatrix(object):
             self.set_mask(mask)
 
         if in_mem:
-            self.load(return_symmetric=is_symmetric, fill_diag=is_symmetric)
+            self.load(return_symmetric=is_symmetric, fill_diag=is_symmetric, dtype=dtype)
 
     def __len__(self):
         return self.n_snps

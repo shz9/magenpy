@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2024-04-24
+
+### Changed
+
+- Fixed `manhattan` plot implementation to support various new features.
+- Added a warning when accessing `csr_matrix` property of `LDMatrix` when it hasn't been loaded
+previously.
+
+### Added
+
+- `reset_mask` method for magenpy `LDMatrix`.
+- `Dockerfile`s for both `cli` and `jupyter` modes.
+- A helper script to convert LD matrices from old format to new format.
+
 ## [0.1.1] - 2024-04-12
 
 ### Changed
