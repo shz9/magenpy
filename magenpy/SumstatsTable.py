@@ -378,6 +378,16 @@ class SumstatsTable(object):
         """
         self.table['N'] = n
 
+    def run_quality_control(self, reference_table=None):
+        """
+        Run quality control checks on the summary statistics table.
+        TODO: Implement quality control checks following recommendations given by Prive et al.:
+        https://doi.org/10.1016/j.xhgg.2022.100136
+        Given user fine-control over which checks to run and which to skip.
+        Maybe move parts of this implementation to a module in `stats` (TBD)
+        """
+        pass
+
     def match(self, reference_table, correct_flips=True):
         """
         Match the summary statistics table with a reference table,

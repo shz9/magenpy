@@ -29,7 +29,7 @@ do
 
     # Install magenpy
     make clean
-    python -m pip install -v -e .[test]
+    python -m pip install --no-cache-dir -v -e .[test]
 
     # List the installed packages:
     python -m pip list

@@ -374,8 +374,13 @@ def quantize(floats, int_dtype=np.int8):
     # See discussions on Scale Quantization Mapping.
     scale = 2. / (info.max - (info.min + 1))
 
-    # Quantize the floats to int
-    return np.clip((floats / scale).round(), info.min, info.max).astype(int_dtype)
+    # Use as much in-place operations as possible
+    # (Currently, we copy the data twice)
+    scaled_floats = floats / scale
+    np.round(scaled_floats, out=scaled_floats)
+    np.clip(scaled_floats, info.min, info.max, out=scaled_floats)
+
+    return scaled_floats.astype(int_dtype)
 
 
 def dequantize(ints, float_dtype=np.float32):
@@ -383,7 +388,7 @@ def dequantize(ints, float_dtype=np.float32):
     Dequantize integers to the specified floating point type.
     NOTE: Assumes original floats are in the range [-1, 1].
     :param ints: A numpy array of integers
-    :param float_dtype: The floating point type to dequantize to.
+    :param float_dtype: The floating point data type to dequantize the integers to.
     """
 
     # Infer the boundaries from the integer type
@@ -394,7 +399,10 @@ def dequantize(ints, float_dtype=np.float32):
     # See discussions on Scale Quantization Mapping.
     scale = 2. / (info.max - (info.min + 1))
 
-    return ints.astype(float_dtype) * scale
+    dq = ints.astype(float_dtype)
+    dq *= scale  # in-place multiplication
+
+    return dq
 
 
 def multinomial_rvs(n, p):

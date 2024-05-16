@@ -35,7 +35,7 @@ def rint(phenotype, offset=3./8):
     return norm.ppf((ranked_pheno - offset) / (len(ranked_pheno) - 2 * offset + 1))
 
 
-def detect_outliers(phenotype, sigma_threshold=5):
+def detect_outliers(phenotype, sigma_threshold=5, nan_policy='omit'):
     """
     Detect samples with outlier phenotype values.
     This function takes a vector of quantitative phenotypes,
@@ -45,11 +45,14 @@ def detect_outliers(phenotype, sigma_threshold=5):
     :param phenotype: A numpy vector of continuous or quantitative phenotypes.
     :param sigma_threshold: The multiple of standard deviations or sigmas after
     which we consider the phenotypic value an outlier.
+    :param nan_policy: The policy to use when encountering NaN values in the phenotype vector.
+    By default, we compute the z-scores ignoring NaN values.
 
-    :return: A boolean array indicating whether the phenotype value is an outlier.
+    :return: A boolean array indicating whether the phenotype value is an outlier (i.e.
+    True indicates outlier).
     """
     from scipy.stats import zscore
-    return np.abs(zscore(phenotype)) < sigma_threshold
+    return np.abs(zscore(phenotype, nan_policy=nan_policy)) > sigma_threshold
 
 
 def standardize(phenotype):
@@ -109,8 +112,8 @@ def chained_transform(sample_table,
                 # Remove outlier samples whose phenotypes are more than `threshold` standard deviations from the mean:
                 if outlier_sigma_threshold is not None:
                     # Find outliers:
-                    mask = detect_outliers(phenotype, outlier_sigma_threshold)
-                    # Filter phenotype vector:
+                    mask = ~detect_outliers(phenotype, outlier_sigma_threshold)
+                    # Filter phenotype vector to exclude outliers:
                     phenotype = phenotype[mask]
 
     return phenotype, mask

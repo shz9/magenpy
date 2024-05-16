@@ -4,6 +4,7 @@ import os.path as osp
 import subprocess
 import glob
 import psutil
+import sys
 
 
 def available_cpu():
@@ -13,9 +14,38 @@ def available_cpu():
     return psutil.cpu_count() - 1
 
 
+def get_peak_memory_usage(include_children=False):
+    """
+    Get the peak memory usage of the running process in Mega Bytes (MB).
+
+    !!! warning
+        This function is only available on Unix-based systems for now.
+
+    :param include_children: A boolean flag to include the memory usage of the child processes.
+    :return: The peak memory usage of the running process in Mega Bytes (MB).
+    """
+
+    try:
+        import resource
+    except ImportError:
+        return
+
+    mem_usage_self = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
+    if include_children:
+        mem_usage_self = max(mem_usage_self, resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
+
+    if sys.platform != 'darwin':
+        mem_usage_self /= 1024
+    else:
+        mem_usage_self /= 1024**2
+
+    return mem_usage_self
+
+
 def get_memory_usage():
     """
-    Get the memory usage of the current process in Mega Bytes (MB)
+    Get the current memory usage of the running process in Mega Bytes (MB)
     """
     process = psutil.Process(os.getpid())
     mem_info = process.memory_info()
@@ -145,5 +175,5 @@ def delete_temp_files(prefix):
     for f in glob.glob(f"{prefix}*"):
         try:
             os.remove(f)
-        except Exception as e:
+        except Exception:
             continue

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [0.1.3] - 2024-05-15
+
+### Changed
+
+- Updated the logic for `detect_outliers` in phenotype transforms to actually reflect the function
+name (before it was returning true for inliers...).
+- Updated `quantize` and `dequantize` to minimize data copying as much as possible.
+- Updated `LDMatrix.load_rows()` method to minimize data copying.
+- Fixed bug in `LDMatrix.n_neighbors` implementation.
+- Updated `dask` version in `requirements.txt` to avoid installing `dask-expr`.
+
+
+### Added
+
+- Added `get_peak_memory_usage` to `system_utils` to inspect peak memory usage of a process.
+- Placeholder method to perform QC on `SumstatsTable` objects (needs to be implemented still).
+
 ## [0.1.2] - 2024-04-24
 
 ### Changed

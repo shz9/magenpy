@@ -33,17 +33,17 @@ import argparse
 
 
 print(fr"""
-**********************************************                            
- _ __ ___   __ _  __ _  ___ _ __  _ __  _   _ 
-| '_ ` _ \ / _` |/ _` |/ _ \ '_ \| '_ \| | | |
-| | | | | | (_| | (_| |  __/ | | | |_) | |_| |
-|_| |_| |_|\__,_|\__, |\___|_| |_| .__/ \__, |
-                 |___/           |_|    |___/
-Modeling and Analysis of Genetics data in python
-Version: {mgp.__version__} | Release date: {mgp.__release_date__}
-Author: Shadi Zabad, McGill University
-**********************************************
-< Simulate complex quantitative or case-control traits >
+        ********************************************************                            
+             _ __ ___   __ _  __ _  ___ _ __  _ __  _   _ 
+            | '_ ` _ \ / _` |/ _` |/ _ \ '_ \| '_ \| | | |
+            | | | | | | (_| | (_| |  __/ | | | |_) | |_| |
+            |_| |_| |_|\__,_|\__, |\___|_| |_| .__/ \__, |
+                             |___/           |_|    |___/
+            Modeling and Analysis of Genetics data in python
+            Version: {mgp.__version__} | Release date: {mgp.__release_date__}
+            Author: Shadi Zabad, McGill University
+        ********************************************************
+        < Simulate complex quantitative or case-control traits >
 """)
 
 # --------- Options ---------
