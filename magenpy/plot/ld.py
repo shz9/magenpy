@@ -24,7 +24,7 @@ def plot_ld_matrix(ldm: LDMatrix,
         row_subset = np.arange(ldm.shape[0])
 
     # TODO: Figure out a way to do this without loading the entire matrix:
-    ldm.load(return_symmetric=True, fill_diag=True, dtype='float32')
+    ldm.load(return_symmetric=True, dtype='float32')
 
     mat = ldm.csr_matrix[row_subset, :][:, row_subset].toarray()
 

@@ -8,22 +8,270 @@
 # cython: language_level=3
 # cython: infer_types=True
 
+
 from libc.math cimport exp
-from libc.stdint cimport int64_t
+from libc.stdint cimport int64_t, int32_t
 from cython cimport integral, floating
 cimport cython
 import numpy as np
+cimport numpy as cnp
+
+
+ctypedef fused noncomplex_numeric:
+    cnp.int8_t
+    cnp.int16_t
+    cnp.int32_t
+    cnp.int64_t
+    cnp.float32_t
+    cnp.float64_t
+
 
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef filter_ut_csr_matrix_low_memory(integral[::1] indptr, char[::1] bool_mask):
+cpdef get_symmetrized_indptr_with_mask(integral[::1] indptr,
+                                       cnp.ndarray[cnp.npy_bool, ndim=1] mask):
+    """
+    Given an index pointer array from an upper triangular CSR matrix, this function 
+    computes the equivalent indptr for the symmetric matrix and returns also the 
+    column index of the leftmost element for each row. This is a utility function 
+    mainly used to help symmetrize upper triangular and block-diagonal CSR matrices with minimal 
+    memory overhead. The function also supports filtering the matrix by using a boolean mask.
+    
+    :param indptr: The index pointer array for the CSR matrix to be symmetrized.
+    :param mask: A boolean mask indicating which elements (rows) of the matrix to keep.
+    
+    :return: A tuple with the new indptr array and the leftmost column index for each row.
+    """
+
+    # Compute the cumulative number of skipped rows:
+    cum_skipped_rows = np.cumsum(~mask, dtype=np.int32)
+
+    # Determine the rightmost element for every row:
+    rightmost = np.diff(indptr).astype(np.int32) + np.arange(indptr.shape[0] - 1, dtype=np.int32)
+    # Update the index by taking into account the number of skipped rows:
+    rightmost -= cum_skipped_rows[rightmost]
+    # Keep rows indicated by the mask:
+    rightmost = rightmost[mask]
+
+    # Get unique boundaries:
+    uniq_res = np.unique(rightmost, return_index=True)
+
+    # Loop over the remaining rows to get the leftmost index:
+    cdef:
+        int32_t curr_row, shape=rightmost.shape[0]
+        int32_t[::1] leftmost = np.zeros(shape, dtype=np.int32)
+        int32_t[::1] uniq_rightmost = uniq_res[0]
+        int32_t[::1] rightmost_first_idx = uniq_res[1].astype(np.int32)
+        int32_t rightmost_idx = 0, uniq_rightmost_size = uniq_res[0].shape[0]
+
+    with nogil:
+        for curr_row in range(shape):
+
+            if curr_row > uniq_rightmost[rightmost_idx] and rightmost_idx < uniq_rightmost_size - 1:
+                rightmost_idx += 1
+
+            leftmost[curr_row] = rightmost_first_idx[rightmost_idx]
+
+
+    leftmost = np.asarray(leftmost)
+
+    # Compute the new indptr:
+    new_indptr = np.zeros(leftmost.shape[0] + 1, dtype=np.int64)
+    new_indptr[1:] += rightmost + 1 - leftmost
+    np.cumsum(new_indptr, out=new_indptr)
+
+    return new_indptr, leftmost
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.exceptval(check=False)
+cpdef get_symmetrized_indptr(integral[::1] indptr):
+    """
+    Given an index pointer array from an upper triangular CSR matrix, this function 
+    computes the equivalent indptr for the symmetric matrix and returns also the 
+    column index of the leftmost element for each row. This is a utility function 
+    mainly used to help symmetrize upper triangular and block-diagonal CSR matrices with minimal 
+    memory overhead.
+
+    :param indptr: The index pointer array for the CSR matrix to be symmetrized.
+
+    :return: A tuple with the new indptr array and the leftmost column index for each row.
+    """
+
+    # Determine the rightmost element for every row:
+    rightmost = np.diff(indptr).astype(np.int32) + np.arange(indptr.shape[0] - 1, dtype=np.int32)
+
+    # Get unique boundaries:
+    uniq_res = np.unique(rightmost, return_index=True)
+
+    # Loop over the remaining rows to get the leftmost index:
+    cdef:
+        int32_t curr_row, shape=rightmost.shape[0]
+        int32_t[::1] leftmost = np.zeros(shape, dtype=np.int32)
+        int32_t[::1] uniq_rightmost = uniq_res[0]
+        int32_t[::1] rightmost_first_idx = uniq_res[1].astype(np.int32)
+        int32_t rightmost_idx = 0, uniq_rightmost_size = uniq_res[0].shape[0]
+
+    with nogil:
+        for curr_row in range(shape):
+
+            if curr_row > uniq_rightmost[rightmost_idx] and rightmost_idx < uniq_rightmost_size - 1:
+                rightmost_idx += 1
+
+            leftmost[curr_row] = rightmost_first_idx[rightmost_idx]
+
+
+    leftmost = np.asarray(leftmost)
+
+    # Compute the new indptr:
+    new_indptr = np.zeros(leftmost.shape[0] + 1, dtype=np.int64)
+    new_indptr[1:] += rightmost + 1 - leftmost
+    np.cumsum(new_indptr, out=new_indptr)
+
+    return new_indptr, leftmost
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.exceptval(check=False)
+cpdef symmetrize_ut_csr_matrix_with_mask(integral[::1] indptr,
+                                         noncomplex_numeric[::1] data,
+                                         cnp.ndarray[cnp.npy_bool, ndim=1] mask,
+                                         noncomplex_numeric diag_fill_value):
+    """
+    Given an upper triangular CSR matrix, this function symmetrizes it by adding the 
+    transpose of the upper triangular matrix to itself. This function assumes the following:
+    
+        1. The non-zero elements are contiguous along the diagonal of each row (starting from 
+        the diagonal + 1).
+        2. The diagonal elements aren't present in the upper triangular matrix.
+        
+    The function also supports filtering the matrix by using a boolean mask.
+    
+    :param indptr: The index pointer array for the CSR matrix to be symmetrized.
+    :param data: The data array for the CSR matrix to be symmetrized.
+    :param mask: A boolean mask indicating which elements (rows) of the matrix to keep.
+    :param diag_fill_value: The value to fill the diagonal with (equivalent to 1 for the various data types).
+    
+    :return: A tuple with the new data array, the new indptr array, and the leftmost column index for each row.
+    
+    """
+
+    new_idx = get_symmetrized_indptr_with_mask(indptr, mask)
+
+    cdef:
+        int64_t[::1] new_indptr = new_idx[0]
+        int32_t[::1] leftmost_col = new_idx[1]
+        int32_t[::1] cum_skipped_rows = np.cumsum(~mask, dtype=np.int32)
+        int32_t curr_row, curr_col, curr_row_size, filt_curr_row, filt_curr_col
+        int32_t curr_data_idx, new_idx_1, new_idx_2, curr_shape=indptr.shape[0]-1
+        noncomplex_numeric[::1] new_data = np.empty_like(data, shape=(new_idx[0][new_indptr.shape[0] - 1], ))
+
+
+    with nogil:
+
+        # For each row in the current matrix:
+        for curr_row in range(curr_shape):
+            if mask[curr_row]:
+
+                # Determine the row size for the upper triangular matrix:
+                curr_row_size = indptr[curr_row + 1] - indptr[curr_row]
+
+                filt_curr_row = curr_row - cum_skipped_rows[curr_row]
+
+                # First, add the identity to the diagonal
+                new_idx_1 = new_indptr[filt_curr_row] + filt_curr_row - leftmost_col[filt_curr_row]
+                new_data[new_idx_1] = diag_fill_value
+
+                # Then, add and reflect the off-diagonal entries:
+                for curr_col in range(curr_row + 1, curr_row_size + curr_row + 1):
+                    if mask[curr_col]:
+
+                        filt_curr_col = curr_col - cum_skipped_rows[curr_col]
+
+                        curr_data_idx = indptr[curr_row] + curr_col - curr_row - 1
+
+                        new_idx_1 = new_indptr[filt_curr_row] + filt_curr_col - leftmost_col[filt_curr_row]
+                        new_idx_2 = new_indptr[filt_curr_col] + filt_curr_row - leftmost_col[filt_curr_col]
+
+                        new_data[new_idx_1] = data[curr_data_idx]
+                        new_data[new_idx_2] = data[curr_data_idx]
+
+    return np.asarray(new_data), np.asarray(new_idx[0]), np.asarray(new_idx[1])
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.exceptval(check=False)
+cpdef symmetrize_ut_csr_matrix(integral[::1] indptr,
+                                noncomplex_numeric[::1] data,
+                                noncomplex_numeric diag_fill_value):
+    """
+    Given an upper triangular CSR matrix, this function symmetrizes it by adding the 
+    transpose of the upper triangular matrix to itself. This function assumes the following:
+
+        1. The non-zero elements are contiguous along the diagonal of each row (starting from 
+        the diagonal + 1).
+        2. The diagonal elements aren't present in the upper triangular matrix.
+
+    :param indptr: The index pointer array for the CSR matrix to be symmetrized.
+    :param data: The data array for the CSR matrix to be symmetrized.
+    :param diag_fill_value: The value to fill the diagonal with (equivalent to 1 for the various data types).
+
+    :return: A tuple with the new data array, the new indptr array, and the leftmost column index for each row.
+
+    """
+
+    new_idx = get_symmetrized_indptr(indptr)
+
+    cdef:
+        int64_t[::1] new_indptr = new_idx[0]
+        int32_t[::1] leftmost_col = new_idx[1]
+        int32_t curr_row, curr_col, curr_row_size
+        int32_t curr_data_idx, new_idx_1, new_idx_2, curr_shape=indptr.shape[0]-1
+        noncomplex_numeric[::1] new_data = np.empty_like(data, shape=(new_idx[0][new_indptr.shape[0] - 1], ))
+
+    with nogil:
+
+        # For each row in the current matrix:
+        for curr_row in range(curr_shape):
+
+            # Determine the row size for the upper triangular matrix:
+            curr_row_size = indptr[curr_row + 1] - indptr[curr_row]
+
+            # First, add the identity to the diagonal
+            new_idx_1 = new_indptr[curr_row] + curr_row - leftmost_col[curr_row]
+            new_data[new_idx_1] = diag_fill_value
+
+            # Then, add and reflect the off-diagonal entries:
+            for curr_col in range(curr_row + 1, curr_row_size + curr_row + 1):
+
+                curr_data_idx = indptr[curr_row] + curr_col - curr_row - 1
+
+                new_idx_1 = new_indptr[curr_row] + curr_col - leftmost_col[curr_row]
+                new_idx_2 = new_indptr[curr_col] + curr_row - leftmost_col[curr_col]
+
+                new_data[new_idx_1] = data[curr_data_idx]
+                new_data[new_idx_2] = data[curr_data_idx]
+
+    return np.asarray(new_data), np.asarray(new_idx[0]), np.asarray(new_idx[1])
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.exceptval(check=False)
+cpdef filter_ut_csr_matrix(integral[::1] indptr, char[::1] bool_mask):
     """
     This is a utility function to generate a mask with the purpose of filtering 
     the data array of upper-triangular CSR matrices. The function also generates a new 
-    indptr array that reflects the filter requested by the user.
+    index pointer (indptr) array that reflects the filter requested by the user.
 
     The reason we have this implementation is to avoid row/column filtering with 
     scipy's native functionality for CSR matrices, which involves using the `indices` 
@@ -65,7 +313,7 @@ cpdef filter_ut_csr_matrix_low_memory(integral[::1] indptr, char[::1] bool_mask)
 
                 new_indptr_idx += 1
 
-    return np.asarray(data_mask).astype(bool), np.asarray(new_indptr)
+    return np.asarray(data_mask).astype(bool, copy=False), np.asarray(new_indptr)
 
 @cython.boundscheck(False)
 @cython.wraparound(False)

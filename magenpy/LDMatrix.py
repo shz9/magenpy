@@ -846,7 +846,6 @@ class LDMatrix(object):
         if self.in_memory:
             self.load(force_reload=True,
                       return_symmetric=self.is_symmetric,
-                      fill_diag=self.is_symmetric,
                       dtype=self.dtype)
 
     def reset_mask(self):
@@ -858,7 +857,6 @@ class LDMatrix(object):
         if self.in_memory:
             self.load(force_reload=True,
                       return_symmetric=self.is_symmetric,
-                      fill_diag=self.is_symmetric,
                       dtype=self.dtype)
 
     def to_snp_table(self, col_subset=None):
@@ -1103,35 +1101,27 @@ class LDMatrix(object):
         else:
             self._zg['matrix/data'][data_start:data_end] = new_csr.data.astype(self.stored_dtype)
 
-    def low_memory_load(self, dtype=None):
+    def load_data(self,
+                  return_symmetric=False,
+                  dtype=None,
+                  return_as_csr=False):
         """
-        A utility method to load the LD matrix in low-memory mode.
-        The method will load the entries of the upper triangular portion of the matrix,
-        perform filtering based on the mask (if set), and return the filtered data
-        and index pointer (`indptr`) arrays.
+        A utility function to load and process the LD matrix data.
+        This function is particularly useful for filtering, symmetrizing, and dequantizing the LD matrix
+        after it's loaded into memory.
 
-        This is useful for some application, such as the `low_memory` version of
-        the `viprs` method, because it avoids reconstructing the `indices` array for the CSR matrix,
-        which can potentially be a very long array of large integers.
+        TODO: Support loading subset of rows of the matrix, similar to `load_rows` (i.e. replace `load_rows`
+        with newer implementation).
 
-        !!! note
-            The method, by construction, does not support loading the full symmetric matrix. If
-            that's the goal, use the `.load()` or `.load_rows()` methods.
-
-        !!! seealso "See Also"
-            * [load_rows][magenpy.LDMatrix.LDMatrix.load_rows]
-            * [load][magenpy.LDMatrix.LDMatrix.load]
-
+        :param return_symmetric: If True, return a full symmetric representation of the LD matrix.
         :param dtype: The data type for the entries of the LD matrix.
+        :param return_as_csr: If True, return the data in the CSR format.
 
-        :return: A tuple of the data and index pointer arrays for the LD matrix.
-
+        :return: A tuple of the index pointer array, the data array, and the leftmost index array. If
+        `return_as_csr` is set to True, we return the data as a CSR matrix.
         """
 
-        # Determine the final data type for the LD matrix entries
-        # and whether we need to perform dequantization or not depending on
-        # the stored data type and the requested data type.
-
+        # -------------- Step 1: Preparing input data type --------------
         if dtype is None:
             dtype = self.stored_dtype
             dequantize_data = False
@@ -1142,8 +1132,12 @@ class LDMatrix(object):
             else:
                 dequantize_data = False
 
+        # -------------- Step 2: Fetch the indptr array --------------
+
         # Get the index pointer array:
         indptr = self._zg['matrix/indptr'][:]
+
+        # -------------- Step 3: Checking data masking --------------
 
         # Filter the index pointer array based on the mask:
         if self._mask is not None:
@@ -1154,21 +1148,61 @@ class LDMatrix(object):
             else:
                 mask = self._mask
 
-            from .stats.ld.c_utils import filter_ut_csr_matrix_low_memory
+            from .stats.ld.c_utils import filter_ut_csr_matrix
 
-            data_mask, indptr = filter_ut_csr_matrix_low_memory(indptr, mask)
-            # .oindex and .vindex are slow and likely convert to integer indices in the background,
+            data_mask, indptr = filter_ut_csr_matrix(indptr, mask)
+            # .oindex and .vindex are slow and convert to integer indices in the background,
             # which unnecessarily increases memory usage. Unfortunately, here we have to load the entire
             # data and index it using the boolean array afterward.
-            # Something to be improved in the future...
+            # Something to be improved in the future. :)
             data = self._zg['matrix/data'][:][data_mask]
+            del data_mask
         else:
             data = self._zg['matrix/data'][:]
 
-        if dequantize_data:
-            return dequantize(data, float_dtype=dtype), indptr
+        # -------------- Step 4: Symmetrizing input matrix --------------
+
+        if return_symmetric:
+
+            from .stats.ld.c_utils import symmetrize_ut_csr_matrix
+
+            if np.issubdtype(self.stored_dtype, np.integer):
+                fill_val = np.iinfo(self.stored_dtype).max
+            else:
+                fill_val = 1.
+
+            data, indptr, leftmost_idx = symmetrize_ut_csr_matrix(indptr, data, fill_val)
         else:
-            return data.astype(dtype), indptr
+            leftmost_idx = np.arange(1, indptr.shape[0], dtype=np.int32)
+
+        # -------------- Step 5: Dequantizing/type cast requested data --------------
+
+        if dequantize_data:
+            data = dequantize(data, float_dtype=dtype)
+        else:
+            data = data.astype(dtype, copy=False)
+
+        # ---------------------------------------------------------------------------
+        # Return the requested data:
+
+        if return_as_csr:
+
+            from .stats.ld.c_utils import expand_ranges
+
+            indices = expand_ranges(leftmost_idx,
+                                    (np.diff(indptr) + leftmost_idx).astype(np.int32),
+                                    data.shape[0])
+
+            return csr_matrix(
+                (
+                    data,
+                    indices,
+                    indptr
+                ),
+                dtype=dtype
+            )
+        else:
+            return data, indptr, leftmost_idx
 
     def load_rows(self,
                   start_row=None,
@@ -1182,14 +1216,12 @@ class LDMatrix(object):
         By specifying `start_row` and `end_row`, the user can process or inspect small
         blocks of the LD matrix without loading the whole thing into memory.
 
-        TODO: Consider using `low_memory_load` internally to avoid reconstructing the `indices` array.
-
         !!! note
             This method does not perform any filtering on the stored data.
-            To access the LD matrix with filtering, use `.load()` or `low_memory_load`.
+            To access the LD matrix with filtering, use `.load()` or `load_data`.
 
         !!! seealso "See Also"
-            * [low_memory_load][magenpy.LDMatrix.LDMatrix.low_memory_load]
+            * [load_data][magenpy.LDMatrix.LDMatrix.load_data]
             * [load][magenpy.LDMatrix.LDMatrix.load]
 
         :param start_row: The start row to load to memory
@@ -1323,7 +1355,6 @@ class LDMatrix(object):
     def load(self,
              force_reload=False,
              return_symmetric=True,
-             fill_diag=True,
              dtype=None):
 
         """
@@ -1331,12 +1362,11 @@ class LDMatrix(object):
         in the form of sparse CSR matrices.
 
         !!! seealso "See Also"
-            * [low_memory_load][magenpy.LDMatrix.LDMatrix.low_memory_load]
+            * [load_data][magenpy.LDMatrix.LDMatrix.load_data]
             * [load_rows][magenpy.LDMatrix.LDMatrix.load_rows]
 
         :param force_reload: If True, it will reload the data even if it is already in memory.
         :param return_symmetric: If True, return a full symmetric representation of the LD matrix.
-        :param fill_diag: If True, fill the diagonal elements of the LD matrix with ones.
         :param dtype: The data type for the entries of the LD matrix.
 
         :return: The LD matrix as a sparse CSR matrix.
@@ -1364,13 +1394,8 @@ class LDMatrix(object):
         # If we are re-loading the matrix, make sure to release the current one:
         self.release()
 
-        self._mat = self.load_rows(return_symmetric=return_symmetric,
-                                   fill_diag=fill_diag,
+        self._mat = self.load_data(return_symmetric=return_symmetric,
                                    dtype=dtype)
-
-        # If a mask is set, apply it:
-        if self._mask is not None:
-            self._mat = self._mat[self._mask, :][:, self._mask]
 
         # Update the flags:
         self.in_memory = True
@@ -1454,7 +1479,7 @@ class LDMatrix(object):
             self.set_mask(mask)
 
         if in_mem:
-            self.load(return_symmetric=is_symmetric, fill_diag=is_symmetric, dtype=dtype)
+            self.load(return_symmetric=is_symmetric, dtype=dtype)
 
     def __len__(self):
         return self.n_snps
@@ -1467,7 +1492,7 @@ class LDMatrix(object):
         TODO: Add a flag to allow for chunked iterator, with limited memory footprint.
         """
         self.index = 0
-        self.load(return_symmetric=self.is_symmetric, fill_diag=self.is_symmetric)
+        self.load(return_symmetric=self.is_symmetric)
         return self
 
     def __next__(self):

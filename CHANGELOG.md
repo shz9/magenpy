@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [0.1.3] - 2024-05-15
+## [0.1.3] - 2024-05-21
 
 ### Changed
 
@@ -22,6 +22,10 @@ name (before it was returning true for inliers...).
 
 - Added `get_peak_memory_usage` to `system_utils` to inspect peak memory usage of a process.
 - Placeholder method to perform QC on `SumstatsTable` objects (needs to be implemented still).
+- New algorithm for symmetrizing upper triangular and block diagonal LD matrices.
+  - Much faster and more memory efficient than using `scipy`.
+  - New `LDMatrix` class has efficient data loading in `.load_data` method.
+  - We still retain `load_rows` because it is useful for loading a subset of rows.
 
 ## [0.1.2] - 2024-04-24
 
