@@ -539,13 +539,13 @@ class GWADataLoader(object):
             return
 
         if self.verbose and len(sumstats_files) < 2:
-            print("> Reading summary statistics file...")
+            print("> Reading summary statistics...")
 
         self.sumstats_table = {}
 
         for f in tqdm(sumstats_files,
                       total=len(sumstats_files),
-                      desc="Reading summary statistics files",
+                      desc="Reading summary statistics",
                       disable=not self.verbose or len(sumstats_files) < 2):
 
             ss_tab = SumstatsTable.from_file(f, sumstats_format=sumstats_format, parser=parser, **parse_kwargs)
@@ -585,13 +585,13 @@ class GWADataLoader(object):
             return
 
         if self.verbose and len(ld_store_files) < 2:
-            print("> Reading LD matrix...")
+            print("> Reading LD metadata...")
 
         self.ld = {}
 
         for f in tqdm(ld_store_files,
                       total=len(ld_store_files),
-                      desc="Reading LD matrices",
+                      desc="Reading LD metadata",
                       disable=not self.verbose or len(ld_store_files) < 2):
             z = LDMatrix.from_path(f)
             self.ld[z.chromosome] = z

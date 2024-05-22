@@ -1395,7 +1395,8 @@ class LDMatrix(object):
         self.release()
 
         self._mat = self.load_data(return_symmetric=return_symmetric,
-                                   dtype=dtype)
+                                   dtype=dtype,
+                                   return_as_csr=True)
 
         # Update the flags:
         self.in_memory = True
