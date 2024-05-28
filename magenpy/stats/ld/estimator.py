@@ -61,9 +61,9 @@ class SampleLD(object):
                 temp_dir='temp',
                 overwrite=True,
                 delete_original=True,
-                dtype='int16',
-                compressor_name='lz4',
-                compression_level=5):
+                dtype='int8',
+                compressor_name='zstd',
+                compression_level=7):
         """
         A utility method to compute the LD matrix and store in Zarr array format.
         The computes the LD matrix and stores it in Zarr array format, set its attributes,
@@ -238,9 +238,9 @@ class WindowedLD(SampleLD):
                 temp_dir='temp',
                 overwrite=True,
                 delete_original=True,
-                dtype='int16',
-                compressor_name='lz4',
-                compression_level=5):
+                dtype='int8',
+                compressor_name='zstd',
+                compression_level=7):
         """
 
         Compute the windowed LD matrix and store in Zarr array format.
@@ -346,9 +346,9 @@ class ShrinkageLD(SampleLD):
                 temp_dir='temp',
                 overwrite=True,
                 delete_original=True,
-                dtype='int16',
-                compressor_name='lz4',
-                compression_level=5,
+                dtype='int8',
+                compressor_name='zstd',
+                compression_level=7,
                 chunk_size=1000):
         """
 
@@ -465,9 +465,9 @@ class BlockLD(SampleLD):
                 temp_dir='temp',
                 overwrite=True,
                 delete_original=True,
-                dtype='int16',
-                compressor_name='lz4',
-                compression_level=5):
+                dtype='int8',
+                compressor_name='zstd',
+                compression_level=7):
         """
 
         Compute the block-based LD matrix and store in Zarr array format.

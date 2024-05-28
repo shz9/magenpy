@@ -341,9 +341,9 @@ class GenotypeMatrix(object):
     def compute_ld(self,
                    estimator,
                    output_dir,
-                   dtype='int16',
-                   compressor_name='lz4',
-                   compression_level=5,
+                   dtype='int8',
+                   compressor_name='zstd',
+                   compression_level=7,
                    **ld_kwargs):
         """
 

@@ -82,16 +82,16 @@ parser.add_argument('--metadata', dest='metadata', type=str,
 
 # Argument for the float precision:
 parser.add_argument('--storage-dtype', dest='storage_dtype', type=str,
-                    default='int16', help='The data type for the entries of the LD matrix.',
+                    default='int8', help='The data type for the entries of the LD matrix.',
                     choices={'float32', 'float64', 'int16', 'int8'})
 
 # Add arguments for the compressor:
 parser.add_argument('--compressor', dest='compressor', type=str,
-                    default='lz4', help='The compressor name or compression algorithm to use for the LD matrix.',
+                    default='zstd', help='The compressor name or compression algorithm to use for the LD matrix.',
                     choices={'lz4', 'zstd', 'gzip', 'zlib'})
 
 parser.add_argument('--compression-level', dest='compression_level', type=int,
-                    default=5, help='The compression level to use for the entries of the LD matrix (1-9).')
+                    default=7, help='The compression level to use for the entries of the LD matrix (1-9).')
 
 # Options for the various LD estimators:
 
@@ -229,6 +229,7 @@ ld_mat = g.compute_ld(args.estimator,
                       **ld_kwargs)
 
 # Store metadata (if provided):
+
 if args.metadata is not None:
     parsed_metadata = {
         k: v for entry in args.metadata.split(',') for k, v in [entry.strip().split('=')]
@@ -239,6 +240,13 @@ if args.metadata is not None:
         for k, v in parsed_metadata.items():
             ld_mat.set_store_attr(k, v)
 
+    if 'Date' not in parsed_metadata:
+        # Store the date when the computation was done:
+        ld_mat.set_store_attr('Date', time.strftime("%Y-%m-%d"))
+
+else:
+    # Store the date when the computation was done:
+    ld_mat.set_store_attr('Date', time.strftime("%Y-%m-%d"))
 
 # Clean up all intermediate files and directories:
 g.cleanup()

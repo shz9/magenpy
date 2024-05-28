@@ -415,13 +415,13 @@ class GWADataLoader(object):
             gmat_class = plinkBEDGenotypeMatrix
 
         if self.verbose and len(bed_files) < 2:
-            print("> Reading BED file...")
+            print("> Reading genotype metadata...")
 
         self.genotype = {}
 
         for bfile in tqdm(bed_files,
                           total=len(bed_files),
-                          desc="Reading BED files",
+                          desc="Reading genotype metadata",
                           disable=not self.verbose or len(bed_files) < 2):
             # Read BED file and update the genotypes dictionary:
             self.genotype.update(gmat_class.from_file(bfile,
@@ -615,9 +615,9 @@ class GWADataLoader(object):
     def compute_ld(self,
                    estimator,
                    output_dir,
-                   dtype='int16',
-                   compressor_name='lz4',
-                   compression_level=5,
+                   dtype='int8',
+                   compressor_name='zstd',
+                   compression_level=7,
                    **ld_kwargs):
         """
         Compute the Linkage-Disequilibrium (LD) matrix or SNP-by-SNP Pearson

@@ -233,7 +233,7 @@ def shrink_ld_matrix(ld_mat_obj,
     return ld_mat_obj
 
 
-def estimate_rows_per_chunk(rows, cols, dtype='int16', mem_size=128):
+def estimate_rows_per_chunk(rows, cols, dtype='int8', mem_size=128):
     """
     Estimate the number of rows per chunk for matrices conditional on the desired size of the chunk in MB.
     The estimator takes as input the number of rows, columns, data type, and projected size of the chunk in memory.
@@ -255,9 +255,9 @@ def compute_ld_plink1p9(genotype_matrix,
                         output_dir,
                         temp_dir='temp',
                         overwrite=True,
-                        dtype='int16',
-                        compressor_name='lz4',
-                        compression_level=5):
+                        dtype='int8',
+                        compressor_name='zstd',
+                        compression_level=7):
 
     """
     Compute LD matrices using plink 1.9.
@@ -354,7 +354,7 @@ def compute_ld_plink1p9(genotype_matrix,
     plink1.execute(cmd)
 
     # Convert from PLINK LD files to Zarr:
-    fin_ld_store = osp.join(output_dir, 'ld', 'chr_' + str(genotype_matrix.chromosome))
+    fin_ld_store = osp.join(output_dir, 'chr_' + str(genotype_matrix.chromosome))
 
     # Compute the pandas chunk_size
     # The goal of this is to process chunks of the LD table without overwhelming memory resources:
@@ -382,9 +382,9 @@ def compute_ld_xarray(genotype_matrix,
                       temp_dir='temp',
                       overwrite=True,
                       delete_original=True,
-                      dtype='int16',
-                      compressor_name='lz4',
-                      compression_level=5):
+                      dtype='int8',
+                      compressor_name='zstd',
+                      compression_level=7):
 
     """
     Compute the Linkage Disequilibrium matrix or snp-by-snp
