@@ -34,12 +34,18 @@ class SumstatsTable(object):
         """
         self.table: pd.DataFrame = ss_table
 
-        assert all([col in self.table.columns for col in ('SNP', 'A1')])
+        # Check that the table contains some of the required columns (non exhaustive):
+
+        # Either has SNP or CHR+POS:
+        assert 'SNP' in self.table.columns or all([col in self.table.columns for col in ('CHR', 'POS')])
+        # Assert that the table has at least one of the alleles:
+        assert any([col in self.table.columns for col in ('A1', 'A2')])
+        # TODO: Add other assertions?
 
     @property
     def shape(self):
         """
-        :return: he shape of the summary statistics table.
+        :return: The shape of the summary statistics table.
         """
         return self.table.shape
 
@@ -49,7 +55,8 @@ class SumstatsTable(object):
     @property
     def chromosome(self):
         """
-        A convenience method to return the chromosome number if there is only one chromosome in the summary statistics.
+        A convenience method to return the chromosome number if there is only
+        one chromosome in the summary statistics.
         If multiple chromosomes are present, it returns None.
 
         :return: The chromosome number if there is only one chromosome in the summary statistics.
@@ -75,6 +82,13 @@ class SumstatsTable(object):
         :return: The number of variants in the summary statistics table.
         """
         return self.n_snps
+
+    @property
+    def identifier_cols(self):
+        if 'SNP' in self.table.columns:
+            return ['SNP']
+        else:
+            return ['CHR', 'POS']
 
     @property
     def n_snps(self):
@@ -341,21 +355,29 @@ class SumstatsTable(object):
     def infer_a2(self, reference_table, allow_na=False):
         """
         Infer the reference allele A2 (if not present in the SumstatsTable)
-        from a reference table. Make sure that the reference table contains the SNP ID,
-        the reference allele A2 and the alternative (i.e. effect) allele A1. It is the
-        user's responsibility to make sure that the reference table matches the summary
-        statistics in terms of the specification of reference vs. alternative. They are
-        allowed to be flipped, but they have to be consistent across the two tables.
+        from a reference table. Make sure that the reference table contains the identifier information
+        for each SNP, in addition to the reference allele A2 and the alternative (i.e. effect) allele A1.
+        It is the user's responsibility to make sure that the reference table matches the summary
+        statistics in terms of the specification of reference vs. alternative. They have to be consistent
+        across the two tables.
 
         :param reference_table: A pandas table containing the following columns at least:
-        `SNP`, `A1`, `A2`.
+        SNP identifiers (`SNP` or `CHR` & `POS`) and allele information (`A1` & `A2`).
         :param allow_na: If True, allow the reference allele to be missing from the final result.
         """
 
-        # Merge the summary statistics table with the reference table on `SNP` ID:
-        merged_table = self.table[['SNP', 'A1']].merge(reference_table[['SNP', 'A1', 'A2']],
-                                                       how='left',
-                                                       on='SNP')
+        # Get the identifier columns for this table:
+        id_cols = self.identifier_cols
+
+        # Sanity checks:
+        assert all([col in reference_table.columns for col in id_cols + ['A1', 'A2']])
+
+        # Merge the summary statistics table with the reference table on unique ID:
+        merged_table = self.table[id_cols + ['A1']].merge(
+            reference_table[id_cols + ['A1', 'A2']],
+            how='left',
+            on=id_cols
+        )
         # If `A1_x` agrees with `A1_y`, then `A2` is indeed the reference allele.
         # Otherwise, they are flipped and `A1_y` should be the reference allele:
         merged_table['A2'] = np.where(merged_table['A1_x'] == merged_table['A1_y'],
@@ -367,6 +389,25 @@ class SumstatsTable(object):
             raise ValueError("The reference allele could not be inferred for some SNPs!")
         else:
             self.table['A2'] = merged_table['A2']
+
+    def infer_snp_id(self, reference_table, allow_na=False):
+        """
+        Infer the SNP ID (if not present in the SumstatsTable) from a reference table.
+        Make sure that the reference table contains the SNP ID, chromosome ID, and position.
+
+        :param reference_table: A pandas table containing the following columns at least:
+        `SNP`, `CHR`, `POS`.
+        :param allow_na: If True, allow the SNP ID to be missing from the final result.
+        """
+
+        # Merge the summary statistics table with the reference table:
+        merged_table = self.table[['CHR', 'POS']].merge(reference_table[['SNP', 'CHR', 'POS']], how='left')
+
+        # Check that the SNP ID could be inferred for all SNPs:
+        if not allow_na and merged_table['SNP'].isna().any():
+            raise ValueError("The SNP ID could not be inferred for some SNPs!")
+        else:
+            self.table['SNP'] = merged_table['SNP'].values
 
     def set_sample_size(self, n):
         """
@@ -394,14 +435,15 @@ class SumstatsTable(object):
         correcting for potential flips in the effect alleles.
 
         :param reference_table: The SNP table to use as a reference. Must be a pandas
-        table with at least three columns: SNP, A1, A2.
+        table with the following columns: SNP identifier (either `SNP` or `CHR` & `POS`) and allele information
+        (`A1` & `A2`).
         :param correct_flips: If True, correct the direction of effect size
          estimates if the effect allele is reversed.
         """
 
         from .utils.model_utils import merge_snp_tables
 
-        self.table = merge_snp_tables(ref_table=reference_table[['SNP', 'A1', 'A2']],
+        self.table = merge_snp_tables(ref_table=reference_table[self.identifier_cols + ['A1', 'A2']],
                                       alt_table=self.table,
                                       how='inner',
                                       correct_flips=correct_flips)
@@ -457,14 +499,15 @@ class SumstatsTable(object):
             self.table = self.table.iloc[extract_index, ].reset_index(drop=True)
         else:
             raise Exception("To filter a summary statistics table, you must provide "
-                            "the list of SNPs, a file containing the list of SNPs, or a list of indices to retain.")
+                            "the list of SNPs, a file containing the list of SNPs, "
+                            "or a list of indices to retain.")
 
     def drop_duplicates(self):
         """
         Drop variants with duplicated rsIDs from the summary statistics table.
         """
 
-        self.table = self.table.drop_duplicates(subset='SNP', keep=False)
+        self.table = self.table.drop_duplicates(subset=self.identifier_cols, keep=False)
 
     def get_col(self, col_name):
         """
@@ -583,7 +626,7 @@ class SumstatsTable(object):
         if 'CHR' in self.table.columns:
             chrom_tables = self.table.groupby('CHR')
             return {
-                c: SumstatsTable(chrom_tables.get_group(c))
+                c: SumstatsTable(chrom_tables.get_group(c).copy())
                 for c in chrom_tables.groups
             }
         elif snps_per_chrom is not None:

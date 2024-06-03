@@ -18,3 +18,19 @@ def ukb_height_sumstats_path():
     https://yanglab.westlake.edu.cn/data/fastgwa_data/UKB/50.v1.1.fastGWA.gz
     """
     return osp.join(osp.dirname(osp.dirname(__file__)), 'data/ukb_height_chr22.fastGWA.gz')
+
+
+def lrld_path():
+    """
+    The boundaries of Long Range LD (LRLD) regions derived from here:
+
+        https://genome.sph.umich.edu/wiki/Regions_of_high_linkage_disequilibrium_(LD)
+
+    Which is based on the work of
+
+    > Anderson, Carl A., et al. "Data quality control in genetic case-control association studies." Nature protocols 5.9 (2010): 1564-1573.
+
+    :return: The path of the attached BED file containing long-range linkage disequilibrium
+    (LD) regions in the human genome. The coordinates are in hg19/GRCh37.
+    """
+    return osp.join(osp.dirname(osp.dirname(__file__)), 'data/lrld_hg19_GRCh37.txt')

@@ -26,6 +26,70 @@ ctypedef fused noncomplex_numeric:
     cnp.float64_t
 
 
+cpdef find_tagging_variants(int[::1] variant_indices,
+                           integral[::1] indptr,
+                           noncomplex_numeric[::1] data,
+                           noncomplex_numeric threshold):
+    """
+    TODO: Implement function to find tagging variants.
+    """
+    pass
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.exceptval(check=False)
+cdef noncomplex_numeric numeric_abs(noncomplex_numeric x) noexcept nogil:
+    """
+    Return the absolute value of a numeric type.
+    """
+    if x < 0:
+        return -x
+    return x
+
+cpdef prune_ld_ut(integral[::1] indptr,
+                  noncomplex_numeric[::1] data,
+                  noncomplex_numeric r_threshold):
+    """
+    Pass over the LD matrix once and prune it so that variants whose absolute correlation coefficient is above 
+    or equal to a certain threshold are filtered away. If two variants are highly correlated, 
+    this function keeps the one that occurs earlier in the matrix. 
+    
+    This function works with LD matrices in any data type 
+    (quantized to integers or floats), but it is the user's responsibility to set the appropriate 
+    threshold for the data type used.
+    
+    !!! note 
+        This function assumes that the LD matrix is in upper triangular form and doesn't include the 
+        diagonal. We will try to generalize this implementation later.
+    
+    :param indptr: The index pointer array for the CSR matrix to be pruned.
+    :param data: The data array for the CSR matrix to be pruned.
+    :param r_threshold: The Pearson Correlation coefficient threshold above which to prune variants.
+    
+    :return: An boolean array of which variants are kept after pruning.
+    """
+
+    cdef:
+        int64_t i, curr_row, curr_row_size, curr_data_idx, curr_shape=indptr.shape[0]-1
+        char[::1] keep = np.ones(curr_shape, dtype=np.int8)
+
+    with nogil:
+        for curr_row in range(curr_shape):
+
+            if keep[curr_row] == 1:
+
+                curr_row_size = indptr[curr_row + 1] - indptr[curr_row]
+
+                for i in range(curr_row_size):
+                    curr_data_idx = indptr[curr_row] + i
+
+                    if numeric_abs(data[curr_data_idx]) >= r_threshold:
+                        keep[curr_row + i + 1] = 0
+
+    return np.asarray(keep, dtype=bool)
+
 
 @cython.boundscheck(False)
 @cython.wraparound(False)

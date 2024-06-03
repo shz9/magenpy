@@ -22,6 +22,12 @@ name (before it was returning true for inliers...).
 
 - Added `get_peak_memory_usage` to `system_utils` to inspect peak memory usage of a process.
 - Placeholder method to perform QC on `SumstatsTable` objects (needs to be implemented still).
+- New attached dataset for long-range LD regions.
+- New method in SumstatsTable to impute rsID (if missing).
+- Preliminary support for matching with CHR+POS in SumstatsTable (still needs more work).
+- LDMatrix updates:
+  - New method to filter long-range LD regions.
+  - New method to prune LD matrix.
 - New algorithm for symmetrizing upper triangular and block diagonal LD matrices.
   - Much faster and more memory efficient than using `scipy`.
   - New `LDMatrix` class has efficient data loading in `.load_data` method.

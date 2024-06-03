@@ -796,6 +796,40 @@ class LDMatrix(object):
         else:
             return self._zg['matrix/indptr']
 
+    def filter_long_range_ld_regions(self):
+        """
+        A utility method to exclude variants that are in long-range LD regions. The
+        boundaries of those regions are derived from here:
+
+        https://genome.sph.umich.edu/wiki/Regions_of_high_linkage_disequilibrium_(LD)
+
+        Which is based on the work of
+
+        > Anderson, Carl A., et al. "Data quality control in genetic case-control association studies." Nature protocols 5.9 (2010): 1564-1573.
+
+        .. note ::
+            This method is experimental and may not work as expected for all LD matrices.
+        """
+
+        from .parsers.annotation_parsers import parse_annotation_bed_file
+        from .utils.data_utils import lrld_path
+
+        bed_df = parse_annotation_bed_file(lrld_path())
+
+        # Filter to only regions specific to the chromosome of this matrix:
+        bed_df = bed_df.loc[bed_df['CHR'] == self.chromosome]
+
+        bp_pos = self.bp_position
+        snp_mask = np.ones(len(bp_pos), dtype=bool)
+
+        # Loop over the LRLD region on this chromosome and exclude the SNPs in these regions:
+        for _, row in bed_df.iterrows():
+            start, end = row['Start'], row['End']
+            snp_mask &= ~((bp_pos >= start) & (bp_pos <= end))
+
+        # Filter the SNP to only those not in the LRLD regions:
+        self.filter_snps(self.snps[snp_mask])
+
     def filter_snps(self, extract_snps=None, extract_file=None):
         """
         Filter the LDMatrix to keep a subset of variants. This mainly sets
@@ -858,6 +892,30 @@ class LDMatrix(object):
             self.load(force_reload=True,
                       return_symmetric=self.is_symmetric,
                       dtype=self.dtype)
+
+    def prune(self, threshold):
+        """
+        Perform LD pruning to remove variants that are in high LD with other variants.
+        If two variants are in high LD, this function keeps the variant that occurs
+        earlier in the matrix. This behavior will be updated in the future to allow
+        for arbitrary ordering of variants.
+
+        !!! note
+            Experimental for now. Needs further testing & improvement.
+
+        :param threshold: The absolute value of the Pearson correlation coefficient above which to prune variants.
+        :return: A boolean array indicating whether a variant is kept after pruning. A positive floating point number
+        between 0. and 1.
+        """
+
+        from .stats.ld.c_utils import prune_ld_ut
+
+        assert 0. < threshold <= 1.
+
+        if np.issubdtype(self.stored_dtype, np.integer):
+            threshold = quantize(np.array([threshold]), int_dtype=self.stored_dtype)[0]
+
+        return prune_ld_ut(self.indptr[:], self.data[:], threshold)
 
     def to_snp_table(self, col_subset=None):
         """

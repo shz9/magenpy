@@ -548,7 +548,10 @@ class GWADataLoader(object):
                       desc="Reading summary statistics",
                       disable=not self.verbose or len(sumstats_files) < 2):
 
-            ss_tab = SumstatsTable.from_file(f, sumstats_format=sumstats_format, parser=parser, **parse_kwargs)
+            ss_tab = SumstatsTable.from_file(f,
+                                             sumstats_format=sumstats_format,
+                                             parser=parser,
+                                             **parse_kwargs)
 
             if drop_duplicated:
                 ss_tab.drop_duplicates()
@@ -564,6 +567,19 @@ class GWADataLoader(object):
                     raise ValueError("Cannot index summary statistics tables without chromosome information!")
 
                 self.sumstats_table.update(ss_tab.split_by_chromosome(snps_per_chrom=ref_table))
+
+        # If SNP information is not present in the sumstats tables, try to impute it
+        # using other reference tables:
+
+        missing_snp = any('SNP' not in ss.table.columns for ss in self.sumstats_table.values())
+
+        if missing_snp and (self.genotype is not None or self.ld is not None):
+
+            ref_table = self.to_snp_table(col_subset=['CHR', 'POS', 'SNP'], per_chromosome=True)
+
+            for c, ss in self.sumstats_table.items():
+                if 'SNP' not in ss.table.columns and c in ref_table:
+                    ss.infer_snp_id(ref_table[c], allow_na=True)
 
     def read_ld(self, ld_store_paths):
         """
@@ -672,6 +688,10 @@ class GWADataLoader(object):
             However, if you read or manipulate the data sources after initialization,
             you may need to call this method again to ensure that the data sources remain aligned.
 
+        !!! warning
+            Harmonization for now depends on having SNP rsID be present in all the resources. Hopefully
+            this requirement will be relaxed in the future.
+
         """
 
         data_sources = (self.genotype, self.sumstats_table, self.ld, self.annotation)
@@ -705,8 +725,8 @@ class GWADataLoader(object):
 
             else:
 
-                # Find the set of SNPs that are shared across all data sources:
-                common_snps = np.array(list(set.intersection(*[set(ds[c].snps)
+                # Find the set of SNPs that are shared across all data sources (exclude missing values):
+                common_snps = np.array(list(set.intersection(*[set(ds[c].snps[~pd.isnull(ds[c].snps)])
                                                                for ds in initialized_data_sources])))
 
                 # If necessary, filter the data sources to only have the common SNPs:
@@ -717,10 +737,17 @@ class GWADataLoader(object):
                 # Harmonize the summary statistics data with either genotype or LD reference.
                 # This procedure checks for flips in the effect allele between data sources.
                 if self.sumstats_table is not None:
+
+                    id_cols = self.sumstats_table[c].identifier_cols
+
                     if self.genotype is not None:
-                        self.sumstats_table[c].match(self.genotype[c].get_snp_table(col_subset=['SNP', 'A1', 'A2']))
+                        self.sumstats_table[c].match(self.genotype[c].get_snp_table(
+                            col_subset=id_cols + ['A1', 'A2']
+                        ))
                     elif self.ld is not None:
-                        self.sumstats_table[c].match(self.ld[c].to_snp_table(col_subset=['SNP', 'A1', 'A2']))
+                        self.sumstats_table[c].match(self.ld[c].to_snp_table(
+                            col_subset=id_cols + ['A1', 'A2']
+                        ))
 
                     # If during the allele matching process we discover incompatibilities,
                     # we filter those SNPs:
@@ -763,7 +790,8 @@ class GWADataLoader(object):
             try:
                 beta = {c: s.marginal_beta or s.get_snp_pseudo_corr() for c, s in self.sumstats_table.items()}
             except Exception:
-                raise ValueError("To perform linear scoring, you must provide effect size estimates (BETA)!")
+                raise ValueError("To perform linear scoring, you must "
+                                 "provide effect size estimates (BETA)!")
 
         # Here, we have a very ugly way of accounting for
         # the fact that the chromosomes may be coded differently between the genotype
@@ -771,7 +799,8 @@ class GWADataLoader(object):
         common_chr_g, common_chr_b = match_chromosomes(self.genotype.keys(), beta.keys(), return_both=True)
 
         if len(common_chr_g) < 1:
-            raise ValueError("No common chromosomes found between the genotype and the effect size estimates!")
+            raise ValueError("No common chromosomes found between "
+                             "the genotype and the effect size estimates!")
 
         if self.verbose and len(common_chr_g) < 2:
             print("> Generating polygenic scores...")
@@ -831,7 +860,7 @@ class GWADataLoader(object):
 
         return self.sample_table.get_phenotype_table()
 
-    def to_snp_table(self, col_subset=None, per_chromosome=False):
+    def to_snp_table(self, col_subset=None, per_chromosome=False, resource='auto'):
         """
         Get a dataframe of SNP data for all variants
         across different chromosomes.
@@ -840,21 +869,40 @@ class GWADataLoader(object):
         :param per_chromosome: If True, returns a dictionary where the key
         is the chromosome number and the value is the SNP table per
         chromosome.
+        :param resource: The data source to extract the SNP table from. By default, the method
+        will try to extract the SNP table from the genotype matrix. If the genotype matrix is not
+        available, then it will try to extract the SNP information from the LD matrix or the summary
+        statistics table. Possible values: `auto`, `genotype`, `ld`, `sumstats`.
 
         :return: A dataframe (or dictionary of dataframes) of SNP data.
         """
 
+        # Sanity checks:
+        assert resource in ('auto', 'genotype', 'ld', 'sumstats')
+        if resource != 'auto':
+            if resource == 'genotype' and self.genotype is None:
+                raise ValueError("Genotype matrix is not available!")
+            if resource == 'ld' and self.ld is None:
+                raise ValueError("LD matrix is not available!")
+            if resource == 'sumstats' and self.sumstats_table is None:
+                raise ValueError("Summary statistics table is not available!")
+        else:
+            if all(ds is None for ds in (self.genotype, self.ld, self.sumstats_table)):
+                raise ValueError("No data sources available to extract SNP data from!")
+
+        # Extract the SNP data:
+
         snp_tables = {}
 
-        for c in self.chromosomes:
-            if self.sumstats_table is not None:
-                snp_tables[c] = self.sumstats_table[c].to_table(col_subset=col_subset)
-            elif self.genotype is not None:
+        if resource in ('auto', 'genotype') and self.genotype is not None:
+            for c in self.chromosomes:
                 snp_tables[c] = self.genotype[c].get_snp_table(col_subset=col_subset)
-            elif self.ld is not None:
+        elif resource in ('auto', 'ld') and self.ld is not None:
+            for c in self.chromosomes:
                 snp_tables[c] = self.ld[c].to_snp_table(col_subset=col_subset)
-            else:
-                raise ValueError("GWADataLoader instance is not properly initialized!")
+        else:
+            return self.to_summary_statistics_table(col_subset=col_subset,
+                                                    per_chromosome=per_chromosome)
 
         if per_chromosome:
             return snp_tables
