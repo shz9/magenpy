@@ -16,8 +16,8 @@ from .simulation.PhenotypeSimulator import PhenotypeSimulator
 
 from .utils.data_utils import *
 
-__version__ = '0.1.3'
-__release_date__ = 'May 2024'
+__version__ = '0.1.4'
+__release_date__ = 'June 2024'
 
 
 config = configparser.ConfigParser()

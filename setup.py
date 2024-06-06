@@ -79,7 +79,7 @@ with open("requirements-docs.txt") as fp:
 
 setup(
     name="magenpy",
-    version="0.1.3",
+    version="0.1.4",
     author="Shadi Zabad",
     author_email="shadi.zabad@mail.mcgill.ca",
     description="Modeling and Analysis of Statistical Genetics data in python",
@@ -105,6 +105,7 @@ setup(
     python_requires=">=3.8",
     package_data={'magenpy': ['data/*.bed', 'data/*.bim', 'data/*.fam',
                               'data/ukb_height_chr22.fastGWA.gz',
+                              'data/lrld_hg19_GRCh37.txt',
                               'config/*.ini']},
     scripts=['bin/magenpy_ld', 'bin/magenpy_simulate'],
     install_requires=install_requires,
