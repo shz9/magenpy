@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.1.4] - TBD
+
+### Changed
+
+- Updated the data type for the index pointer in the `LDMatrix` object to be `int64`. `int32` does
+not work well for very large datasets with millions of variants and it causes overflow errors.
+- Updated the way we determine the `pandas` chunksize when converting from `plink` tables to `zarr`.
+- Simplified the way we compute the quantization scale in `model_utils`.
+
+### Added
+
+- Added extra validation checks in `LDMatrix` to ensure that the index pointer is formatted correctly.
+
 ## [0.1.3] - 2024-05-21
 
 ### Changed

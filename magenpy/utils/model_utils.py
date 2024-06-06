@@ -369,16 +369,14 @@ def quantize(floats, int_dtype=np.int8):
     # Infer the boundaries from the integer type
     info = np.iinfo(int_dtype)
 
-    # Compute the scale and zero point
     # NOTE: We add 1 to the info.min here to force the zero point to be exactly at 0.
     # See discussions on Scale Quantization Mapping.
-    scale = 2. / (info.max - (info.min + 1))
 
     # Use as much in-place operations as possible
     # (Currently, we copy the data twice)
-    scaled_floats = floats / scale
+    scaled_floats = floats*info.max
     np.round(scaled_floats, out=scaled_floats)
-    np.clip(scaled_floats, info.min, info.max, out=scaled_floats)
+    np.clip(scaled_floats, info.min + 1, info.max, out=scaled_floats)
 
     return scaled_floats.astype(int_dtype)
 
@@ -394,13 +392,8 @@ def dequantize(ints, float_dtype=np.float32):
     # Infer the boundaries from the integer type
     info = np.iinfo(ints.dtype)
 
-    # Compute the scale and zero point
-    # NOTE: We add 1 to the info.min here to force the zero point to be exactly at 0.
-    # See discussions on Scale Quantization Mapping.
-    scale = 2. / (info.max - (info.min + 1))
-
     dq = ints.astype(float_dtype)
-    dq *= scale  # in-place multiplication
+    dq /= info.max  # in-place multiplication
 
     return dq
 

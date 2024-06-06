@@ -159,8 +159,7 @@ class LDMatrix(object):
             mat.array('data', triu_mat.data.astype(dtype), dtype=dtype, compressor=compressor_name)
 
         # Store the index pointer:
-        mat.array('indptr', triu_mat.indptr,
-                  dtype=np.int32, compressor=compressor)
+        mat.array('indptr', triu_mat.indptr, dtype=np.int64, compressor=compressor)
 
         return cls(z)
 
@@ -217,7 +216,7 @@ class LDMatrix(object):
             ld_chunks = [ld_chunks]
 
         # Create a dictionary mapping SNPs to their indices:
-        snp_dict = dict(zip(snps, np.arange(len(snps))))
+        snp_idx = pd.Series(np.arange(len(snps), dtype=np.int32), index=snps)
 
         indptr_counts = np.zeros(len(snps), dtype=np.int32)
 
@@ -227,7 +226,10 @@ class LDMatrix(object):
         for ld_chunk in ld_chunks:
 
             # Create an indexed LD chunk:
-            ld_chunk['row_index'] = ld_chunk['SNP_A'].map(snp_dict)
+            row_index = snp_idx[ld_chunk['SNP_A'].values]
+
+            # Fill N/A in R before storing it:
+            ld_chunk['R'].fillna(0., inplace=True)
 
             # Add LD data to the zarr array:
             if np.issubdtype(dtype, np.integer):
@@ -237,16 +239,16 @@ class LDMatrix(object):
 
             total_len += len(ld_chunk)
 
-            # Group by the row index:
-            grouped_ridx = ld_chunk.groupby('row_index').size()
+            # Count the number of occurrences of each SNP in the chunk:
+            snp_counts = row_index.value_counts()
 
             # Add the number of entries to indptr_counts:
-            indptr_counts[grouped_ridx.index] += grouped_ridx.values
+            indptr_counts[snp_counts.index] += snp_counts.values
 
         # Get the final indptr by computing cumulative sum:
-        indptr = np.insert(np.cumsum(indptr_counts), 0, 0)
+        indptr = np.insert(np.cumsum(indptr_counts, dtype=np.int64), 0, 0)
         # Store indptr in the zarr group:
-        mat.array('indptr', indptr, dtype=np.int32, compressor=compressor)
+        mat.array('indptr', indptr, dtype=np.int64, compressor=compressor)
 
         # Resize the data array:
         mat['data'].resize(total_len)
@@ -306,7 +308,7 @@ class LDMatrix(object):
         num_rows = dense_zarr.shape[0]
         chunk_size = dense_zarr.chunks[0]
 
-        indptr_counts = np.zeros(num_rows, dtype=int)
+        indptr_counts = np.zeros(num_rows, dtype=np.int32)
 
         total_len = 0
 
@@ -340,9 +342,9 @@ class LDMatrix(object):
             total_len += chunk_len
 
         # Get the final indptr by computing cumulative sum:
-        indptr = np.insert(np.cumsum(indptr_counts), 0, 0)
+        indptr = np.insert(np.cumsum(indptr_counts, dtype=np.int64), 0, 0)
         # Store indptr in the zarr array:
-        mat.array('indptr', indptr, compressor=compressor)
+        mat.array('indptr', indptr, dtype=np.int64, compressor=compressor)
 
         # Resize the data and indices arrays:
         mat['data'].resize(total_len)
@@ -405,7 +407,7 @@ class LDMatrix(object):
         mat = z.create_group('matrix')
         mat.empty('data', shape=num_rows ** 2, dtype=dtype, compressor=compressor)
 
-        indptr_counts = np.zeros(num_rows, dtype=int)
+        indptr_counts = np.zeros(num_rows, dtype=np.int64)
 
         # Get the LD boundaries from the Zarr array attributes:
         ld_boundaries = np.array(ragged_zarr.attrs['LD boundaries'])
@@ -444,9 +446,9 @@ class LDMatrix(object):
             total_len += chunk_len
 
         # Get the final indptr by computing cumulative sum:
-        indptr = np.insert(np.cumsum(indptr_counts), 0, 0)
+        indptr = np.insert(np.cumsum(indptr_counts, dtype=np.int64), 0, 0)
         # Store indptr in the zarr array:
-        mat.array('indptr', indptr, compressor=compressor)
+        mat.array('indptr', indptr, dtype=np.int64, compressor=compressor)
 
         # Resize the data and indices arrays:
         mat['data'].resize(total_len)
@@ -805,7 +807,8 @@ class LDMatrix(object):
 
         Which is based on the work of
 
-        > Anderson, Carl A., et al. "Data quality control in genetic case-control association studies." Nature protocols 5.9 (2010): 1564-1573.
+        > Anderson, Carl A., et al. "Data quality control in genetic case-control association studies."
+        Nature protocols 5.9 (2010): 1564-1573.
 
         .. note ::
             This method is experimental and may not work as expected for all LD matrices.
@@ -1502,9 +1505,10 @@ class LDMatrix(object):
         Specifically, we check that:
         * The dimensions of the matrix and its associated attributes are matching.
         * The masking is working properly.
+        * Index pointer is valid and its contents make sense.
 
         :return: True if the matrix has the correct structure.
-        :raises ValueError: if the matrix is not valid.
+        :raises ValueError: If the matrix or some of its entries are not valid.
         """
 
         class_attrs = ['snps', 'a1', 'a2', 'maf', 'bp_position', 'cm_position', 'ld_score']
@@ -1515,6 +1519,23 @@ class LDMatrix(object):
                 continue
             if len(attribute) != len(self):
                 raise ValueError(f"Invalid LD Matrix: Dimensions for attribute {attr} are not aligned!")
+
+        # -------------------- Index pointer checks --------------------
+        # Check that the entries of the index pointer are all positive or zero:
+        indptr = self.indptr[:]
+
+        if indptr.min() < 0:
+            raise ValueError("The index pointer contains negative entries!")
+
+        # Check that the entries don't decrease:
+        indptr_diff = np.diff(indptr)
+        if indptr_diff.min() < 0:
+            raise ValueError("The index pointer entries are not increasing!")
+
+        # Check that the last entry of the index pointer matches the shape of the data:
+        if indptr[-1] != self.data.shape[0]:
+            raise ValueError("The last entry of the index pointer "
+                             "does not match the shape of the data!")
 
         # TODO: Add other sanity checks here?
 

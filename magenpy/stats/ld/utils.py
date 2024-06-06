@@ -359,7 +359,8 @@ def compute_ld_plink1p9(genotype_matrix,
     # Compute the pandas chunk_size
     # The goal of this is to process chunks of the LD table without overwhelming memory resources:
     avg_ncols = int((ld_boundaries[1, :] - ld_boundaries[0, :]).mean())
-    rows_per_chunk = estimate_rows_per_chunk(ld_boundaries.shape[1], avg_ncols, dtype=dtype)
+    # NOTE: Estimate the rows per chunk using float32 because that's how we'll read the data from plink:
+    rows_per_chunk = estimate_rows_per_chunk(ld_boundaries.shape[1], avg_ncols, dtype=np.float32)
 
     if rows_per_chunk > 0.1*ld_boundaries.shape[1]:
         pandas_chunksize = None
