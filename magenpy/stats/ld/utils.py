@@ -253,6 +253,7 @@ def estimate_rows_per_chunk(rows, cols, dtype='int8', mem_size=128):
 def compute_ld_plink1p9(genotype_matrix,
                         ld_boundaries,
                         output_dir,
+                        window_size_thresholds,
                         temp_dir='temp',
                         overwrite=True,
                         dtype='int8',
@@ -263,8 +264,9 @@ def compute_ld_plink1p9(genotype_matrix,
     Compute LD matrices using plink 1.9.
 
     :param genotype_matrix: A plinkBEDGenotypeMatrix object
-    :param ld_boundaries: An array of LD boundaries for every SNP
+    :param ld_boundaries: An 2xM matrix of LD boundaries for every variant.
     :param output_dir: The output directory for the final LD matrix file (after processing).
+    :param window_size_thresholds: A dictionary of the window size thresholds to pass to plink1.9.
     :param temp_dir: A temporary directory to store intermediate files (e.g. files created for and by plink).
     :param overwrite: If True, it overwrites any LD matrices in `output_dir`.
     :param dtype: The data type for the entries of the LD matrix (supported data types are float32, float64
@@ -291,27 +293,6 @@ def compute_ld_plink1p9(genotype_matrix,
 
     plink_output = osp.join(temp_dir, f'chr_{str(genotype_matrix.chromosome)}')
 
-    # Set the window sizes in various units:
-
-    # (1) Number of neighboring SNPs:
-    window_size = (ld_boundaries - np.arange(genotype_matrix.m)).max() + 10
-
-    # (2) Kilobases:
-    positional_bounds = np.clip(np.array([ld_boundaries[0, :] - 1, ld_boundaries[1, :]]),
-                                a_min=0, a_max=ld_boundaries.shape[1] - 1)
-
-    kb_pos = .001*genotype_matrix.bp_pos
-    kb_bounds = kb_pos[positional_bounds]
-    kb_window_size = (kb_bounds - kb_pos).max() + .01
-
-    # (3) centi Morgan:
-    try:
-        cm_pos = genotype_matrix.cm_pos
-        cm_bounds = genotype_matrix.cm_pos[positional_bounds]
-        cm_window_size = (cm_bounds - cm_pos).max() + .01
-    except Exception:
-        cm_window_size = None
-
     cmd = [
         f"--bfile {genotype_matrix.bed_file.replace('.bed', '')}",
         f"--keep {keep_file}",
@@ -319,12 +300,12 @@ def compute_ld_plink1p9(genotype_matrix,
         "--keep-allele-order",
         f"--out {plink_output}",
         "--r gz",
-        f"--ld-window {window_size}",
-        f"--ld-window-kb {kb_window_size}"
+        f"--ld-window {window_size_thresholds['window_size']}",
+        f"--ld-window-kb {window_size_thresholds['kb_window_size']}"
     ]
 
-    if cm_window_size is not None:
-        cmd.append(f"--ld-window-cm {cm_window_size}")
+    if 'cm_window_size' in window_size_thresholds:
+        cmd.append(f"--ld-window-cm {window_size_thresholds['cm_window_size']}")
 
     # ---------------------------------------------------------
     # Test if plink1.9 version is compatible with setting the --ld-window-r2 flag:

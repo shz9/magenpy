@@ -56,6 +56,60 @@ class SampleLD(object):
         m = self.genotype_matrix.n_snps
         return np.array((np.zeros(m), np.ones(m)*m)).astype(np.int64)
 
+    def compute_plink_window_thresholds(self, ld_boundaries=None):
+        """
+        Computes the LD window thresholds to pass to plink1.9 for computing LD matrices.
+        Unfortunately, plink1.9 sets some default values for the window size and it
+        is important to set all the thresholds to obtain the desired shape for the
+        LD matrix.
+
+        :param ld_boundaries: The LD boundaries for which to compute the thresholds. If not passed,
+        we compute the LD boundaries using the `compute_ld_boundaries` method.
+
+        :return: A dictionary containing the window size thresholds for plink1.9.
+
+        """
+
+        if ld_boundaries is None:
+            ld_boundaries = self.compute_ld_boundaries()
+
+        threshold_dict = {}
+
+        # (1) Determine maximum window size (Maximum number of neighbors on each side):
+        try:
+            threshold_dict['window_size'] = getattr(self, "window_size")
+            assert threshold_dict['window_size'] is not None
+        except (AttributeError, AssertionError):
+            threshold_dict['window_size'] = np.abs(ld_boundaries -
+                                                   np.arange(ld_boundaries.shape[1])).max()
+
+        # (2) Determine the maximum window size in kilobases + Centi Morgan (if available):
+
+        positional_bounds = np.array([ld_boundaries[0, :], ld_boundaries[1, :] - 1])
+
+        try:
+            threshold_dict['kb_window_size'] = getattr(self, "kb_window_size")
+            assert threshold_dict['kb_window_size'] is not None
+        except (AttributeError, AssertionError):
+            kb_pos = .001 * self.genotype_matrix.bp_pos
+            kb_bounds = kb_pos[positional_bounds]
+            threshold_dict['kb_window_size'] = np.abs(kb_bounds - kb_pos).max()
+
+        # (3) centi Morgan:
+        try:
+            threshold_dict['cm_window_size'] = getattr(self, "cm_window_size")
+            assert threshold_dict['cm_window_size'] is not None
+        except (AttributeError, AssertionError):
+            try:
+                # Checks if cm_pos is available in the genotype matrix:
+                cm_pos = self.genotype_matrix.cm_pos
+                cm_bounds = self.genotype_matrix.cm_pos[positional_bounds]
+                threshold_dict['cm_window_size'] = np.abs(cm_bounds - cm_pos).max()
+            except KeyError:
+                del threshold_dict['cm_window_size']
+
+        return threshold_dict
+
     def compute(self,
                 output_dir,
                 temp_dir='temp',
@@ -100,9 +154,14 @@ class SampleLD(object):
                                        compressor_name=compressor_name,
                                        compression_level=compression_level)
         elif isinstance(self.genotype_matrix, plinkBEDGenotypeMatrix):
+
+            # Compute the window size thresholds to pass to plink 1.9:
+            window_size_thersh = self.compute_plink_window_thresholds(ld_boundaries)
+
             ld_mat = compute_ld_plink1p9(self.genotype_matrix,
                                          ld_boundaries,
                                          output_dir,
+                                         window_size_thersh,
                                          temp_dir=temp_dir,
                                          overwrite=overwrite,
                                          dtype=dtype,

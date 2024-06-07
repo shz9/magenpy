@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 not work well for very large datasets with millions of variants and it causes overflow errors.
 - Updated the way we determine the `pandas` chunksize when converting from `plink` tables to `zarr`.
 - Simplified the way we compute the quantization scale in `model_utils`.
+- Fixed major bug in how LD window thresholds that are passed to `plink1.9` are computed.
 
 ### Added
 

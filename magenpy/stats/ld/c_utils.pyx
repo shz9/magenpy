@@ -464,6 +464,11 @@ cpdef find_windowed_ld_boundaries(floating[:] pos, double max_dist):
     Find the LD boundaries for the windowed estimator of LD, i.e., the 
     indices of the leftmost and rightmost neighbors for each SNP.
     
+    .. note::
+        To match plink's behavior, the bounds here are inclusive, i.e., 
+        if the distance between two SNPs is exactly equal to the maximum distance, 
+        they are considered neighbors.
+    
     :param pos: A vector with the position of each genetic variant.
     :param max_dist: The maximum distance between SNPs to consider them neighbors.
     """
