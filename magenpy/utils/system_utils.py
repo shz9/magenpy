@@ -153,9 +153,12 @@ def run_shell_script(cmd):
     """
     Run the shell script given the command prompt in `cmd`.
     :param cmd: A string with the shell command to run.
+
+    :return: The result of the shell command.
+    :raises: subprocess.CalledProcessError if the shell command fails.
     """
 
-    result = subprocess.run(cmd, shell=True, capture_output=True)
+    result = subprocess.run(cmd, shell=True, capture_output=True, check=True)
 
     if result.stderr:
         raise subprocess.CalledProcessError(
@@ -175,5 +178,5 @@ def delete_temp_files(prefix):
     for f in glob.glob(f"{prefix}*"):
         try:
             os.remove(f)
-        except Exception:
+        except (OSError, FileNotFoundError):
             continue

@@ -15,6 +15,8 @@ not work well for very large datasets with millions of variants and it causes ov
 - Updated the way we determine the `pandas` chunksize when converting from `plink` tables to `zarr`.
 - Simplified the way we compute the quantization scale in `model_utils`.
 - Fixed major bug in how LD window thresholds that are passed to `plink1.9` are computed.
+- Fixed in-place `fillna` in `from_plink_table` in `LDMatrix` to conform to latest `pandas` API.
+- Update `run_shell_script` to check for and capture errors.
 
 ### Added
 

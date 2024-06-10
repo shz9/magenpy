@@ -229,7 +229,7 @@ class LDMatrix(object):
             row_index = snp_idx[ld_chunk['SNP_A'].values]
 
             # Fill N/A in R before storing it:
-            ld_chunk['R'].fillna(0., inplace=True)
+            ld_chunk.fillna({'R': 0.}, inplace=True)
 
             # Add LD data to the zarr array:
             if np.issubdtype(dtype, np.integer):
