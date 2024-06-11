@@ -17,6 +17,7 @@ not work well for very large datasets with millions of variants and it causes ov
 - Fixed major bug in how LD window thresholds that are passed to `plink1.9` are computed.
 - Fixed in-place `fillna` in `from_plink_table` in `LDMatrix` to conform to latest `pandas` API.
 - Update `run_shell_script` to check for and capture errors.
+- Refactored code to slightly reduce import/load times.
 
 ### Added
 

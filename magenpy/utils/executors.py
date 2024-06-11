@@ -1,5 +1,5 @@
 from .system_utils import is_cmd_tool, run_shell_script, available_cpu
-import magenpy as mgp
+from magenpy import get_option
 
 
 class plink2Executor(object):
@@ -22,7 +22,7 @@ class plink2Executor(object):
         else:
             self.threads = threads
 
-        self.plink2_path = mgp.get_option('plink2_path')
+        self.plink2_path = get_option('plink2_path')
 
         if not is_cmd_tool(self.plink2_path):
             raise Exception(f"Did not find the executable for plink2 at: {self.plink2_path}")
@@ -71,7 +71,7 @@ class plink1Executor(object):
         else:
             self.threads = threads
 
-        self.plink1_path = mgp.get_option('plink1.9_path')
+        self.plink1_path = get_option('plink1.9_path')
 
         if not is_cmd_tool(self.plink1_path):
             raise Exception(f"Did not find the executable for plink at: {self.plink1_path}")

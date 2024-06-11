@@ -1,4 +1,3 @@
-import errno
 import os
 import os.path as osp
 import subprocess
@@ -113,6 +112,7 @@ def makedir(dirs):
         try:
             os.makedirs(dir_l)
         except OSError as e:
+            import errno
             if e.errno != errno.EEXIST:
                 raise
 

@@ -41,11 +41,11 @@ print(fr"""
         Version: {mgp.__version__} | Release date: {mgp.__release_date__}
         Author: Shadi Zabad, McGill University
         **********************************************
-        < Compute LD matrix and output in Zarr format >
+        < Compute LD matrix and store in Zarr format >
 """)
 
 parser = argparse.ArgumentParser(description="""
-    Commandline arguments for LD matrix computation
+    Commandline arguments for LD matrix computation and storage
 """)
 
 # General options:

@@ -1,7 +1,6 @@
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
-from scipy import stats
 
 
 def match_chromosomes(chrom_1, chrom_2, check_patterns=('chr_', 'chr:', 'chr'), return_both=False):
@@ -204,6 +203,10 @@ def identify_mismatched_snps(gdl,
     :param max_removed_per_iter: The maximum proportion of variants removed in each iteration
     """
 
+    # Import required modules / functions:
+    from scipy import stats
+
+    # Data preparation:
     if chrom is None:
         chromosomes = gdl.chromosomes
     else:

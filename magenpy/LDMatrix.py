@@ -3,7 +3,6 @@ import os.path as osp
 import numpy as np
 import pandas as pd
 import warnings
-from scipy.sparse import csr_matrix, identity, triu, diags
 from .utils.model_utils import quantize, dequantize
 
 
@@ -132,6 +131,8 @@ class LDMatrix(object):
         :param compressor_name: The name of the compressor or compression algorithm to use with Zarr.
         :param compression_level: The compression level to use with the compressor (1-9).
         """
+
+        from scipy.sparse import triu
 
         dtype = np.dtype(dtype)
 
@@ -1004,6 +1005,8 @@ class LDMatrix(object):
             ld_scores += mat_sq.dot(annotation_matrix)
             ld_scores += mat_sq.T.dot(annotation_matrix)
 
+        from scipy.sparse import identity
+
         # Add the contribution of the diagonal:
         ld_scores += identity(self.n_snps, dtype=np.float32).dot(annotation_matrix)
 
@@ -1249,6 +1252,7 @@ class LDMatrix(object):
         if return_as_csr:
 
             from .stats.ld.c_utils import expand_ranges
+            from scipy.sparse import csr_matrix
 
             indices = expand_ranges(leftmost_idx,
                                     (np.diff(indptr) + leftmost_idx).astype(np.int32),
@@ -1354,6 +1358,8 @@ class LDMatrix(object):
             self.in_memory = True
         else:
             indices = self.indices
+
+        from scipy.sparse import csr_matrix, diags
 
         mat = csr_matrix(
             (

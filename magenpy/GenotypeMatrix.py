@@ -2,7 +2,6 @@ from typing import Union
 import tempfile
 import pandas as pd
 import numpy as np
-from .parsers.plink_parsers import parse_fam_file, parse_bim_file
 from .SampleTable import SampleTable
 
 
@@ -820,6 +819,8 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
                          bed_file=bed_file,
                          genome_build=genome_build,
                          threads=threads)
+
+        from .parsers.plink_parsers import parse_fam_file, parse_bim_file
 
         if self.bed_file is not None:
             self.bed_file = self.bed_file.replace('.bed', '')
