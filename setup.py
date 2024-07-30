@@ -54,8 +54,12 @@ def find_blas_libraries():
 
     # STEP 3: Get all pkg-config packages and filter to
     # those that have "blas" in the name.
-    blas_packages = [pkg for pkg in pkgconfig.list_all()
-                     if "blas" in pkg]
+    # NOTE: This step may not work on some systems...
+    try:
+        blas_packages = [pkg for pkg in pkgconfig.list_all()
+                         if "blas" in pkg]
+    except FileNotFoundError:
+        blas_packages = []
 
     # First check: Make sure that compiler flags are defined and a
     # valid cblas.h header file exists in the include directory:
