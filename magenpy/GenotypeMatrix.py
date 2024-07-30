@@ -343,6 +343,7 @@ class GenotypeMatrix(object):
                    dtype='int8',
                    compressor_name='zstd',
                    compression_level=7,
+                   compute_spectral_properties=False,
                    **ld_kwargs):
         """
 
@@ -359,6 +360,8 @@ class GenotypeMatrix(object):
         :param compression_level: The compression level for the Zarr array (1-9)
         :param ld_kwargs: keyword arguments for the various LD estimators. Consult
         the implementations of `WindowedLD`, `ShrinkageLD`, and `BlockLD` for details.
+        :param compute_spectral_properties: If True, compute and store information about the eigenvalues of
+        the LD matrix.
         """
 
         from .stats.ld.estimator import SampleLD, WindowedLD, ShrinkageLD, BlockLD
@@ -382,7 +385,8 @@ class GenotypeMatrix(object):
                               temp_dir=tmp_ld_dir.name,
                               dtype=dtype,
                               compressor_name=compressor_name,
-                              compression_level=compression_level)
+                              compression_level=compression_level,
+                              compute_spectral_properties=compute_spectral_properties)
 
     def set_sample_table(self, sample_table):
         """

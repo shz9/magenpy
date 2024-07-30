@@ -26,6 +26,47 @@ ctypedef fused noncomplex_numeric:
     cnp.float64_t
 
 
+cdef extern from "ld_utils.hpp" nogil:
+    bint blas_supported() noexcept nogil
+    bint omp_supported() noexcept nogil
+
+    void ld_matrix_dot[T, U, I](int c_size,
+              I* ld_indptr,
+              U* ld_data,
+              T* vec,
+              T* out,
+              T dq_scale,
+              bint include_lower_triangle,
+              bint include_upper_triangle,
+              bint include_diag,
+              int threads)
+
+
+cpdef ld_dot(integral[::1] ld_indptr,
+             noncomplex_numeric[::1] ld_data,
+             floating[::1] vec,
+             floating dq_scale = 1.,
+             bint include_lower_triangle = 1,
+             bint include_upper_triangle = 1,
+             bint include_diag = 1,
+             int threads = 1):
+
+    cdef:
+        floating[::1] out = np.zeros_like(vec)
+
+    ld_matrix_dot(vec.shape[0],
+                  &ld_indptr[0],
+                  &ld_data[0],
+                  &vec[0],
+                  &out[0],
+                  dq_scale,
+                  include_lower_triangle,
+                  include_upper_triangle,
+                  include_diag,
+                  threads)
+
+    return np.asarray(out)
+
 cpdef find_tagging_variants(int[::1] variant_indices,
                            integral[::1] indptr,
                            noncomplex_numeric[::1] data,
@@ -88,7 +129,7 @@ cpdef prune_ld_ut(integral[::1] indptr,
                     if numeric_abs(data[curr_data_idx]) >= r_threshold:
                         keep[curr_row + i + 1] = 0
 
-    return np.asarray(keep, dtype=bool)
+    return np.asarray(keep).view(bool)
 
 
 @cython.boundscheck(False)
@@ -319,19 +360,77 @@ cpdef symmetrize_ut_csr_matrix(integral[::1] indptr,
                 curr_data_idx = indptr[curr_row] + curr_col - curr_row - 1
 
                 new_idx_1 = new_indptr[curr_row] + curr_col - leftmost_col[curr_row]
-                new_idx_2 = new_indptr[curr_col] + curr_row - leftmost_col[curr_col]
-
                 new_data[new_idx_1] = data[curr_data_idx]
-                new_data[new_idx_2] = data[curr_data_idx]
+
+                # To allow for non-square matrices, we need to check if the column index is within bounds:
+                if curr_col < curr_shape:
+                    new_idx_2 = new_indptr[curr_col] + curr_row - leftmost_col[curr_col]
+                    new_data[new_idx_2] = data[curr_data_idx]
 
     return np.asarray(new_data), np.asarray(new_idx[0]), np.asarray(new_idx[1])
+
+
+cpdef filter_ut_csr_matrix_inplace(integral[::1] indptr,
+                                  noncomplex_numeric[::1] data,
+                                  char[::1] bool_mask,
+                                  int new_size):
+    """
+    Given an upper triangular CSR matrix represented by the data and indptr arrays, this function filters 
+    its entries with a boolean mask.
+
+        1. The non-zero elements are contiguous along the diagonal of each row (starting from 
+        the diagonal + 1).
+        2. The diagonal elements aren't present in the upper triangular matrix.
+        
+    .. note::
+        This function modifies the input data array in place.
+
+    :param indptr: The index pointer array for the CSR matrix to be filtered.
+    :param data: The data array for the CSR matrix to be filtered.
+    :param bool_mask: A boolean mask indicating which elements (rows) of the matrix to keep.
+    :param new_size: The new size of the filtered matrix.
+
+    :return: A tuple with the new filtered data array and the new indptr array.
+    """
+
+    cdef:
+        int64_t i, curr_row, row_bound, new_indptr_idx = 1, new_data_idx = 0, curr_shape=indptr.shape[0] - 1
+        int64_t[::1] new_indptr = np.zeros(new_size + 1, dtype=np.int64)
+
+    with nogil:
+        # For each row in the current matrix:
+        for curr_row in range(curr_shape):
+
+            # If the row is to be included in the new matrix:
+            if bool_mask[curr_row]:
+
+                # Useful quantity to convert the data array index `i` to the
+                # equivalent row index in the `bool` mask:
+                row_bound = curr_row - indptr[curr_row] + 1
+
+                # For the new indptr array, copy the value from the previous row:
+                new_indptr[new_indptr_idx] = new_indptr[new_indptr_idx - 1]
+
+                # For each entry for this row in the data array
+                for i in range(indptr[curr_row], indptr[curr_row + 1]):
+
+                    # If the entry isn't filtered, make sure it's included in the new matrix
+                    # And increase the `indptr` by one unit:
+                    if bool_mask[row_bound + i]:
+                        data[new_data_idx] = data[i]
+                        new_data_idx += 1
+                        new_indptr[new_indptr_idx] += 1
+
+                new_indptr_idx += 1
+
+    return np.asarray(data)[:new_data_idx], np.asarray(new_indptr)
 
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef filter_ut_csr_matrix(integral[::1] indptr, char[::1] bool_mask):
+cpdef generate_data_mask_ut_csr_matrix(integral[::1] indptr, char[::1] bool_mask):
     """
     This is a utility function to generate a mask with the purpose of filtering 
     the data array of upper-triangular CSR matrices. The function also generates a new 
@@ -377,7 +476,7 @@ cpdef filter_ut_csr_matrix(integral[::1] indptr, char[::1] bool_mask):
 
                 new_indptr_idx += 1
 
-    return np.asarray(data_mask).astype(bool, copy=False), np.asarray(new_indptr)
+    return np.asarray(data_mask).view(bool), np.asarray(new_indptr)
 
 @cython.boundscheck(False)
 @cython.wraparound(False)

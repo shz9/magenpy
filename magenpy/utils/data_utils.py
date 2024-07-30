@@ -28,7 +28,8 @@ def lrld_path():
 
     Which is based on the work of
 
-    > Anderson, Carl A., et al. "Data quality control in genetic case-control association studies." Nature protocols 5.9 (2010): 1564-1573.
+    > Anderson, Carl A., et al. "Data quality control in genetic case-control association studies."
+    Nature protocols 5.9 (2010): 1564-1573.
 
     :return: The path of the attached BED file containing long-range linkage disequilibrium
     (LD) regions in the human genome. The coordinates are in hg19/GRCh37.

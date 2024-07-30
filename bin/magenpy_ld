@@ -85,6 +85,13 @@ parser.add_argument('--storage-dtype', dest='storage_dtype', type=str,
                     default='int8', help='The data type for the entries of the LD matrix.',
                     choices={'float32', 'float64', 'int16', 'int8'})
 
+# Other options:
+parser.add_argument('--compute-spectral-properties', dest='compute_spectral',
+                    default=False,
+                    action='store_true',
+                    help='Compute and store the spectral properties of the '
+                         'LD matrix (e.g. eigenvalues, eigenvectors).')
+
 # Add arguments for the compressor:
 parser.add_argument('--compressor', dest='compressor', type=str,
                     default='zstd', help='The compressor name or compression algorithm to use for the LD matrix.',
@@ -226,6 +233,7 @@ ld_mat = g.compute_ld(args.estimator,
                       dtype=args.storage_dtype,
                       compressor_name=args.compressor,
                       compression_level=args.compression_level,
+                      compute_spectral_properties=args.compute_spectral,
                       **ld_kwargs)
 
 # Store metadata (if provided):

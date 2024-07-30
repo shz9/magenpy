@@ -35,7 +35,7 @@ class LDMatrix(object):
             * `a2`: The array containing the reference alleles.
             * `maf`: The array containing the minor allele frequencies.
             * `bp`: The array containing the base pair positions.
-            * `cm`: The array containing the centi Morgan positions.
+            * `cm`: The array containing the centi Morgan distance along the chromosome.
             * `ldscore`: The array containing the LD scores.
         * `attrs`: A JSON-style metadata object containing general information about how the LD matrix
         was calculated, including the chromosome number, sample size, genome build, LD estimator,
@@ -81,34 +81,75 @@ class LDMatrix(object):
     @classmethod
     def from_path(cls, ld_store_path):
         """
-        Initialize an `LDMatrix` object from a pre-computed Zarr group store.
-        :param ld_store_path: The path to the Zarr array store on the filesystem.
+        Initialize an `LDMatrix` object from a pre-computed Zarr group store. This is a genetic method
+        that can work with both cloud-based stores (e.g. s3 storage) or local filesystems.
+
+        :param ld_store_path: The path to the Zarr array store.
 
         !!! seealso "See Also"
-            * [from_dir][magenpy.LDMatrix.LDMatrix.from_dir]
+            * [from_directory][magenpy.LDMatrix.LDMatrix.from_directory]
+            * [from_s3][magenpy.LDMatrix.LDMatrix.from_s3]
 
+        :return: An `LDMatrix` object.
+
+        """
+
+        if 's3://' in ld_store_path:
+            return cls.from_s3(ld_store_path)
+        else:
+            return cls.from_directory(ld_store_path)
+
+    @classmethod
+    def from_s3(cls, s3_path, cache_size=None):
+        """
+        Initialize an `LDMatrix` object from a Zarr group store hosted on AWS s3 storage.
+
+        :param s3_path: The path to the Zarr group store on AWS s3. s3 paths are expected
+        to be of the form `s3://bucket-name/path/to/zarr-store`.
+        :param cache_size: The size of the cache for the Zarr store (in bytes).
+
+        .. note::
+            Requires installing the `s3fs` package to access the Zarr store on AWS s3.
+
+        !!! seealso "See Also"
+            * [from_path][magenpy.LDMatrix.LDMatrix.from_path]
+            * [from_directory][magenpy.LDMatrix.LDMatrix.from_directory]
+
+        :return: An `LDMatrix` object.
+
+        """
+
+        import s3fs
+
+        s3 = s3fs.S3FileSystem(anon=True, client_kwargs=dict(region_name='us-east-2'))
+        store = s3fs.S3Map(root=s3_path.replace('s3://', ''), s3=s3, check=False)
+        cache = zarr.LRUStoreCache(store, max_size=cache_size)
+        ld_group = zarr.open_group(store=cache, mode='r')
+
+        return cls(ld_group)
+
+    @classmethod
+    def from_directory(cls, dir_path):
+        """
+        Initialize an `LDMatrix` object from a Zarr array store.
+        :param dir_path: The path to the Zarr array store on the local filesystem.
+
+        !!! seealso "See Also"
+            * [from_s3][magenpy.LDMatrix.LDMatrix.from_s3]
+            * [from_path][magenpy.LDMatrix.LDMatrix.from_path]
+
+        :return: An `LDMatrix` object.
         """
 
         for level in range(2):
             try:
-                ld_group = zarr.open_group(ld_store_path, mode='r')
+                ld_group = zarr.open_group(dir_path, mode='r')
                 return cls(ld_group)
             except zarr.hierarchy.GroupNotFoundError as e:
                 if level < 1:
-                    ld_store_path = osp.dirname(ld_store_path)
+                    dir_path = osp.dirname(dir_path)
                 else:
                     raise e
-
-    @classmethod
-    def from_dir(cls, ld_store_path):
-        """
-        Initialize an `LDMatrix` object from a Zarr array store.
-        :param ld_store_path: The path to the Zarr array store on the filesystem.
-
-        !!! seealso "See Also"
-            * [from_path][magenpy.LDMatrix.LDMatrix.from_path]
-        """
-        return cls.from_path(ld_store_path)
 
     @classmethod
     def from_csr(cls,
@@ -486,11 +527,16 @@ class LDMatrix(object):
     @property
     def n_snps(self):
         """
-        :return: The number of variants in the LD matrix. If the matrix is loaded and filtered,
-        we return the number of variants remaining after applying the filter.
+        :return: The number of variants in the LD matrix. If a mask is set, we return the
+        number of variants included in the mask.
         """
         if self._mat is not None:
             return self._mat.shape[0]
+        elif self._mask is not None:
+            if self._mask.dtype == bool:
+                return self._mask.sum()
+            else:
+                return len(self._mask)
         else:
             return self.stored_n_snps
 
@@ -601,6 +647,16 @@ class LDMatrix(object):
         :return: The sample size used to compute the LD matrix.
         """
         return self.get_store_attr('Sample size')
+
+    @property
+    def dequantization_scale(self):
+        """
+        :return: The dequantization scale for the quantized LD matrix. If the matrix is not quantized, returns 1.
+        """
+        if np.issubdtype(self.stored_dtype, np.integer):
+            return 1./np.iinfo(self.stored_dtype).max
+        else:
+            return 1.
 
     @property
     def genome_build(self):
@@ -718,7 +774,14 @@ class LDMatrix(object):
         :return: The number of variants in the LD window for each SNP.
 
         """
-        return np.diff(self.indptr)
+
+        if self.in_memory and self.is_symmetric:
+            indptr = self.indptr
+        else:
+            from .stats.ld.c_utils import get_symmetrized_indptr
+            indptr, _ = get_symmetrized_indptr(self.indptr[:])
+
+        return np.diff(indptr)
 
     @property
     def n_neighbors(self):
@@ -781,12 +844,8 @@ class LDMatrix(object):
         """
         :return: The row indices of the non-zero elements of the sparse, CSR representation of the LD matrix
         """
-        if self.in_memory:
-            # TODO: Check that this behaves correctly if some entries are zero but not eliminated.
-            return self.csr_matrix.nonzero()[0]
-        else:
-            indptr = self.indptr
-            return np.repeat(np.arange(len(indptr) - 1), np.diff(indptr))
+        indptr = self.indptr
+        return np.repeat(np.arange(len(indptr) - 1), np.diff(indptr))
 
     @property
     def indptr(self):
@@ -975,27 +1034,25 @@ class LDMatrix(object):
         """
 
         if chunk_size is None:
-            chunk_size = self.stored_n_snps
+            chunk_size = self.n_snps
 
         if annotation_matrix is None:
             annotation_matrix = np.ones((self.n_snps, 1), dtype=np.float32)
 
         ld_scores = np.zeros((self.n_snps, annotation_matrix.shape[1]))
 
-        for chunk_idx in range(int(np.ceil(self.stored_n_snps / chunk_size))):
+        for chunk_idx in range(int(np.ceil(self.n_snps / chunk_size))):
 
             start_row = chunk_idx*chunk_size
             end_row = (chunk_idx + 1)*chunk_size
 
-            csr_mat = self.load_rows(start_row=start_row,
+            csr_mat = self.load_data(start_row=start_row,
                                      end_row=end_row,
                                      return_symmetric=False,
-                                     fill_diag=False,
+                                     return_square=False,
+                                     keep_original_shape=True,
+                                     return_as_csr=True,
                                      dtype=np.float32)
-
-            # If a mask is set, apply it to the matrix:
-            if self._mask is not None:
-                csr_mat = csr_mat[self._mask, :][:, self._mask]
 
             mat_sq = csr_mat.power(2)
 
@@ -1022,16 +1079,25 @@ class LDMatrix(object):
         """
         Multiply the LD matrix with an input vector `vec`.
 
+        :param vec: The input vector to multiply with the LD matrix.
+
         !!! seealso "See Also"
             * [dot][magenpy.LDMatrix.LDMatrix.dot]
 
         :return: The product of the LD matrix with the input vector.
         """
-        return self.csr_matrix.dot(vec)
+
+        if self.in_memory:
+            return self.csr_matrix.dot(vec)
+        else:
+            ld_opr = self.get_linear_operator()
+            return ld_opr.dot(vec)
 
     def dot(self, vec):
         """
         Multiply the LD matrix with an input vector `vec`.
+
+        :param vec: The input vector to multiply with the LD matrix.
 
         !!! seealso "See Also"
             * [multiply][magenpy.LDMatrix.LDMatrix.multiply]
@@ -1041,11 +1107,247 @@ class LDMatrix(object):
         """
         return self.multiply(vec)
 
+    def perform_svd(self, **svds_kwargs):
+        """
+        Perform the Singular Value Decomposition (SVD) on the LD matrix.
+        This method is a wrapper around the `scipy.sparse.linalg.svds` function and provides
+        utilities to perform SVD with a LinearOperator for large-scale LD matrix, so that
+        the matrices don't need to be fully represented in memory.
+
+        :param svds_kwargs: Additional keyword arguments to pass to the `scipy.sparse.linalg.svds` function.
+
+        :return: The result of the SVD decomposition of the LD matrix.
+        """
+
+        from scipy.sparse.linalg import svds
+
+        if self.in_memory and not np.issubdtype(self.dtype, np.integer):
+            mat = self.csr_matrix
+        else:
+            mat = self.get_linear_operator()
+
+        return svds(mat, **svds_kwargs)
+
+    def estimate_min_eigenvalue(self,
+                                block_size=None,
+                                block_size_cm=None,
+                                block_size_kb=None,
+                                blocks=None,
+                                return_block_boundaries=False,
+                                assign_to_variants=False):
+        """
+        Estimate the smallest eigen value for the LD matrix. This is useful for
+        computing understanding the spectral properties of the LD matrix and detecting potential
+        issues for downstream applications that leverage the LD matrix. For instance, many LD
+        matrices are not positive semi-definite (PSD) and this manifests in having negative eigenvalues.
+        This function can be used to detect such issues.
+
+        To perform this computation efficiently, we leverage fast ARPACK routines provided by `scipy` to
+        compute only the smallest eigenvalue of the LD matrix. Another advantage of this implementation
+        is that it doesn't require symmetric or dequantized LD matrices. The `LDLinearOperator` class
+        can be used to perform all the computations without symmetrizing or dequantizing the matrix beforehand,
+        which should make it more efficient in terms of memory and CPU resources.
+
+        Furthermore, this function supports computing eigenvalues for sub-blocks of the LD matrix,
+        by simply providing one of the following parameters:
+            * `block_size`: Number of variants per block
+            * `block_size_cm`: Block size in centi-Morgans
+            * `block_size_kb` Block size in kilobases
+
+        :param block_size: An integer specifying the block size or number of variants to
+        compute the minimum eigenvalue for. If provided, we compute minimum eigenvalues for each block in the
+        LD matrix separately, instead of the minimum eigenvalue for the entire matrix. This can be useful for
+        large LD matrices that don't fit in memory or in cases where information about local blocks is needed.
+        :param block_size_cm: The block size in centi-Morgans (cM) to compute the minimum eigenvalue for.
+        :param block_size_kb: The block size in kilo-base pairs (kb) to compute the minimum eigenvalue for.
+        :param blocks: An array or list specifying the block boundaries to compute the minimum eigenvalue for.
+        If there are B blocks, then the array should be of size B + 1, with the entries specifying the start position
+        of each block.
+        :param return_block_boundaries: If True, return the block boundaries used to compute the minimum eigenvalue.
+        :param assign_to_variants: If True, assign the minimum eigenvalue to the variants used to compute it.
+
+        :return: The smallest eigenvalue(s) of the LD matrix or sub-blocks of the LD matrix. If `assign_to_variants`
+        is set to True, then return an array of size `n_snps` mapping the minimum eigenvalue to each variant.
+        """
+
+        from scipy.sparse.linalg import eigsh, ArpackNoConvergence
+
+        n_snps = self.stored_n_snps
+
+        if blocks is not None:
+            block_iter = blocks
+        elif block_size is not None:
+
+            block_iter = np.clip(np.array(range(0, n_snps + (n_snps % block_size), block_size)),
+                                 a_min=0, a_max=n_snps)
+
+            # If the last remaining block is too small, merge it with the previous block:
+            if block_iter[-1] - block_iter[-2] < 50:
+                block_iter[-2] = block_iter[-1]
+                block_iter = block_iter[:-1]
+
+        elif block_size_cm is not None or block_size_kb is not None:
+
+            if block_size_cm is not None:
+                dist = self.get_metadata('cm', apply_mask=False)
+            else:
+                dist = self.get_metadata('bp', apply_mask=False) / 1000
+
+            dist -= dist[0]
+
+            block_iter = np.concatenate([[0],
+                                         np.where((dist[1:] // block_size_cm) !=
+                                                  (dist[:-1] // block_size_cm))[0] + 1,
+                                         ])
+
+            # If the last remaining block is too small, merge it with the previous block:
+            if n_snps - block_iter[-1] < 50:
+                block_iter[-1] = n_snps
+            else:
+                block_iter = np.concatenate([block_iter, [n_snps]])
+
+        else:
+            block_iter = [0, n_snps]
+
+        if assign_to_variants:
+            eigs_per_var = np.zeros(n_snps, dtype=np.float32)
+        else:
+            eigs = []
+
+        def fast_min_eig(lop, **eigsh_kwargs):
+            """
+            A helper function to compute the smallest eigenvalue of the LD matrix efficiently.
+            This function uses a trick to shift the eigenvalues to the right by the maximum eigenvalue
+            and then computes the smallest eigenvalue of the shifted matrix. This is a more stable
+            and efficient approach for computing the smallest eigenvalue of the LD matrix.
+
+            :param lop: The LDLinearOperator object to compute the smallest eigenvalue for.
+
+            :return: The smallest eigenvalue of the LD matrix.
+
+            """
+            lop.set_diag_add(None)
+            lm_max = eigsh(lop, k=1, which='LM', return_eigenvectors=False, **eigsh_kwargs)[0]
+            lop.set_diag_add(-lm_max)
+            lm_max_hat = eigsh(lop, k=1, which='LM', return_eigenvectors=False, **eigsh_kwargs)[0]
+            lop.set_diag_add(None)
+
+            return lm_max + lm_max_hat
+
+        for bidx in range(len(block_iter) - 1):
+
+            start = block_iter[bidx]
+            end = block_iter[bidx + 1]
+
+            mat = self.get_linear_operator(start_row=start, end_row=end)
+
+            try:
+
+                eig = fast_min_eig(mat)
+            except ArpackNoConvergence:
+                # If there are convergence issues, try to re-run by increasing
+                # the number of iterations or decreasing the tolerance threshold:
+                if mat.shape[0]*10 < 10000:
+                    eig = fast_min_eig(mat, maxiter=10000)
+                else:
+                    eig = fast_min_eig(mat, tol=1e-4)
+
+            if assign_to_variants:
+                eigs_per_var[start:end] = eig
+            else:
+                eigs.append(eig)
+
+        if assign_to_variants:
+
+            if self._mask is not None:
+                eigs_per_var = eigs_per_var[self._mask]
+
+            if return_block_boundaries:
+                return eigs_per_var, block_iter
+            else:
+                return eigs_per_var
+        elif return_block_boundaries:
+            return eigs, block_iter
+        else:
+            if len(eigs) == 1:
+                return eigs[0]
+            else:
+                return eigs
+
+    def get_lambda_min(self, aggregate=None):
+        """
+        A utility method to compute the `lambda_min` value for the LD matrix. `lambda_min` is the smallest
+        eigenvalue of the LD matrix and this quantity can be useful to know about in some applications.
+        The function retrieves minimum eigenvalue (if pre-computed and stored) per block and maps it
+        to each variant in the corresponding block. If minimum eigenvalues per block are not available,
+         we use global minimum eigenvalue (either from matrix attributes or we compute it on the spot).
+
+        Before returning the `lambda_min` value to the user, we apply the following transformation:
+
+        abs(min(lambda_min, 0.))
+
+        This implies that if the minimum eigenvalue is positive, we just return 0. for `lambda_min`. We are mainly
+        interested in negative eigenvalues here (if they exist).
+
+        :param aggregate: A summary of the minimum eigenvalue across variants or across blocks (if available).
+        Supported aggregation functions are `mean_block`, `median_block`, `min_block`, and `min`. If `min` is selected,
+        we return the minimum eigenvalue for the entire matrix (rather than sub-blocks of it).
+
+        :return: The `lambda_min` value for the LD matrix.
+        """
+
+        if aggregate is not None:
+            assert aggregate in ('mean_block', 'median_block', 'min_block', 'min')
+
+        # Get the attributes of the LD store:
+        store_attrs = self.list_store_attributes()
+
+        if aggregate in ('mean_block', 'median_block', 'min_block'):
+            assert 'Min eigenvalue per block' in store_attrs, (
+                'Aggregating lambda_min across blocks '
+                'requires that these blocks are pre-defined.')
+
+        lambda_min = 0.
+
+        if aggregate == 'min' or 'Min eigenvalue per block' not in store_attrs:
+
+            if 'Min eigenvalue' in store_attrs:
+                lambda_min = self.get_store_attr('Min eigenvalue')
+            else:
+                lambda_min = self.estimate_min_eigenvalue()
+
+        elif 'Min eigenvalue per block' in store_attrs:
+
+            # If we have eigenvalues per block, map the block value to each variant:
+            block_eigs = self.get_store_attr('Min eigenvalue per block')
+
+            if aggregate is None:
+
+                indices = np.arange(block_eigs['Block boundaries'][-1])
+                # Use searchsorted to find which boundary each index belongs to:
+                value_indices = np.searchsorted(block_eigs['Block boundaries'], indices, side='right') - 1
+                lambda_min = np.array(block_eigs['Min eigenvalue'])[value_indices]
+
+                if self._mask is not None:
+                    lambda_min = lambda_min[self._mask]
+
+            elif aggregate == 'mean_block':
+                lambda_min = np.mean(block_eigs['Min eigenvalue'])
+            elif aggregate == 'median_block':
+                lambda_min = np.median(block_eigs['Min eigenvalue'])
+            elif aggregate == 'min_block':
+                lambda_min = np.min(block_eigs['Min eigenvalue'])
+
+        return np.abs(np.minimum(lambda_min, 0.))
+
     def estimate_uncompressed_size(self, dtype=None):
         """
         Provide an estimate of size of the uncompressed LD matrix in megabytes (MB).
-        This is only a rough estimate. Depending on how the LD matrix is loaded, the actual size
-        may be much larger than this estimate.
+        This is only a rough estimate. Depending on how the LD matrix is loaded, actual memory
+        usage may be larger than this estimate.
+
+        :param dtype: The data type for the entries of the LD matrix. If None, the stored data type is used
+        to determine the size of the data in memory.
 
         :return: The estimated size of the uncompressed LD matrix in MB.
 
@@ -1059,6 +1361,7 @@ class LDMatrix(object):
     def get_metadata(self, key, apply_mask=True):
         """
         Get the metadata associated with each variant in the LD matrix.
+
         :param key: The key for the metadata item.
         :param apply_mask: If True, apply the mask (e.g. filter) to the metadata.
 
@@ -1081,11 +1384,14 @@ class LDMatrix(object):
         :return: The value for the attribute.
         :raises KeyError: if the attribute is not set.
         """
-        try:
-            return self._zg.attrs[attr]
-        except KeyError:
-            print(f"Warning: Attribute '{attr}' is not set!")
-            return None
+        return self._zg.attrs[attr]
+
+    def list_store_attributes(self):
+        """
+        Get all the attributes associated with the LD matrix.
+        :return: A list of all the attributes.
+        """
+        return list(self._zg.attrs.keys())
 
     def set_store_attr(self, attr, value):
         """
@@ -1163,26 +1469,73 @@ class LDMatrix(object):
         if np.issubdtype(self.stored_dtype, np.integer) and np.issubdtype(new_csr.dtype, np.floating):
             self._zg['matrix/data'][data_start:data_end] = quantize(new_csr.data, int_dtype=self.stored_dtype)
         else:
-            self._zg['matrix/data'][data_start:data_end] = new_csr.data.astype(self.stored_dtype)
+            self._zg['matrix/data'][data_start:data_end] = new_csr.data.astype(self.stored_dtype, copy=False)
+
+    def get_linear_operator(self,
+                            start_row=None,
+                            end_row=None,
+                            **linop_kwargs):
+        """
+        Use `scipy.sparse` interface to construct a `LinearOperator` object representing the LD matrix.
+        This is useful for performing various linear algebra routines on the LD matrix without
+        necessarily symmetrizing or de-quantizing it beforehand. For instance, this operator can
+        be used to compute matrix-vector products with the LD matrix, solve linear systems,
+        perform SVD, compute eigenvalues, etc.
+
+        !!! seealso "See Also"
+        * [LDLinearOperator][magenpy.LDMatrix.LDLinearOperator]
+
+        .. note ::
+            For now, start and end row positions are always with reference to the original matrix
+            (i.e. without applying any masks or filters).
+
+        :param start_row: The start row to load to memory (if loading a subset of the matrix).
+        :param end_row: The end row (not inclusive) to load to memory (if loading a subset of the matrix).
+        :param linop_kwargs: Keyword arguments to pass to the `LDLinearOperator` constructor.
+
+        :return: A scipy `LinearOperator` object representing the LD matrix.
+        """
+
+        ld_data = self.load_data(start_row=start_row, end_row=end_row, return_square=True)
+
+        from .LDLinearOperator import LDLinearOperator
+
+        return LDLinearOperator(ld_data[1], ld_data[0], **linop_kwargs)
 
     def load_data(self,
-                  return_symmetric=False,
+                  start_row=None,
+                  end_row=None,
                   dtype=None,
-                  return_as_csr=False):
+                  return_square=True,
+                  return_symmetric=False,
+                  return_as_csr=False,
+                  keep_original_shape=False):
         """
         A utility function to load and process the LD matrix data.
         This function is particularly useful for filtering, symmetrizing, and dequantizing the LD matrix
-        after it's loaded into memory.
+        after it's loaded to memory.
 
-        TODO: Support loading subset of rows of the matrix, similar to `load_rows` (i.e. replace `load_rows`
-        with newer implementation).
+        .. note ::
+            Start and end row positions are always with reference to the stored on-disk LD matrix.
 
-        :param return_symmetric: If True, return a full symmetric representation of the LD matrix.
+        TODO: Implement caching mechanism for non-CSR-formatted data.
+
+        :param start_row: The start row to load to memory (if loading a subset of the matrix).
+        :param end_row: The end row (not inclusive) to load to memory (if loading a subset of the matrix).
         :param dtype: The data type for the entries of the LD matrix.
+        :param return_square: If True, return a square representation of the LD matrix. This flag is used in
+        conjunction with the `start_row` and `end_row` parameters. In particular, if `end_row` is less than the
+        number of variants and `return_square=False`, then we return a rectangular slice of the LD matrix
+        corresponding to the rows requested by the user.
+        :param return_symmetric: If True, return a full symmetric representation of the LD matrix.
         :param return_as_csr: If True, return the data in the CSR format.
+        :param keep_original_shape: This flag is used in conjunction with the `return_as_csr` flag. If set to
+        True, we return the CSR matrix with the same shape as the original LD matrix, with the only
+        non-zero entries are those in the requested `start_row:end_row` region. If set to False, we return
+        a sub-matrix with the requested data only.
 
         :return: A tuple of the index pointer array, the data array, and the leftmost index array. If
-        `return_as_csr` is set to True, we return the data as a CSR matrix.
+        `return_as_csr` is set to True, we return the data as a CSR matrix instead.
         """
 
         # -------------- Step 1: Preparing input data type --------------
@@ -1196,33 +1549,67 @@ class LDMatrix(object):
             else:
                 dequantize_data = False
 
+        # -------------- Step 2: Pre-process data boundaries (if provided) --------------
+        n_snps = self.stored_n_snps
+
+        start_row = start_row or 0
+        end_row = end_row or n_snps
+
+        assert start_row >= 0
+        end_row = min(end_row, n_snps)
+
         # -------------- Step 2: Fetch the indptr array --------------
 
         # Get the index pointer array:
-        indptr = self._zg['matrix/indptr'][:]
+        indptr = self._zg['matrix/indptr'][start_row:end_row + 1]
 
-        # -------------- Step 3: Checking data masking --------------
+        # Determine the start and end positions in the data matrix
+        # based on the requested start and end rows:
+        data_start = indptr[0]
+        data_end = indptr[-1]
 
-        # Filter the index pointer array based on the mask:
-        if self._mask is not None:
+        # If the user is requesting a subset of the matrix, then we need to adjust
+        # the index pointer accordingly:
+        if start_row > 0:
+            # Zero out all index pointers before `start_row`:
+            indptr = np.clip(indptr - data_start, a_min=0, a_max=None)
 
-            if np.issubdtype(self._mask.dtype, np.integer):
-                mask = np.zeros(self.stored_n_snps, dtype=np.int8)
-                mask[self._mask] = 1
+        # -------------- Step 3: Loading and filtering data array --------------
+
+        data = self._zg['matrix/data'][data_start:data_end]
+
+        # Filter the data and index pointer arrays based on the mask (if set):
+        if self._mask is not None or (end_row < n_snps and return_square):
+
+            mask = np.zeros(n_snps, dtype=np.int8)
+
+            # Two cases to consider:
+
+            # 1) If the mask is not set:
+            if self._mask is None:
+
+                # If the returned matrix should be square:
+                if return_square:
+                    mask[start_row:end_row] = 1
+                else:
+                    mask[start_row:] = 1
+
+                new_size = end_row - start_row
             else:
-                mask = self._mask
+                # If the mask is set:
 
-            from .stats.ld.c_utils import filter_ut_csr_matrix
+                mask[self._mask] = 1
 
-            data_mask, indptr = filter_ut_csr_matrix(indptr, mask)
-            # .oindex and .vindex are slow and convert to integer indices in the background,
-            # which unnecessarily increases memory usage. Unfortunately, here we have to load the entire
-            # data and index it using the boolean array afterward.
-            # Something to be improved in the future. :)
-            data = self._zg['matrix/data'][:][data_mask]
-            del data_mask
-        else:
-            data = self._zg['matrix/data'][:]
+                # If return square, ensure that elements after end row are set to 0 in the mask:
+                if return_square:
+                    mask[end_row:] = 0
+
+                # Compute new size:
+                new_size = mask[start_row:end_row].sum()
+
+            from .stats.ld.c_utils import filter_ut_csr_matrix_inplace
+
+            data, indptr = filter_ut_csr_matrix_inplace(indptr, data, mask[start_row:], new_size)
 
         # -------------- Step 4: Symmetrizing input matrix --------------
 
@@ -1258,166 +1645,28 @@ class LDMatrix(object):
                                     (np.diff(indptr) + leftmost_idx).astype(np.int32),
                                     data.shape[0])
 
+            if keep_original_shape:
+                shape = (n_snps, n_snps)
+                indices += start_row
+                indptr = np.concatenate([np.zeros(start_row, dtype=indptr.dtype),
+                                         indptr,
+                                         np.ones(n_snps - end_row, dtype=indptr.dtype) * indptr[-1]])
+            elif return_square or end_row == n_snps:
+                shape = (indptr.shape[0] - 1, indptr.shape[0] - 1)
+            else:
+                shape = (indptr.shape[0] - 1, n_snps)
+
             return csr_matrix(
                 (
                     data,
                     indices,
                     indptr
                 ),
+                shape=shape,
                 dtype=dtype
             )
         else:
             return data, indptr, leftmost_idx
-
-    def load_rows(self,
-                  start_row=None,
-                  end_row=None,
-                  return_symmetric=False,
-                  fill_diag=False,
-                  keep_shape=True,
-                  dtype=None):
-        """
-        A utility function to allow for loading a subset of the LD matrix.
-        By specifying `start_row` and `end_row`, the user can process or inspect small
-        blocks of the LD matrix without loading the whole thing into memory.
-
-        !!! note
-            This method does not perform any filtering on the stored data.
-            To access the LD matrix with filtering, use `.load()` or `load_data`.
-
-        !!! seealso "See Also"
-            * [load_data][magenpy.LDMatrix.LDMatrix.load_data]
-            * [load][magenpy.LDMatrix.LDMatrix.load]
-
-        :param start_row: The start row to load to memory
-        :param end_row: The end row (not inclusive) to load to memory
-        :param return_symmetric: If True, return a full symmetric representation of the LD matrix.
-        :param fill_diag: If True, fill the diagonal of the LD matrix with ones.
-        :param keep_shape: If True, return the LD matrix with the same shape as the original. Here,
-        entries that are outside the requested start_row:end_row region will be zeroed out.
-        :param dtype: The data type for the entries of the LD matrix.
-
-        :return: The requested sub-matrix of the LD matrix.
-        """
-
-        # Determine the final data type for the LD matrix entries
-        # and whether we need to perform dequantization or not depending on
-        # the stored data type and the requested data type.
-        if dtype is None:
-            dtype = self.stored_dtype
-            dequantize_data = False
-        else:
-            dtype = np.dtype(dtype)
-            if np.issubdtype(self.stored_dtype, np.integer) and np.issubdtype(dtype, np.floating):
-                dequantize_data = True
-            else:
-                dequantize_data = False
-
-        # Sanity checking + forming the dimensions of the
-        # requested sub-matrix:
-        n_snps = self.stored_n_snps
-
-        start_row = start_row or 0
-        end_row = end_row or n_snps
-
-        # Sanity checking:
-        assert start_row >= 0
-        end_row = min(end_row, n_snps)
-
-        # Load the index pointer from disk:
-        indptr = self._zg['matrix/indptr'][:]
-
-        # Determine the start and end positions in the data matrix
-        # based on the requested start and end rows:
-        data_start = indptr[start_row]
-        data_end = indptr[end_row]
-
-        # If the user is requesting a subset of the matrix, then we need to adjust
-        # the index pointer accordingly:
-        if start_row > 0 or end_row < n_snps:
-            # Zero out all index pointers before `start_row`:
-            indptr = np.clip(indptr - data_start, a_min=0, a_max=None)
-            # Adjust all index pointers after `end_row`:
-            indptr[end_row+1:] = (data_end - data_start)
-
-        # Extract the data for the requested rows:
-        csr_data = self._zg['matrix/data'][data_start:data_end]
-
-        # If we need to de-quantize the data, do it now:
-        if dequantize_data:
-            csr_data = dequantize(csr_data, float_dtype=dtype)
-
-        # Construct a CSR matrix from the loaded data, updated indptr, and indices:
-
-        # Get the indices array:
-        if self.in_memory:
-            # If the matrix (or a version of it) is already loaded,
-            # then set the `in_memory` flag to False before fetching the indices.
-            self.in_memory = False
-            indices = self.indices
-            self.in_memory = True
-        else:
-            indices = self.indices
-
-        from scipy.sparse import csr_matrix, diags
-
-        mat = csr_matrix(
-            (
-                csr_data,
-                indices[data_start:data_end],
-                indptr
-            ),
-            shape=(n_snps, n_snps),
-            dtype=dtype
-        )
-
-        # Determine the "invalid" value for the purposes of reconstructing
-        # the symmetric matrix:
-        if np.issubdtype(dtype, np.integer):
-            # For integers, we don't use the minimum value during quantization
-            # because we would like to have the zero point at exactly zero. So,
-            # we can use this value as our alternative to `nan`.
-            invalid_value = np.iinfo(dtype).min
-            identity_val = np.iinfo(dtype).max
-        else:
-            invalid_value = np.nan
-            identity_val = 1
-
-        if return_symmetric:
-
-            # First, replace explicit zeros with invalid value (this is a hack to prevent scipy
-            # from eliminating those zeros when making the matrix symmetric):
-            mat.data[mat.data == 0] = invalid_value
-
-            # Add the matrix transpose to make it symmetric:
-            mat += mat.T
-
-            # If the user requested filling the diagonals, do it here:
-            if fill_diag:
-                diag_vals = np.concatenate([np.zeros(start_row, dtype=dtype),
-                                            identity_val*np.ones(end_row - start_row, dtype=dtype),
-                                            np.zeros(n_snps - end_row, dtype=dtype)])
-                mat += diags(diag_vals, dtype=dtype, shape=mat.shape)
-
-            # Replace the invalid values with zeros again:
-            if np.isnan(invalid_value):
-                mat.data[np.isnan(mat.data)] = 0
-            else:
-                mat.data[mat.data == invalid_value] = 0
-
-            return mat
-        elif fill_diag:
-            diag_vals = np.concatenate([np.zeros(start_row, dtype=dtype),
-                                        identity_val*np.ones(end_row - start_row, dtype=dtype),
-                                        np.zeros(n_snps - end_row, dtype=dtype)])
-            mat += diags(diag_vals, dtype=dtype, shape=mat.shape)
-
-        # If the shape remains the same, return the matrix as is.
-        # Otherwise, return the requested sub-matrix:
-        if keep_shape:
-            return mat
-        else:
-            return mat[start_row:end_row, :]
 
     def load(self,
              force_reload=False,
@@ -1428,46 +1677,55 @@ class LDMatrix(object):
         Load the LD matrix from on-disk storage in the form of Zarr arrays to memory,
         in the form of sparse CSR matrices.
 
-        !!! seealso "See Also"
-            * [load_data][magenpy.LDMatrix.LDMatrix.load_data]
-            * [load_rows][magenpy.LDMatrix.LDMatrix.load_rows]
-
         :param force_reload: If True, it will reload the data even if it is already in memory.
         :param return_symmetric: If True, return a full symmetric representation of the LD matrix.
         :param dtype: The data type for the entries of the LD matrix.
 
-        :return: The LD matrix as a sparse CSR matrix.
+        !!! seealso "See Also"
+            * [load_data][magenpy.LDMatrix.LDMatrix.load_data]
+
+        :return: The LD matrix as a `scipy` sparse CSR matrix.
         """
 
         if dtype is not None:
             dtype = np.dtype(dtype)
+        else:
+            dtype = self.dtype
 
-        if self.in_memory:
-            # If the LD matrix is already in memory:
+        if not force_reload and self.in_memory and return_symmetric == self.is_symmetric:
+            # If the LD matrix is already in memory and the requested symmetry is the same,
+            # then we don't need to reload the matrix. Here, we only transform its entries it to
+            # conform to the requested data types of the user:
 
-            if (return_symmetric == self.is_symmetric) and not force_reload:
-                # If the requested symmetry is the same as the one already loaded,
-                # and the user asked not to force a reload, then do nothing.
+            # If the requested data type differs from the stored one, we need to cast the data:
+            if dtype is not None and self._mat.data.dtype != dtype:
 
-                # If the currently loaded LD matrix has float entries and the user wants
-                # the return type to be another floating point, then just cast and return.
-                # Otherwise, we have to reload the matrix:
                 if np.issubdtype(self._mat.data.dtype, np.floating) and np.issubdtype(dtype, np.floating):
+                    # The user requested casting the data to different floating point precision:
                     self._mat.data = self._mat.data.astype(dtype)
-                    return
-                elif self._mat.data.dtype == dtype:
-                    return
+                if np.issubdtype(self._mat.data.dtype, np.integer) and np.issubdtype(dtype, np.integer):
+                    # The user requested casting the data to different integer format:
+                    self._mat.data = quantize(dequantize(self._mat.data), int_dtype=dtype)
+                elif np.issubdtype(self._mat.data.dtype, np.floating) and np.issubdtype(dtype, np.integer):
+                    # The user requested quantizing the data from floats to integers:
+                    self._mat.data = quantize(self._mat.data, int_dtype=dtype)
+                else:
+                    # The user requested de-quantizing the data from integers to floats:
+                    self._mat.data = dequantize(self._mat.data)
 
-        # If we are re-loading the matrix, make sure to release the current one:
-        self.release()
+        else:
+            # If we are re-loading the matrix, make sure to release the current one:
+            self.release()
 
-        self._mat = self.load_data(return_symmetric=return_symmetric,
-                                   dtype=dtype,
-                                   return_as_csr=True)
+            self._mat = self.load_data(return_symmetric=return_symmetric,
+                                       dtype=dtype,
+                                       return_as_csr=True)
 
-        # Update the flags:
-        self.in_memory = True
-        self.is_symmetric = return_symmetric
+            # Update the flags:
+            self.in_memory = True
+            self.is_symmetric = return_symmetric
+
+        return self._mat
 
     def release(self):
         """
@@ -1498,8 +1756,10 @@ class LDMatrix(object):
             indptr = self.indptr[:]
             start_idx, end_idx = indptr[index], indptr[index + 1]
             if return_indices:
-                return self.data[start_idx:end_idx], np.arange(index + 1,
-                                                               index + 1 + (indptr[index + 1] - indptr[index]))
+                return self.data[start_idx:end_idx], np.arange(
+                    index + 1,
+                    index + 1 + (indptr[index + 1] - indptr[index])
+                )
             else:
                 return self.data[start_idx:end_idx]
 
@@ -1570,8 +1830,67 @@ class LDMatrix(object):
     def __len__(self):
         return self.n_snps
 
-    def __getitem__(self, index):
-        return self.get_row(index)
+    def __getitem__(self, item):
+        """
+        Access the LD matrix entries via the `[]` operator.
+        This implementation supports the following types of indexing:
+        * Accessing a single row of the LD matrix by specifying numeric index or SNP rsID.
+        * Accessing a single entry of the LD matrix by specifying numeric indices or SNP rsIDs.
+
+        Example usages:
+
+            >>> ldm[0]
+            >>> ldm['rs123']
+            >>> ldm['rs123', 'rs456']
+        """
+
+        dq_scale = self.dequantization_scale
+
+        if isinstance(item, tuple):
+            assert len(item) == 2
+            assert type(item[0]) is type(item[1])
+
+            if isinstance(item[0], str):
+
+                # If they're the same variant:
+                if item[0] == item[1]:
+                    return 1.
+
+                # Extract the indices of the two variants:
+                snps = self.snps.tolist()
+
+                try:
+                    index_1 = snps.index(item[0])
+                except ValueError:
+                    raise ValueError(f"Invalid SNP ID: {item[0]}")
+
+                try:
+                    index_2 = snps.index(item[1])
+                except ValueError:
+                    raise ValueError(f"Invalid SNP ID: {item[1]}")
+
+            else:
+                index_1, index_2 = item
+
+            index_1, index_2 = sorted([index_1, index_2])
+
+            if index_1 == index_2:
+                return 1.
+            if index_2 - index_1 > self.window_size[index_1]:
+                return 0.
+            else:
+                row = self.get_row(index_1)
+                return dq_scale*row[index_2 - index_1 - 1]
+
+        if isinstance(item, int):
+            return dq_scale*self.get_row(item)
+        elif isinstance(item, str):
+            try:
+                index = self.snps.tolist().index(item)
+            except ValueError:
+                raise ValueError(f"Invalid SNP ID: {item}")
+
+            return dq_scale*self.get_row(index)
 
     def __iter__(self):
         """

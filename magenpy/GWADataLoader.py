@@ -84,7 +84,7 @@ class GWADataLoader(object):
         :param drop_duplicated: If True, drop SNPs with duplicated rsID.
         :param phenotype_likelihood: The likelihood of the phenotype (e.g. `gaussian`, `binomial`).
         :param sumstats_files: The path to the summary statistics file(s). The path may be a wildcard.
-        :param sumstats_format: The format for the summary statistics. Currently supports the following
+        :param sumstats_format: The format for the summary statistics. Currently, supports the following
         formats: `plink1.9`, `plink2`, `magenpy`, `fastGWA`, `COJO`, `SAIGE`, or `GWASCatalog` for the standard
         summary statistics format (also known as `ssf` or `gwas-ssf`).
         :param ld_store_files: The path to the LD matrices. This may be a wildcard to accommodate reading data
@@ -592,7 +592,11 @@ class GWADataLoader(object):
             return
 
         if not iterable(ld_store_paths):
-            ld_store_files = get_filenames(ld_store_paths, extension='.zgroup')
+            if 's3://' in ld_store_paths:
+                from .utils.system_utils import glob_s3_path
+                ld_store_files = glob_s3_path(ld_store_paths)
+            else:
+                ld_store_files = get_filenames(ld_store_paths, extension='.zgroup')
         else:
             ld_store_files = ld_store_paths
 
@@ -634,6 +638,7 @@ class GWADataLoader(object):
                    dtype='int8',
                    compressor_name='zstd',
                    compression_level=7,
+                   compute_spectral_properties=False,
                    **ld_kwargs):
         """
         Compute the Linkage-Disequilibrium (LD) matrix or SNP-by-SNP Pearson
@@ -650,6 +655,7 @@ class GWADataLoader(object):
         and integer quantized data types int8 and int16).
         :param compressor_name: The name of the compression algorithm to use for the LD matrix.
         :param compression_level: The compression level to use for the entries of the LD matrix (1-9).
+        :param compute_spectral_properties: If True, compute the spectral properties of the LD matrix.
         :param ld_kwargs: keyword arguments for the various LD estimators. Consult
         the implementations of `WindowedLD`, `ShrinkageLD`, and `BlockLD` for details.
         """
@@ -663,6 +669,7 @@ class GWADataLoader(object):
                             dtype=dtype,
                             compressor_name=compressor_name,
                             compression_level=compression_level,
+                            compute_spectral_properties=compute_spectral_properties,
                             **ld_kwargs)
             for c, g in tqdm(sorted(self.genotype.items(), key=lambda x: x[0]),
                              total=len(self.genotype),
@@ -672,7 +679,8 @@ class GWADataLoader(object):
 
     def get_ld_matrices(self):
         """
-        :return: The LD matrices computed for each chromosome.
+        :return: A dictionary containing the chromosome ID as key and corresponding LD matrices
+        as value.
         """
         return self.ld
 
@@ -849,6 +857,7 @@ class GWADataLoader(object):
         :return: A plink-style dataframe of individual IDs, in the form of
         Family ID (FID) and Individual ID (IID).
         """
+        assert self.sample_table is not None
 
         return self.sample_table.get_individual_table()
 
@@ -857,6 +866,8 @@ class GWADataLoader(object):
         :return: A plink-style dataframe with each individual's Family ID (FID),
         Individual ID (IID), and phenotype value.
         """
+
+        assert self.sample_table is not None
 
         return self.sample_table.get_phenotype_table()
 
@@ -879,6 +890,7 @@ class GWADataLoader(object):
 
         # Sanity checks:
         assert resource in ('auto', 'genotype', 'ld', 'sumstats')
+
         if resource != 'auto':
             if resource == 'genotype' and self.genotype is None:
                 raise ValueError("Genotype matrix is not available!")

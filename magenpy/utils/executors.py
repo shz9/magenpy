@@ -1,4 +1,4 @@
-from .system_utils import is_cmd_tool, run_shell_script, available_cpu
+from .system_utils import is_cmd_tool, run_shell_script
 from magenpy import get_option
 
 
@@ -7,20 +7,17 @@ class plink2Executor(object):
     A wrapper class for interfacing with the `plink2` command line tool.
     """
 
-    def __init__(self, threads='auto', verbose=True):
+    def __init__(self, threads=None, verbose=True):
         """
         Initialize the plink2 executor
-        :param threads: The number of threads to use for computations. If set to 'auto', the number of
-        available CPUs will be used.
+        :param threads: The number of threads to use for computations. If None, the number of
+        threads will be set to 1.
         :type threads: int or str
         :param verbose: Whether to print the output of the command
         :type verbose: bool
         """
 
-        if threads == 'auto':
-            self.threads = available_cpu()
-        else:
-            self.threads = threads
+        self.threads = threads or 1
 
         self.plink2_path = get_option('plink2_path')
 
@@ -56,25 +53,22 @@ class plink1Executor(object):
     A wrapper class for interfacing with the `plink1.9` command line tool.
     """
 
-    def __init__(self, threads='auto', verbose=True):
+    def __init__(self, threads=None, verbose=True):
         """
         Initialize the plink1.9 executor
-        :param threads: The number of threads to use for computations. If set to 'auto', the number of
-        available CPUs will be used.
+        :param threads: The number of threads to use for computations. If None, the number of
+        threads will be set to 1.
         :type threads: int or str
         :param verbose: Whether to print the output of the command
         :type verbose: bool
         """
 
-        if threads == 'auto':
-            self.threads = available_cpu()
-        else:
-            self.threads = threads
+        self.threads = threads or 1
 
         self.plink1_path = get_option('plink1.9_path')
 
         if not is_cmd_tool(self.plink1_path):
-            raise Exception(f"Did not find the executable for plink at: {self.plink1_path}")
+            raise Exception(f"Did not find the executable for plink1.9 at: {self.plink1_path}")
 
         self.verbose = verbose
 

@@ -117,12 +117,28 @@ def makedir(dirs):
                 raise
 
 
+def glob_s3_path(path):
+    """
+    Get the list of files/folders in the provided AWS S3 path. This works with wildcards.
+
+    :param path: A string with the S3 path to list files/folders from.
+    :return: A list of strings with the full paths of the files/folders.
+    """
+
+    import s3fs
+    s3 = s3fs.S3FileSystem(anon=True)
+
+    return s3.glob(path)
+
+
 def get_filenames(path, extension=None):
     """
     Obtain valid and full path names given the provided `path` or prefix and extensions.
 
     :param path: A string with the path prefix or full path.
     :param extension: The extension for the class of files to search for.
+
+    :return: A list of strings with the full paths of the files/folders.
     """
 
     if osp.isdir(path):

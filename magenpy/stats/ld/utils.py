@@ -29,7 +29,7 @@ def move_ld_store(z_arr, target_path, overwrite=True):
 def delete_ld_store(ld_mat):
     """
     Delete the LD store from disk.
-    :param ld_mat: An LDMatrix object
+    :param ld_mat: An `LDMatrix` object
     """
 
     try:
@@ -140,6 +140,9 @@ def shrink_ld_matrix(ld_mat_obj,
 
     https://github.com/stephenslab/rss/blob/master/misc/get_corr.R
 
+    TODO: Re-write this function without using CSR data structures.
+    Also, consider saving shrinkage factor per pair of variants instead of shrunk LD entries?
+
     :param ld_mat_obj: An `LDMatrix` object encapsulating the LD matrix whose entries we wish to shrink.
     :param cm_pos: The position of each variant in the LD matrix in centi Morgan.
     :param maf_var: A vector of the variance in minor allele frequency (MAF) for each SNP in the LD matrix. Should be
@@ -200,7 +203,15 @@ def shrink_ld_matrix(ld_mat_obj,
         end_row = min((chunk_idx+1)*chunk_size, len(ld_mat_obj))
 
         # Load the subset of the LD matrix specified by chunk_size.
-        csr_mat = ld_mat_obj.load_rows(start_row=start_row, end_row=end_row, dtype=np.float32)
+        csr_mat = ld_mat_obj.load_data(
+            start_row=start_row,
+            end_row=end_row,
+            return_symmetric=False,
+            return_square=False,
+            keep_original_shape=True,
+            return_as_csr=True,
+            dtype=np.float32
+        )
 
         # Get the relevant portion of indices and pointers from the CSR matrix:
         indptr = global_indptr[start_row:end_row+1]
@@ -242,6 +253,8 @@ def estimate_rows_per_chunk(rows, cols, dtype='int8', mem_size=128):
     :param cols: Total number of columns. If sparse matrix with uneven columns, provide average column size.
     :param dtype: The data type for the matrix entries.
     :param mem_size: Size of the chunk in memory (MB)
+
+    :return: The estimated number of rows per chunk.
     """
 
     matrix_size = rows * cols * np.dtype(dtype).itemsize / 1024 ** 2
@@ -273,6 +286,8 @@ def compute_ld_plink1p9(genotype_matrix,
         and integer quantized data types int8 and int16).
     :param compressor_name: The name of the compressor to use for the Zarr arrays.
     :param compression_level: The compression level to use for the Zarr arrays (1-9).
+
+    :return: An LDMatrix object
     """
 
     from ...utils.executors import plink1Executor
@@ -389,6 +404,8 @@ def compute_ld_xarray(genotype_matrix,
         and integer quantized data types int8 and int16).
     :param compressor_name: The name of the compressor to use for the Zarr arrays.
     :param compression_level: The compression level to use for the Zarr arrays (1-9).
+
+    :return: An LDMatrix object
     """
 
     from ...GenotypeMatrix import xarrayGenotypeMatrix

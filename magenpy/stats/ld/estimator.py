@@ -20,6 +20,7 @@ class SampleLD(object):
         * [BlockLD][magenpy.stats.ld.estimator.BlockLD]
 
      :ivar genotype_matrix: The genotype matrix, an instance of `GenotypeMatrix` or its children.
+     :ivar ld_boundaries: The LD boundaries for each variant in the LD matrix.
 
     """
 
@@ -30,6 +31,7 @@ class SampleLD(object):
         """
 
         self.genotype_matrix = genotype_matrix
+        self.ld_boundaries = None
 
         # Ensure that the genotype matrix has data for a single chromosome only:
         if self.genotype_matrix.chromosome is None:
@@ -53,8 +55,13 @@ class SampleLD(object):
 
          :return: A 2xM matrix of LD boundaries.
         """
-        m = self.genotype_matrix.n_snps
-        return np.array((np.zeros(m), np.ones(m)*m)).astype(np.int64)
+
+        if self.ld_boundaries is None:
+
+            m = self.genotype_matrix.n_snps
+            self.ld_boundaries = np.array((np.zeros(m), np.ones(m)*m)).astype(np.int64)
+
+        return self.ld_boundaries
 
     def compute_plink_window_thresholds(self, ld_boundaries=None):
         """
@@ -117,7 +124,8 @@ class SampleLD(object):
                 delete_original=True,
                 dtype='int8',
                 compressor_name='zstd',
-                compression_level=7):
+                compression_level=7,
+                compute_spectral_properties=False):
         """
         A utility method to compute the LD matrix and store in Zarr array format.
         The computes the LD matrix and stores it in Zarr array format, set its attributes,
@@ -131,6 +139,8 @@ class SampleLD(object):
         and integer quantized data types int8 and int16).
         :param compressor_name: The name of the compressor to use for the LD matrix.
         :param compression_level: The compression level to use for the LD matrix (1-9).
+        :param compute_spectral_properties: If True, compute and store information about the eigenvalues of
+        the LD matrix.
 
         :return: An instance of `LDMatrix` containing the computed LD matrix.
 
@@ -184,12 +194,16 @@ class SampleLD(object):
         ld_mat.set_metadata('a1', self.genotype_matrix.a1, overwrite=overwrite)
         ld_mat.set_metadata('a2', self.genotype_matrix.a2, overwrite=overwrite)
 
+
         try:
             ld_mat.set_metadata('cm', self.genotype_matrix.cm_pos, overwrite=overwrite)
         except KeyError:
             pass
 
         ld_mat.set_metadata('ldscore', ld_mat.compute_ld_scores(), overwrite=overwrite)
+
+        if compute_spectral_properties:
+            ld_mat.set_store_attr('Min eigenvalue', ld_mat.estimate_min_eigenvalue())
 
         if ld_mat.validate_ld_matrix():
             return ld_mat
@@ -217,6 +231,7 @@ class WindowedLD(SampleLD):
         * [BlockLD][magenpy.stats.ld.estimator.BlockLD]
 
     :ivar genotype_matrix: The genotype matrix, an instance of `GenotypeMatrix`.
+    :ivar ld_boundaries: The LD boundaries for each variant in the LD matrix.
     :ivar window_size: The number of neighboring SNPs to consider on each side when computing LD.
     :ivar kb_window_size: The maximum distance in kilobases to consider when computing LD.
     :ivar cm_window_size: The maximum distance in centi Morgan to consider when computing LD.
@@ -256,41 +271,45 @@ class WindowedLD(SampleLD):
          :return: A 2xM matrix of LD boundaries.
         """
 
-        bounds = []
+        if self.ld_boundaries is None:
 
-        m = self.genotype_matrix.n_snps
-        indices = np.arange(m)
+            bounds = []
 
-        if self.window_size is not None:
-            bounds.append(
-                np.clip(np.array(
-                    [indices - self.window_size,
-                     indices + self.window_size
-                     ]
-                ),  a_min=0, a_max=m)
-            )
+            m = self.genotype_matrix.n_snps
+            indices = np.arange(m)
 
-        from .c_utils import find_windowed_ld_boundaries
+            if self.window_size is not None:
+                bounds.append(
+                    np.clip(np.array(
+                        [indices - self.window_size,
+                         indices + self.window_size
+                         ]
+                    ),  a_min=0, a_max=m)
+                )
 
-        if self.kb_window_size is not None:
-            bounds.append(
-                find_windowed_ld_boundaries(.001*self.genotype_matrix.bp_pos,
-                                            self.kb_window_size)
-            )
+            from .c_utils import find_windowed_ld_boundaries
 
-        if self.cm_window_size is not None:
-            bounds.append(
-                find_windowed_ld_boundaries(self.genotype_matrix.cm_pos,
-                                            self.cm_window_size)
-            )
+            if self.kb_window_size is not None:
+                bounds.append(
+                    find_windowed_ld_boundaries(.001*self.genotype_matrix.bp_pos,
+                                                self.kb_window_size)
+                )
 
-        if len(bounds) == 1:
-            return bounds[0]
-        else:
-            return np.array([
-                np.maximum.reduce([b[0, :] for b in bounds]),
-                np.minimum.reduce([b[1, :] for b in bounds])
-            ])
+            if self.cm_window_size is not None:
+                bounds.append(
+                    find_windowed_ld_boundaries(self.genotype_matrix.cm_pos,
+                                                self.cm_window_size)
+                )
+
+            if len(bounds) == 1:
+                self.ld_boundaries = bounds[0]
+            else:
+                self.ld_boundaries = np.array([
+                    np.maximum.reduce([b[0, :] for b in bounds]),
+                    np.minimum.reduce([b[1, :] for b in bounds])
+                ])
+
+        return self.ld_boundaries
 
     def compute(self,
                 output_dir,
@@ -299,7 +318,8 @@ class WindowedLD(SampleLD):
                 delete_original=True,
                 dtype='int8',
                 compressor_name='zstd',
-                compression_level=7):
+                compression_level=7,
+                compute_spectral_properties=False,):
         """
 
         Compute the windowed LD matrix and store in Zarr array format.
@@ -311,14 +331,17 @@ class WindowedLD(SampleLD):
         :param dtype: The data type for the entries of the LD matrix.
         :param compressor_name: The name of the compressor to use for the LD matrix.
         :param compression_level: The compression level to use for the LD matrix (1-9).
+        :param compute_spectral_properties: If True, compute and store information about the eigenvalues of
+        the LD matrix.
 
-        :return: An instance of `LDMatrix` containing the computed LD matrix.
+        :return: An instance of `LDMatrix` encapsulating the computed LD matrix, its attributes, and metadata.
         """
 
         ld_mat = super().compute(output_dir,
                                  temp_dir,
                                  overwrite=overwrite,
                                  delete_original=delete_original,
+                                 compute_spectral_properties=compute_spectral_properties,
                                  dtype=dtype,
                                  compressor_name=compressor_name,
                                  compression_level=compression_level)
@@ -336,6 +359,17 @@ class WindowedLD(SampleLD):
             w_properties['Window size (cM)'] = self.cm_window_size
 
         ld_mat.set_store_attr('Estimator properties', w_properties)
+
+        if compute_spectral_properties:
+            eigs, block_bounds = ld_mat.estimate_min_eigenvalue(block_size=self.window_size,
+                                                                block_size_kb=self.kb_window_size,
+                                                                block_size_cm=self.cm_window_size,
+                                                                return_block_boundaries=True)
+
+            ld_mat.set_store_attr('Min eigenvalue per block', {
+                'Min eigenvalue': list(eigs),
+                'Block boundaries': list(block_bounds)
+            })
 
         return ld_mat
 
@@ -360,6 +394,7 @@ class ShrinkageLD(SampleLD):
         * [BlockLD][magenpy.stats.ld.estimator.BlockLD]
 
     :ivar genotype_matrix: The genotype matrix, an instance of `GenotypeMatrix`.
+    :ivar ld_boundaries: The LD boundaries for each variant in the LD matrix.
     :ivar genetic_map_ne: The effective population size (Ne) from which the genetic map is derived.
     :ivar genetic_map_sample_size: The sample size used to infer the genetic map.
     :ivar threshold: The shrinkage cutoff below which the LD is set to zero.
@@ -394,11 +429,14 @@ class ShrinkageLD(SampleLD):
         :return: A 2xM matrix of LD boundaries.
         """
 
-        from .c_utils import find_shrinkage_ld_boundaries
-        return find_shrinkage_ld_boundaries(self.genotype_matrix.cm_pos,
-                                            self.genetic_map_ne,
-                                            self.genetic_map_sample_size,
-                                            self.threshold)
+        if self.ld_boundaries is None:
+            from .c_utils import find_shrinkage_ld_boundaries
+            self.ld_boundaries = find_shrinkage_ld_boundaries(self.genotype_matrix.cm_pos,
+                                                              self.genetic_map_ne,
+                                                              self.genetic_map_sample_size,
+                                                              self.threshold)
+
+        return self.ld_boundaries
 
     def compute(self,
                 output_dir,
@@ -408,6 +446,7 @@ class ShrinkageLD(SampleLD):
                 dtype='int8',
                 compressor_name='zstd',
                 compression_level=7,
+                compute_spectral_properties=False,
                 chunk_size=1000):
         """
 
@@ -427,10 +466,12 @@ class ShrinkageLD(SampleLD):
         :param dtype: The data type for the entries of the LD matrix.
         :param compressor_name: The name of the compressor to use for the LD matrix.
         :param compression_level: The compression level to use for the LD matrix (1-9).
+        :param compute_spectral_properties: If True, compute and store information about the eigenvalues of
+        the LD matrix.
         :param chunk_size: An optional parameter that sets the maximum number of rows processed simultaneously.
         The smaller the `chunk_size`, the less memory requirements needed for the shrinkage step.
 
-        :return: An instance of `LDMatrix` containing the computed LD matrix.
+        :return: An instance of `LDMatrix` encapsulating the computed LD matrix, its attributes, and metadata.
 
         """
 
@@ -438,6 +479,7 @@ class ShrinkageLD(SampleLD):
                                  temp_dir,
                                  overwrite=overwrite,
                                  delete_original=delete_original,
+                                 compute_spectral_properties=False,  # Compute after shrinkage
                                  dtype=dtype,
                                  compressor_name=compressor_name,
                                  compression_level=compression_level)
@@ -459,6 +501,23 @@ class ShrinkageLD(SampleLD):
                     'Genetic map sample size': self.genetic_map_sample_size,
                     'Threshold': self.threshold
                 })
+
+        if compute_spectral_properties:
+
+            ld_mat.set_store_attr('Min eigenvalue', ld_mat.estimate_min_eigenvalue())
+
+            cm_ld_bounds_start = self.genotype_matrix.cm_pos[self.ld_boundaries[0, :]]
+            cm_ld_bounds_end = self.genotype_matrix.cm_pos[self.ld_boundaries[1, :] - 1]
+
+            median_dist_cm = np.median(cm_ld_bounds_end - cm_ld_bounds_start)
+
+            eigs, block_bounds = ld_mat.estimate_min_eigenvalue(block_size_cm=median_dist_cm,
+                                                                return_block_boundaries=True)
+
+            ld_mat.set_store_attr('Min eigenvalue per block', {
+                'Min eigenvalue': list(eigs),
+                'Block boundaries': list(block_bounds)
+            })
 
         return ld_mat
 
@@ -483,6 +542,7 @@ class BlockLD(SampleLD):
         * [ShrinkageLD][magenpy.stats.ld.estimator.ShrinkageLD]
 
     :ivar genotype_matrix: The genotype matrix, an instance of `GenotypeMatrix`.
+    :ivar ld_boundaries: The LD boundaries for each variant in the LD matrix.
     :ivar ld_blocks: The LD blocks, a Bx2 matrix where B is the number of blocks and the columns are
     the start and end of each block, respectively.
 
@@ -497,7 +557,7 @@ class BlockLD(SampleLD):
 
         :param genotype_matrix: The genotype matrix, an instance of `GenotypeMatrix`.
         :param ld_blocks: The LD blocks, a Bx2 matrix where B is the number of blocks and the
-        columns are the start and end of each block, respectively.
+        columns are the start and end of each block in units of base pair, respectively.
         :param ld_blocks_file: The path to the LD blocks file
         """
 
@@ -508,6 +568,8 @@ class BlockLD(SampleLD):
         if ld_blocks is None:
             from ...parsers.misc_parsers import parse_ld_block_data
             self.ld_blocks = parse_ld_block_data(ld_blocks_file)[self.genotype_matrix.chromosome]
+        else:
+            self.ld_blocks = ld_blocks
 
     def compute_ld_boundaries(self):
         """
@@ -516,8 +578,11 @@ class BlockLD(SampleLD):
         :return: A 2xM matrix of LD boundaries.
         """
 
-        from .c_utils import find_ld_block_boundaries
-        return find_ld_block_boundaries(self.genotype_matrix.bp_pos, self.ld_blocks)
+        if self.ld_boundaries is None:
+            from .c_utils import find_ld_block_boundaries
+            self.ld_boundaries = find_ld_block_boundaries(self.genotype_matrix.bp_pos, self.ld_blocks)
+
+        return self.ld_boundaries
 
     def compute(self,
                 output_dir,
@@ -526,6 +591,7 @@ class BlockLD(SampleLD):
                 delete_original=True,
                 dtype='int8',
                 compressor_name='zstd',
+                compute_spectral_properties=False,
                 compression_level=7):
         """
 
@@ -535,17 +601,20 @@ class BlockLD(SampleLD):
         :param temp_dir: A temporary directory to store intermediate files and results.
         :param overwrite: If True, overwrite any existing LD matrices in `temp_dir` and `output_dir`.
         :param delete_original: If True, deletes dense or intermediate LD matrices generated along the way.
+        :param compute_spectral_properties: If True, compute and store information about the eigenvalues of
+        the LD matrix.
         :param dtype: The data type for the entries of the LD matrix.
         :param compressor_name: The name of the compressor to use for the LD matrix.
         :param compression_level: The compression level to use for the LD matrix (1-9).
 
-        :return: An instance of `LDMatrix` containing the computed LD matrix.
+        :return: An instance of `LDMatrix` encapsulating the computed LD matrix, its attributes, and metadata.
         """
 
         ld_mat = super().compute(output_dir,
                                  temp_dir,
                                  overwrite=overwrite,
                                  delete_original=delete_original,
+                                 compute_spectral_properties=compute_spectral_properties,
                                  dtype=dtype,
                                  compressor_name=compressor_name,
                                  compression_level=compression_level)
@@ -555,5 +624,15 @@ class BlockLD(SampleLD):
         ld_mat.set_store_attr('Estimator properties', {
             'LD blocks': self.ld_blocks.tolist()
         })
+
+        if compute_spectral_properties:
+
+            blocks = np.concatenate([[0], np.unique(self.ld_boundaries[1, :])])
+            eigs, block_bounds = ld_mat.estimate_min_eigenvalue(blocks=blocks, return_block_boundaries=True)
+
+            ld_mat.set_store_attr('Min eigenvalue per block', {
+                'Min eigenvalue': list(eigs),
+                'Block boundaries': list(block_bounds)
+            })
 
         return ld_mat

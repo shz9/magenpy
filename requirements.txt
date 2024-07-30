@@ -1,8 +1,8 @@
 dask<=2024.1.0  # Seen installation issues with newer versions
 scipy
-numpy
+numpy<2
 pandas
 pandas-plink
 psutil
 tqdm
-zarr
+zarr<3

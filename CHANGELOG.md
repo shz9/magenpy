@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [0.1.4] - TBD
+## [0.1.4] - 2024-07-29
 
 ### Changed
 
@@ -18,10 +18,17 @@ not work well for very large datasets with millions of variants and it causes ov
 - Fixed in-place `fillna` in `from_plink_table` in `LDMatrix` to conform to latest `pandas` API.
 - Update `run_shell_script` to check for and capture errors.
 - Refactored code to slightly reduce import/load times.
+- Cleaned up `load_data` method of `LDMatrix` and subsumed functionality in `load_rows`.
 
 ### Added
 
 - Added extra validation checks in `LDMatrix` to ensure that the index pointer is formatted correctly.
+- `LDLinearOperator` class to allow for efficient linear algebra operations on the LD matrix without
+representing the full symmetric matrix in memory.
+- Added utility methods to `LDMatrix` class to allow for computing eigenvalues, performing SVD, etc.
+- Added `Min eigenvalue` to the attributes of LD matrices.
+- Added support to slice/retrieve entries of LD matrix by using SNP rsIDs.
+- Added support to reading LD matrices from AWS s3 storage.
 
 ## [0.1.3] - 2024-05-21
 

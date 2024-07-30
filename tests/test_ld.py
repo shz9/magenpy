@@ -53,6 +53,7 @@ def test_windowed_ld_computation(gdl_object):
 
     gdl_object.compute_ld('windowed',
                           gdl_object.output_dir,
+                          compute_spectral_properties=True,
                           window_size=500,
                           kb_window_size=100,
                           cm_window_size=3.)
@@ -98,7 +99,8 @@ def test_block_ld_computation(gdl_object):
     Test the LD computation functionality according to the Block estimator
     """
 
-    ld_block_url = "https://bitbucket.org/nygcresearch/ldetect-data/raw/ac125e47bf7ff3e90be31f278a7b6a61daaba0dc/EUR/fourier_ls-all.bed"
+    ld_block_url = ("https://bitbucket.org/nygcresearch/ldetect-data/raw/"
+                    "ac125e47bf7ff3e90be31f278a7b6a61daaba0dc/EUR/fourier_ls-all.bed")
     gdl_object.compute_ld('block', gdl_object.output_dir, ld_blocks_file=ld_block_url)
     gdl_object.harmonize_data()
 

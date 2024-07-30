@@ -17,36 +17,36 @@ Which outputs the following help message:
 
 ```bash
 
-**********************************************                            
- _ __ ___   __ _  __ _  ___ _ __  _ __  _   _ 
-| '_ ` _ \ / _` |/ _` |/ _ \ '_ \| '_ \| | | |
-| | | | | | (_| | (_| |  __/ | | | |_) | |_| |
-|_| |_| |_|\__,_|\__, |\___|_| |_| .__/ \__, |
-                 |___/           |_|    |___/
-Modeling and Analysis of Genetics data in python
-Version: 0.1.0 | Release date: April 2024
-Author: Shadi Zabad, McGill University
-**********************************************
-< Compute LD matrix and output in Zarr format >
+        **********************************************                            
+         _ __ ___   __ _  __ _  ___ _ __  _ __  _   _ 
+        | '_ ` _ \ / _` |/ _` |/ _ \ '_ \| '_ \| | | |
+        | | | | | | (_| | (_| |  __/ | | | |_) | |_| |
+        |_| |_| |_|\__,_|\__, |\___|_| |_| .__/ \__, |
+                         |___/           |_|    |___/
+        Modeling and Analysis of Genetics data in python
+        Version: 0.1.4 | Release date: June 2024
+        Author: Shadi Zabad, McGill University
+        **********************************************
+        < Compute LD matrix and store in Zarr format >
 
-usage: magenpy_ld [-h] [--estimator {shrinkage,windowed,block,sample}] --bfile BED_FILE [--keep KEEP_FILE] [--extract EXTRACT_FILE]
-                  [--backend {plink,xarray}] [--temp-dir TEMP_DIR] --output-dir OUTPUT_DIR [--min-maf MIN_MAF] [--min-mac MIN_MAC]
-                  [--genome-build GENOME_BUILD] [--metadata METADATA] [--storage-dtype {int8,float32,int16,float64}]
-                  [--compressor {zstd,lz4,zlib,gzip}] [--compression-level COMPRESSION_LEVEL] [--ld-window LD_WINDOW] [--ld-window-kb LD_WINDOW_KB]
-                  [--ld-window-cm LD_WINDOW_CM] [--ld-blocks LD_BLOCKS] [--genmap-Ne GENMAP_NE] [--genmap-sample-size GENMAP_SS]
-                  [--shrinkage-cutoff SHRINK_CUTOFF]
+usage: magenpy_ld [-h] [--estimator {shrinkage,block,windowed,sample}] --bfile BED_FILE [--keep KEEP_FILE] [--extract EXTRACT_FILE]
+                  [--backend {xarray,plink}] [--temp-dir TEMP_DIR] --output-dir OUTPUT_DIR [--min-maf MIN_MAF] [--min-mac MIN_MAC]
+                  [--genome-build GENOME_BUILD] [--metadata METADATA] [--storage-dtype {float64,float32,int16,int8}]
+                  [--compute-spectral-properties] [--compressor {lz4,zlib,zstd,gzip}] [--compression-level COMPRESSION_LEVEL]
+                  [--ld-window LD_WINDOW] [--ld-window-kb LD_WINDOW_KB] [--ld-window-cm LD_WINDOW_CM] [--ld-blocks LD_BLOCKS]
+                  [--genmap-Ne GENMAP_NE] [--genmap-sample-size GENMAP_SS] [--shrinkage-cutoff SHRINK_CUTOFF]
 
-Commandline arguments for LD matrix computation
+Commandline arguments for LD matrix computation and storage
 
 options:
   -h, --help            show this help message and exit
-  --estimator {shrinkage,windowed,block,sample}
+  --estimator {shrinkage,block,windowed,sample}
                         The LD estimator (windowed, shrinkage, block, sample)
   --bfile BED_FILE      The path to a plink BED file.
   --keep KEEP_FILE      A plink-style keep file to select a subset of individuals to compute the LD matrices.
   --extract EXTRACT_FILE
                         A plink-style extract file to select a subset of SNPs to compute the LD matrix for.
-  --backend {plink,xarray}
+  --backend {xarray,plink}
                         The backend software used to compute the Linkage-Disequilibrium between variants.
   --temp-dir TEMP_DIR   The temporary directory where we store intermediate files.
   --output-dir OUTPUT_DIR
@@ -55,12 +55,15 @@ options:
   --min-mac MIN_MAC     The minimum minor allele count for variants included in the LD matrix.
   --genome-build GENOME_BUILD
                         The genome build for the genotype data (recommend storing as metadata).
-  --metadata METADATA   A comma-separated string with metadata keys and values. This is used to store information about the genotype data from which
-                        the LD matrix was computed, such as the biobank/samples, cohort characteristics (e.g. ancestry), etc. Keys and values should
-                        be separated by =, such that inputs are in the form of:--metadata Biobank=UKB,Ancestry=EUR,Date=April2024
-  --storage-dtype {int8,float32,int16,float64}
+  --metadata METADATA   A comma-separated string with metadata keys and values. This is used to store information about the genotype data
+                        from which the LD matrix was computed, such as the biobank/samples, cohort characteristics (e.g. ancestry), etc.
+                        Keys and values should be separated by =, such that inputs are in the form of:--metadata
+                        Biobank=UKB,Ancestry=EUR,Date=April2024
+  --storage-dtype {float64,float32,int16,int8}
                         The data type for the entries of the LD matrix.
-  --compressor {zstd,lz4,zlib,gzip}
+  --compute-spectral-properties
+                        Compute and store the spectral properties of the LD matrix (e.g. eigenvalues, eigenvectors).
+  --compressor {lz4,zlib,zstd,gzip}
                         The compressor name or compression algorithm to use for the LD matrix.
   --compression-level COMPRESSION_LEVEL
                         The compression level to use for the entries of the LD matrix (1-9).
@@ -78,5 +81,6 @@ options:
                         The sample size for the dataset used to infer the genetic map.
   --shrinkage-cutoff SHRINK_CUTOFF
                         The cutoff value below which we assume that the correlation between variants is zero.
+
  
 ```

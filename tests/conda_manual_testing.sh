@@ -22,7 +22,7 @@ do
     conda activate "magenpy$version"
 
     # Add some of the required dependencies:
-    conda install -c conda-forge -c anaconda pip wheel compilers -y
+    conda install -c conda-forge -c anaconda pip wheel compilers openblas -y
 
     # Check python version:
     python --version

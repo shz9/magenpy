@@ -4,38 +4,46 @@ import numpy as np
 
 
 def plot_ld_matrix(ldm: LDMatrix,
-                   row_subset=None,
-                   display='full',
+                   variant_subset=None,
+                   start_row=None,
+                   end_row=None,
+                   symmetric=False,
                    cmap='OrRd',
                    include_colorbar=True):
     """
     Plot a heatmap representing the LD matrix or portions of it.
 
     :param ldm: An instance of `LDMatrix`.
-    :param row_subset: A boolean or integer index array for the subset of rows/columns to extract from the LD matrix.
-    :param display: A string indicating what part of the matrix to display. Can be 'full', 'upper', 'lower'.
-    If upper, only the upper triangle of the matrix will be displayed.
-    If lower, only the lower triangle will be displayed.
+    :param variant_subset: A list of variant rsIDs to subset the LD matrix.
+    :param start_row: The starting row index for the LD matrix plot.
+    :param end_row: The ending row index (not inclusive) for the LD matrix plot.
+    :param symmetric: If True, plot the symmetric version of the LD matrix.
+    Otherwise, plot the upper triangular part.
     :param cmap: The color map for the LD matrix plot.
     :param include_colorbar: If True, include a colorbar in the plot.
     """
 
-    if row_subset is None:
-        row_subset = np.arange(ldm.shape[0])
+    curr_mask = None
 
-    # TODO: Figure out a way to do this without loading the entire matrix:
-    ldm.load(return_symmetric=True, dtype='float32')
+    if variant_subset is not None:
+        curr_mask = ldm.get_mask()
+        ldm.reset_mask()
+        ldm.filter_snps(variant_subset)
 
-    mat = ldm.csr_matrix[row_subset, :][:, row_subset].toarray()
+    ld_mat = ldm.load_data(start_row=start_row,
+                           end_row=end_row,
+                           return_symmetric=symmetric,
+                           return_square=True,
+                           return_as_csr=True,
+                           dtype=np.float32).todense()
 
-    if display == 'upper':
-        mat = np.triu(mat, k=1)
-    elif display == 'lower':
-        mat = np.tril(mat, k=1)
-
-    plt.imshow(mat, cmap=cmap, vmin=-1., vmax=1.)
+    plt.imshow(ld_mat, cmap=cmap, vmin=-1., vmax=1.)
 
     if include_colorbar:
         plt.colorbar()
+
+    # Reset the original mask:
+    if curr_mask is not None:
+        ldm.set_mask(curr_mask)
 
     plt.axis('off')
