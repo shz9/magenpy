@@ -58,7 +58,8 @@ def find_blas_libraries():
     try:
         blas_packages = [pkg for pkg in pkgconfig.list_all()
                          if "blas" in pkg]
-    except FileNotFoundError:
+    except Exception as e:
+        print(e)
         blas_packages = []
 
     # First check: Make sure that compiler flags are defined and a
