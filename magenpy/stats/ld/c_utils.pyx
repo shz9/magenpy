@@ -11,10 +11,15 @@
 
 from libc.math cimport exp
 from libc.stdint cimport int64_t, int32_t
-from cython cimport integral, floating
+from cython cimport floating
 cimport cython
 import numpy as np
 cimport numpy as cnp
+
+
+ctypedef fused indptr_type:
+    cnp.int32_t
+    cnp.int64_t
 
 
 ctypedef fused noncomplex_numeric:
@@ -42,7 +47,7 @@ cdef extern from "ld_utils.hpp" nogil:
               int threads)
 
 
-cpdef ld_dot(integral[::1] ld_indptr,
+cpdef ld_dot(indptr_type[::1] ld_indptr,
              noncomplex_numeric[::1] ld_data,
              floating[::1] vec,
              floating dq_scale = 1.,
@@ -68,7 +73,7 @@ cpdef ld_dot(integral[::1] ld_indptr,
     return np.asarray(out)
 
 cpdef find_tagging_variants(int[::1] variant_indices,
-                           integral[::1] indptr,
+                           indptr_type[::1] indptr,
                            noncomplex_numeric[::1] data,
                            noncomplex_numeric threshold):
     """
@@ -89,7 +94,7 @@ cdef noncomplex_numeric numeric_abs(noncomplex_numeric x) noexcept nogil:
         return -x
     return x
 
-cpdef prune_ld_ut(integral[::1] indptr,
+cpdef prune_ld_ut(indptr_type[::1] indptr,
                   noncomplex_numeric[::1] data,
                   noncomplex_numeric r_threshold):
     """
@@ -136,7 +141,7 @@ cpdef prune_ld_ut(integral[::1] indptr,
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef get_symmetrized_indptr_with_mask(integral[::1] indptr,
+cpdef get_symmetrized_indptr_with_mask(indptr_type[::1] indptr,
                                        cnp.ndarray[cnp.npy_bool, ndim=1] mask):
     """
     Given an index pointer array from an upper triangular CSR matrix, this function 
@@ -195,7 +200,7 @@ cpdef get_symmetrized_indptr_with_mask(integral[::1] indptr,
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef get_symmetrized_indptr(integral[::1] indptr):
+cpdef get_symmetrized_indptr(indptr_type[::1] indptr):
     """
     Given an index pointer array from an upper triangular CSR matrix, this function 
     computes the equivalent indptr for the symmetric matrix and returns also the 
@@ -245,7 +250,7 @@ cpdef get_symmetrized_indptr(integral[::1] indptr):
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef symmetrize_ut_csr_matrix_with_mask(integral[::1] indptr,
+cpdef symmetrize_ut_csr_matrix_with_mask(indptr_type[::1] indptr,
                                          noncomplex_numeric[::1] data,
                                          cnp.ndarray[cnp.npy_bool, ndim=1] mask,
                                          noncomplex_numeric diag_fill_value):
@@ -314,7 +319,7 @@ cpdef symmetrize_ut_csr_matrix_with_mask(integral[::1] indptr,
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef symmetrize_ut_csr_matrix(integral[::1] indptr,
+cpdef symmetrize_ut_csr_matrix(indptr_type[::1] indptr,
                                 noncomplex_numeric[::1] data,
                                 noncomplex_numeric diag_fill_value):
     """
@@ -339,7 +344,7 @@ cpdef symmetrize_ut_csr_matrix(integral[::1] indptr,
         int64_t[::1] new_indptr = new_idx[0]
         int32_t[::1] leftmost_col = new_idx[1]
         int32_t curr_row, curr_col, curr_row_size
-        int32_t curr_data_idx, new_idx_1, new_idx_2, curr_shape=indptr.shape[0]-1
+        int32_t curr_data_idx, new_idx_1, new_idx_2, curr_shape=indptr.shape[0] - 1
         noncomplex_numeric[::1] new_data = np.empty_like(data, shape=(new_idx[0][new_indptr.shape[0] - 1], ))
 
     with nogil:
@@ -370,7 +375,7 @@ cpdef symmetrize_ut_csr_matrix(integral[::1] indptr,
     return np.asarray(new_data), np.asarray(new_idx[0]), np.asarray(new_idx[1])
 
 
-cpdef filter_ut_csr_matrix_inplace(integral[::1] indptr,
+cpdef filter_ut_csr_matrix_inplace(indptr_type[::1] indptr,
                                   noncomplex_numeric[::1] data,
                                   char[::1] bool_mask,
                                   int new_size):
@@ -430,7 +435,7 @@ cpdef filter_ut_csr_matrix_inplace(integral[::1] indptr,
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef generate_data_mask_ut_csr_matrix(integral[::1] indptr, char[::1] bool_mask):
+cpdef generate_data_mask_ut_csr_matrix(indptr_type[::1] indptr, char[::1] bool_mask):
     """
     This is a utility function to generate a mask with the purpose of filtering 
     the data array of upper-triangular CSR matrices. The function also generates a new 
@@ -482,7 +487,7 @@ cpdef generate_data_mask_ut_csr_matrix(integral[::1] indptr, char[::1] bool_mask
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef expand_ranges(integral[::1] start, integral[::1] end, int64_t output_size):
+cpdef expand_ranges(indptr_type[::1] start, indptr_type[::1] end, int64_t output_size):
     """
     Given a set of start and end indices, expand them into one long vector that contains 
     the indices between all start and end positions.
@@ -494,14 +499,9 @@ cpdef expand_ranges(integral[::1] start, integral[::1] end, int64_t output_size)
     """
 
     cdef:
-        integral i, j, size=start.shape[0]
+        indptr_type i, j, size=start.shape[0]
         int64_t out_idx = 0
-        integral[::1] output
-
-    if integral is int:
-        output = np.empty(output_size, dtype=np.int32)
-    else:
-        output = np.empty(output_size, dtype=np.int64)
+        indptr_type[::1] output = np.empty_like(start, shape=(output_size, ))
 
     with nogil:
         for i in range(size):
@@ -516,7 +516,7 @@ cpdef expand_ranges(integral[::1] start, integral[::1] end, int64_t output_size)
 @cython.nonecheck(False)
 @cython.cdivision(True)
 @cython.exceptval(check=False)
-cpdef find_ld_block_boundaries(integral[:] pos, int[:, :] block_boundaries):
+cpdef find_ld_block_boundaries(indptr_type[:] pos, int[:, :] block_boundaries):
     """
     Find the LD boundaries for the blockwise estimator of LD, i.e., the 
     indices of the leftmost and rightmost neighbors for each SNP.
@@ -527,7 +527,7 @@ cpdef find_ld_block_boundaries(integral[:] pos, int[:, :] block_boundaries):
 
     cdef:
         int i, j, ldb_idx, B = block_boundaries.shape[0], M = pos.shape[0]
-        integral block_start, block_end
+        indptr_type block_start, block_end
         int[:] v_min = np.zeros_like(pos, dtype=np.int32)
         int[:] v_max = M*np.ones_like(pos, dtype=np.int32)
 
