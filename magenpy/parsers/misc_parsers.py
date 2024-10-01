@@ -11,6 +11,8 @@ def read_snp_filter_file(filename, snp_id_col=0):
     :type filename: str
     :param snp_id_col: The column index containing the SNP IDs
     :type snp_id_col: int
+
+    :return keep_list: A numpy array with the SNP IDs
     """
 
     try:
@@ -30,6 +32,8 @@ def read_sample_filter_file(filename):
 
     :param filename: The path to the file containing the sample IDs
     :type filename: str
+
+    :return: A numpy array with the sample IDs
     """
 
     keep_list = pd.read_csv(filename, sep="\t", header=None).values
@@ -50,19 +54,24 @@ def parse_ld_block_data(ldb_file_path):
 
     :param ldb_file_path: The path (or URL) to the LD blocks file
     :type ldb_file_path: str
+
+    :return: A dictionary with the chromosome ID and a list of the start
+    and end positions for the blocks in that chromosome.
     """
 
     ld_blocks = {}
 
     df = pd.read_csv(ldb_file_path, sep=r'\s+')
 
+    # Drop rows with missing values:
+    df.dropna(inplace=True)
     df = df.loc[(df.start != 'None') & (df.stop != 'None')]
-    df = df.astype({'chr': str, 'start': np.int32, 'stop': np.int32})
-    df = df.sort_values('start')
 
-    if df.isnull().values.any():
-        raise ValueError("The LD block data contains missing information. This may result in invalid "
-                         "LD boundaries. Please fix the LD block files before continuing!")
+    # Cast the start/stop columns to integers:
+    df = df.astype({'chr': str, 'start': np.int32, 'stop': np.int32})
+
+    # Sort the dataframe:
+    df = df.sort_values('start')
 
     for chrom in df['chr'].unique():
         ld_blocks[int(chrom.replace('chr', ''))] = df.loc[df['chr'] == chrom, ['start', 'stop']].values
@@ -78,6 +87,8 @@ def parse_cluster_assignment_file(cluster_assignment_file):
 
     :param cluster_assignment_file: The path to the cluster assignment file.
     :type cluster_assignment_file: str
+
+    :return: A pandas dataframe with the cluster assignments.
     """
     try:
         clusters = pd.read_csv(cluster_assignment_file, sep=r'\s+')

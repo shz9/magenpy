@@ -1,4 +1,9 @@
 import numpy as np
+import pandas as pd
+import os.path as osp
+import tempfile
+from ...LDMatrix import LDMatrix
+from ...utils.system_utils import makedir
 
 
 class SampleLD(object):
@@ -21,8 +26,11 @@ class SampleLD(object):
 
      :ivar genotype_matrix: The genotype matrix, an instance of `GenotypeMatrix` or its children.
      :ivar ld_boundaries: The LD boundaries for each variant in the LD matrix.
+     :ivar temp_dir: A temporary directory to store intermediate files and results.
 
     """
+
+    estimator_id = 'sample'
 
     def __init__(self, genotype_matrix):
         """
@@ -33,9 +41,13 @@ class SampleLD(object):
         self.genotype_matrix = genotype_matrix
         self.ld_boundaries = None
 
+        self.temp_dir = tempfile.TemporaryDirectory(dir=self.genotype_matrix.temp_dir.name,
+                                                    prefix='ld_').name
+        makedir(self.temp_dir)
+
         # Ensure that the genotype matrix has data for a single chromosome only:
         if self.genotype_matrix.chromosome is None:
-            raise Exception("We do not support computing inter-chromosomal LD matrices! "
+            raise Exception("`magenpy` does not support computing inter-chromosomal LD matrices! "
                             "You may need to split the genotype matrix by chromosome. "
                             "See GenotypeMatrix.split_by_chromosome().")
 
@@ -59,7 +71,8 @@ class SampleLD(object):
         if self.ld_boundaries is None:
 
             m = self.genotype_matrix.n_snps
-            self.ld_boundaries = np.array((np.zeros(m), np.ones(m)*m)).astype(np.int64)
+            self.ld_boundaries = np.array((np.zeros(m),
+                                           np.ones(m)*m)).astype(np.int64)
 
         return self.ld_boundaries
 
@@ -115,24 +128,30 @@ class SampleLD(object):
             except KeyError:
                 del threshold_dict['cm_window_size']
 
+        if self.estimator_id == 'sample':
+            # If we're using the sample estimator, then expand the plink thresholds slightly
+            # to avoid the program dropping LD between variants at the extreme ends:
+            for key, val in threshold_dict.items():
+                threshold_dict[key] = val*1.05
+                if isinstance(val, int):
+                    threshold_dict[key] = int(threshold_dict[key])
+
         return threshold_dict
 
     def compute(self,
                 output_dir,
-                temp_dir='temp',
                 overwrite=True,
                 delete_original=True,
                 dtype='int8',
                 compressor_name='zstd',
                 compression_level=7,
-                compute_spectral_properties=False):
+                compute_spectral_properties=False) -> LDMatrix:
         """
         A utility method to compute the LD matrix and store in Zarr array format.
         The computes the LD matrix and stores it in Zarr array format, set its attributes,
         and performs simple validation at the end.
 
         :param output_dir: The path where to store the resulting LD matrix.
-        :param temp_dir: A temporary directory to store intermediate files and results.
         :param overwrite: If True, overwrite any existing LD matrices in `temp_dir` and `output_dir`.
         :param delete_original: If True, deletes dense or intermediate LD matrices generated along the way.
         :param dtype: The data type for the entries of the LD matrix (supported data types are float32, float64
@@ -157,7 +176,7 @@ class SampleLD(object):
             ld_mat = compute_ld_xarray(self.genotype_matrix,
                                        ld_boundaries,
                                        output_dir,
-                                       temp_dir=temp_dir,
+                                       temp_dir=self.temp_dir,
                                        overwrite=overwrite,
                                        delete_original=delete_original,
                                        dtype=dtype,
@@ -172,7 +191,8 @@ class SampleLD(object):
                                          ld_boundaries,
                                          output_dir,
                                          window_size_thersh,
-                                         temp_dir=temp_dir,
+                                         trim_boundaries=self.estimator_id not in ('sample', 'windowed'),
+                                         temp_dir=self.temp_dir,
                                          overwrite=overwrite,
                                          dtype=dtype,
                                          compressor_name=compressor_name,
@@ -194,7 +214,6 @@ class SampleLD(object):
         ld_mat.set_metadata('a1', self.genotype_matrix.a1, overwrite=overwrite)
         ld_mat.set_metadata('a2', self.genotype_matrix.a2, overwrite=overwrite)
 
-
         try:
             ld_mat.set_metadata('cm', self.genotype_matrix.cm_pos, overwrite=overwrite)
         except KeyError:
@@ -203,7 +222,12 @@ class SampleLD(object):
         ld_mat.set_metadata('ldscore', ld_mat.compute_ld_scores(), overwrite=overwrite)
 
         if compute_spectral_properties:
-            ld_mat.set_store_attr('Min eigenvalue', ld_mat.estimate_min_eigenvalue())
+
+            extreme_eigs = ld_mat.estimate_extremal_eigenvalues()
+
+            ld_mat.set_store_attr('Spectral properties', {
+                'Extremal': extreme_eigs
+            })
 
         if ld_mat.validate_ld_matrix():
             return ld_mat
@@ -237,6 +261,8 @@ class WindowedLD(SampleLD):
     :ivar cm_window_size: The maximum distance in centi Morgan to consider when computing LD.
 
     """
+
+    estimator_id = 'windowed'
 
     def __init__(self,
                  genotype_matrix,
@@ -313,19 +339,17 @@ class WindowedLD(SampleLD):
 
     def compute(self,
                 output_dir,
-                temp_dir='temp',
                 overwrite=True,
                 delete_original=True,
                 dtype='int8',
                 compressor_name='zstd',
                 compression_level=7,
-                compute_spectral_properties=False,):
+                compute_spectral_properties=False) -> LDMatrix:
         """
 
         Compute the windowed LD matrix and store in Zarr array format.
 
         :param output_dir: The path where to store the resulting LD matrix.
-        :param temp_dir: A temporary directory to store intermediate files and results.
         :param overwrite: If True, overwrite any existing LD matrices in `temp_dir` and `output_dir`.
         :param delete_original: If True, deletes dense or intermediate LD matrices generated along the way.
         :param dtype: The data type for the entries of the LD matrix.
@@ -338,7 +362,6 @@ class WindowedLD(SampleLD):
         """
 
         ld_mat = super().compute(output_dir,
-                                 temp_dir,
                                  overwrite=overwrite,
                                  delete_original=delete_original,
                                  compute_spectral_properties=compute_spectral_properties,
@@ -361,15 +384,55 @@ class WindowedLD(SampleLD):
         ld_mat.set_store_attr('Estimator properties', w_properties)
 
         if compute_spectral_properties:
-            eigs, block_bounds = ld_mat.estimate_min_eigenvalue(block_size=self.window_size,
-                                                                block_size_kb=self.kb_window_size,
-                                                                block_size_cm=self.cm_window_size,
-                                                                return_block_boundaries=True)
 
-            ld_mat.set_store_attr('Min eigenvalue per block', {
-                'Min eigenvalue': list(eigs),
-                'Block boundaries': list(block_bounds)
-            })
+            if 'Spectral properties' in ld_mat.list_store_attributes():
+                spectral_prop = ld_mat.get_store_attr('Spectral properties')
+            else:
+                spectral_prop = {
+                    'Extremal': ld_mat.estimate_extremal_eigenvalues()
+                }
+
+            # Estimate extremal eigenvalues within blocks:
+            # To quantify the impact of sparsification, we increase the window sizes here by 20%:
+
+            if self.window_size is not None:
+                eig_window_size = int(1.2*self.window_size)
+            else:
+                eig_window_size = None
+
+            if self.kb_window_size is not None:
+                eig_kb_window_size = 1.2*self.kb_window_size
+            else:
+                eig_kb_window_size = None
+
+            if self.cm_window_size is not None:
+                eig_cm_window_size = 1.2*self.cm_window_size
+            else:
+                eig_cm_window_size = None
+
+            eigs, block_bounds = ld_mat.estimate_extremal_eigenvalues(
+                block_size=eig_window_size,
+                block_size_kb=eig_kb_window_size,
+                block_size_cm=eig_cm_window_size,
+                return_block_boundaries=True
+            )
+
+            spectral_prop['Eigenvalues per block'] = {**eigs, **block_bounds}
+
+            # Estimate minimum eigenvalues while excluding long-range LD regions (if they're present):
+            n_snps_before = ld_mat.n_snps
+            ld_mat.filter_long_range_ld_regions()
+            n_snps_after = ld_mat.n_snps
+
+            if n_snps_after < n_snps_before:
+
+                spectral_prop['Extremal (excluding LRLD)'] = ld_mat.estimate_extremal_eigenvalues()
+
+            # Update or set the spectral properties attribute:
+            ld_mat.set_store_attr('Spectral properties', spectral_prop)
+
+            # Reset the mask:
+            ld_mat.reset_mask()
 
         return ld_mat
 
@@ -389,6 +452,9 @@ class ShrinkageLD(SampleLD):
     Computing the shrinkage intensity requires specifying the effective population size (Ne) and the sample size
     used to infer the genetic map. In addition, it requires specifying a threshold below which the LD is set to zero.
 
+    !!! note
+        The threshold may be adjusted depending on the requested storage data type.
+
     !!! seealso "See Also"
         * [WindowedLD][magenpy.stats.ld.estimator.WindowedLD]
         * [BlockLD][magenpy.stats.ld.estimator.BlockLD]
@@ -400,6 +466,8 @@ class ShrinkageLD(SampleLD):
     :ivar threshold: The shrinkage cutoff below which the LD is set to zero.
 
     """
+
+    estimator_id = 'shrinkage'
 
     def __init__(self,
                  genotype_matrix,
@@ -440,27 +508,22 @@ class ShrinkageLD(SampleLD):
 
     def compute(self,
                 output_dir,
-                temp_dir='temp',
                 overwrite=True,
                 delete_original=True,
                 dtype='int8',
                 compressor_name='zstd',
                 compression_level=7,
                 compute_spectral_properties=False,
-                chunk_size=1000):
+                chunk_size=1000) -> LDMatrix:
         """
 
-        TODO: Add a mechanism to either automatically adjust the shrinkage threshold depending on the
-        float precision (dtype) or purge trailing zero entries that got quantized to zero. For example,
-        if we select a shrinkage threshold of 1e-3 with (int8), then we will have a lot of
-        trailing zeros stored in the resulting LD matrix. It's better if we got rid of those zeros to
-        minimize storage requirements and computation time.
+        !!! note
+            The threshold is adjusted depending on the requested storage data type.
 
         !!! note
             LD Scores are computed before applying shrinkage.
 
         :param output_dir: The path where to store the resulting LD matrix.
-        :param temp_dir: A temporary directory to store intermediate files and results.
         :param overwrite: If True, overwrite any existing LD matrices in `temp_dir` and `output_dir`.
         :param delete_original: If True, deletes dense or intermediate LD matrices generated along the way.
         :param dtype: The data type for the entries of the LD matrix.
@@ -475,11 +538,16 @@ class ShrinkageLD(SampleLD):
 
         """
 
+        # Adjust the threshold depending on the requested storage data type:
+        if np.issubdtype(dtype, np.integer):
+            threshold = max(self.threshold, 1./np.iinfo(dtype).max)
+        else:
+            threshold = self.threshold
+
         ld_mat = super().compute(output_dir,
-                                 temp_dir,
                                  overwrite=overwrite,
                                  delete_original=delete_original,
-                                 compute_spectral_properties=False,  # Compute after shrinkage
+                                 compute_spectral_properties=False,  # Compute after shrinkage if requested
                                  dtype=dtype,
                                  compressor_name=compressor_name,
                                  compression_level=compression_level)
@@ -491,7 +559,7 @@ class ShrinkageLD(SampleLD):
                                   self.genotype_matrix.maf_var,
                                   self.genetic_map_ne,
                                   self.genetic_map_sample_size,
-                                  self.threshold,
+                                  threshold,
                                   chunk_size=chunk_size)
 
         ld_mat.set_store_attr('LD estimator', 'shrinkage')
@@ -499,25 +567,25 @@ class ShrinkageLD(SampleLD):
         ld_mat.set_store_attr('Estimator properties', {
                     'Genetic map Ne': self.genetic_map_ne,
                     'Genetic map sample size': self.genetic_map_sample_size,
-                    'Threshold': self.threshold
+                    'Threshold': threshold
                 })
 
         if compute_spectral_properties:
 
-            ld_mat.set_store_attr('Min eigenvalue', ld_mat.estimate_min_eigenvalue())
+            spectral_prop = {
+                'Extremal': ld_mat.estimate_extremal_eigenvalues()
+            }
 
             cm_ld_bounds_start = self.genotype_matrix.cm_pos[self.ld_boundaries[0, :]]
             cm_ld_bounds_end = self.genotype_matrix.cm_pos[self.ld_boundaries[1, :] - 1]
 
             median_dist_cm = np.median(cm_ld_bounds_end - cm_ld_bounds_start)
 
-            eigs, block_bounds = ld_mat.estimate_min_eigenvalue(block_size_cm=median_dist_cm,
-                                                                return_block_boundaries=True)
+            eigs, block_bounds = ld_mat.estimate_extremal_eigenvalues(block_size_cm=median_dist_cm,
+                                                                      return_block_boundaries=True)
+            spectral_prop['Eigenvalues per block'] = {**eigs, **block_bounds}
 
-            ld_mat.set_store_attr('Min eigenvalue per block', {
-                'Min eigenvalue': list(eigs),
-                'Block boundaries': list(block_bounds)
-            })
+            ld_mat.set_store_attr('Spectral properties', spectral_prop)
 
         return ld_mat
 
@@ -548,6 +616,8 @@ class BlockLD(SampleLD):
 
     """
 
+    estimator_id = 'block'
+
     def __init__(self,
                  genotype_matrix,
                  ld_blocks=None,
@@ -571,6 +641,42 @@ class BlockLD(SampleLD):
         else:
             self.ld_blocks = ld_blocks
 
+        split_geno_matrices = self.genotype_matrix.split_by_variants(self._map_snps_to_blocks())
+
+        self._block_estimators = {
+            i: SampleLD(geno_matrix) for i, geno_matrix in split_geno_matrices.items()
+        }
+
+    def _map_snps_to_blocks(self):
+        """
+        Map each variant in the LD matrix to its corresponding LD block.
+
+        :return: A dataframe mapping the block ID to the SNPs in that block.
+        :raises ValueError: If no variants were matched to the LD blocks.
+
+        """
+
+        block_df = pd.DataFrame(self.ld_blocks, columns=['block_start', 'block_end'])
+        block_df['group'] = np.arange(block_df.shape[0])
+
+        snp_df = pd.DataFrame({
+            'bp_pos': self.genotype_matrix.bp_pos,
+            'SNP': self.genotype_matrix.snps
+        })
+
+        # Merge the two dataframes to assign each SNP to its corresponding block:
+        merged_df = pd.merge_asof(snp_df, block_df,
+                                  left_on='bp_pos', right_on='block_start', direction='backward')
+
+        # Filter merged_df to only include variants that were matched properly with a block:
+        merged_df = merged_df.loc[(merged_df.bp_pos >= merged_df.block_start) &
+                                  (merged_df.bp_pos < merged_df.block_end)]
+
+        if len(merged_df) < 1:
+            raise ValueError("No variants were matched to the LD blocks. Please check the LD blocks file.")
+
+        return merged_df
+
     def compute_ld_boundaries(self):
         """
         Compute the per-SNP Linkage-Disequilibrium (LD) boundaries for the block-based estimator.
@@ -586,19 +692,17 @@ class BlockLD(SampleLD):
 
     def compute(self,
                 output_dir,
-                temp_dir='temp',
                 overwrite=True,
                 delete_original=True,
                 dtype='int8',
                 compressor_name='zstd',
-                compute_spectral_properties=False,
-                compression_level=7):
+                compression_level=7,
+                compute_spectral_properties=False) -> LDMatrix:
         """
 
         Compute the block-based LD matrix and store in Zarr array format.
 
         :param output_dir: The path where to store the resulting LD matrix.
-        :param temp_dir: A temporary directory to store intermediate files and results.
         :param overwrite: If True, overwrite any existing LD matrices in `temp_dir` and `output_dir`.
         :param delete_original: If True, deletes dense or intermediate LD matrices generated along the way.
         :param compute_spectral_properties: If True, compute and store information about the eigenvalues of
@@ -610,29 +714,75 @@ class BlockLD(SampleLD):
         :return: An instance of `LDMatrix` encapsulating the computed LD matrix, its attributes, and metadata.
         """
 
-        ld_mat = super().compute(output_dir,
-                                 temp_dir,
-                                 overwrite=overwrite,
-                                 delete_original=delete_original,
-                                 compute_spectral_properties=compute_spectral_properties,
-                                 dtype=dtype,
-                                 compressor_name=compressor_name,
-                                 compression_level=compression_level)
+        ld_mats = []
 
+        # TODO: Parallelize this loop
+
+        for i, block_estimator in self._block_estimators.items():
+
+            block_output_dir = osp.join(self.genotype_matrix.temp_dir.name,
+                                        f'chr_{self.genotype_matrix.chromosome}_block_{i}/')
+
+            makedir(block_output_dir)
+
+            ld_mats.append(
+                block_estimator.compute(block_output_dir,
+                                        overwrite=overwrite,
+                                        delete_original=delete_original,
+                                        dtype=dtype,
+                                        compressor_name=compressor_name,
+                                        compression_level=compression_level,
+                                        compute_spectral_properties=compute_spectral_properties)
+                )
+
+        # If the user requested computing the spectral properties, we need to obtain
+        # the minimum eigenvalue from the blocks:
+        if compute_spectral_properties:
+
+            extremal_eigs = pd.DataFrame([ld.get_store_attr('Spectral properties')['Extremal'] for ld in ld_mats])
+            blocks = np.insert(np.cumsum([ld.stored_n_snps for ld in ld_mats]), 0, 0)
+            block_starts = blocks[:-1]
+            block_ends = blocks[1:]
+
+        # Combine the LD matrices for the individual blocks into a single LD matrix:
+        from .utils import combine_ld_matrices
+
+        output_dir = osp.join(output_dir, f'chr_{self.genotype_matrix.chromosome}/')
+
+        ld_mat = combine_ld_matrices(ld_mats,
+                                     output_dir,
+                                     overwrite=overwrite,
+                                     delete_original=delete_original)
+
+        # Populate the attributes of the LDMatrix object:
         ld_mat.set_store_attr('LD estimator', 'block')
-
         ld_mat.set_store_attr('Estimator properties', {
             'LD blocks': self.ld_blocks.tolist()
         })
 
+        ld_mat.set_store_attr('Chromosome', int(self.genotype_matrix.chromosome))
+        ld_mat.set_store_attr('Sample size', int(self.genotype_matrix.sample_size))
+
+        if self.genotype_matrix.genome_build is not None:
+            ld_mat.set_store_attr('Genome build', self.genotype_matrix.genome_build)
+
         if compute_spectral_properties:
 
-            blocks = np.concatenate([[0], np.unique(self.ld_boundaries[1, :])])
-            eigs, block_bounds = ld_mat.estimate_min_eigenvalue(blocks=blocks, return_block_boundaries=True)
+            spectral_prop = {
+                'Extremal': {
+                    'min': extremal_eigs['min'].min(),
+                    'max': extremal_eigs['max'].max()
+                },
+                'Eigenvalues per block': {
+                    'min': list(extremal_eigs['min']),
+                    'max': list(extremal_eigs['max']),
+                    'block_start': list(block_starts),
+                    'block_end': list(block_ends)
+                }
+            }
 
-            ld_mat.set_store_attr('Min eigenvalue per block', {
-                'Min eigenvalue': list(eigs),
-                'Block boundaries': list(block_bounds)
-            })
+            ld_mat.set_store_attr('Spectral properties', spectral_prop)
 
-        return ld_mat
+        if ld_mat.validate_ld_matrix():
+            return ld_mat
+

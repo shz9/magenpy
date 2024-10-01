@@ -29,7 +29,6 @@ class GenotypeMatrix(object):
     :ivar bed_file: The path to the plink BED file containing the genotype matrix.
     :ivar _genome_build: The genome build or assembly under which the SNP coordinates are defined.
     :ivar temp_dir: The directory where temporary files will be stored (if needed).
-    :ivar cleanup_dir_list: A list of directories to clean up after execution.
     :ivar threads: The number of threads to use for parallel computations.
 
     """
@@ -60,17 +59,22 @@ class GenotypeMatrix(object):
         if sample_table is not None:
             self.set_sample_table(sample_table)
 
-        if snp_table is not None:
+        if snp_table is not None and 'original_index' not in self.snp_table.columns:
             self.snp_table['original_index'] = np.arange(len(self.snp_table))
 
         from .utils.system_utils import makedir
 
         makedir(temp_dir)
 
+        temp_dir_prefix = 'gmat_'
+
+        if self.chromosome is not None:
+            temp_dir_prefix += f'chr{self.chromosome}_'
+
+        self.temp_dir = tempfile.TemporaryDirectory(dir=temp_dir, prefix=temp_dir_prefix)
+
         self.bed_file = bed_file
         self._genome_build = genome_build
-        self.temp_dir = temp_dir
-        self.cleanup_dir_list = []  # Directories to clean up after execution.
 
         self.threads = threads
 
@@ -153,12 +157,11 @@ class GenotypeMatrix(object):
     @property
     def chromosome(self):
         """
-        :return: The chromosome associated with the variants in the genotype matrix.
-
         ..note::
         This is a convenience method that assumes that the genotype matrix contains variants
         from a single chromosome. If there are multiple chromosomes, the method will return `None`.
 
+        :return: The chromosome associated with the variants in the genotype matrix.
         """
         chrom = self.chromosomes
         if chrom is not None and len(chrom) == 1:
@@ -377,12 +380,7 @@ class GenotypeMatrix(object):
         else:
             raise KeyError(f"LD estimator {estimator} is not recognized!")
 
-        # Create a temporary directory where we store intermediate results:
-        tmp_ld_dir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix='ld_')
-        self.cleanup_dir_list.append(tmp_ld_dir)
-
         return ld_est.compute(output_dir,
-                              temp_dir=tmp_ld_dir.name,
                               dtype=dtype,
                               compressor_name=compressor_name,
                               compression_level=compression_level,
@@ -538,23 +536,61 @@ class GenotypeMatrix(object):
             return {chromosome: self}
         else:
             chrom_tables = self.snp_table.groupby('CHR')
+
             return {
                 c: self.__class__(sample_table=self.sample_table,
                                   snp_table=chrom_tables.get_group(c),
-                                  temp_dir=self.temp_dir)
+                                  bed_file=self.bed_file,
+                                  temp_dir=self.temp_dir.name,
+                                  genome_build=self.genome_build,
+                                  threads=self.threads)
                 for c in chrom_tables.groups
             }
+
+    def split_by_variants(self, variant_group_dict):
+        """
+        Split the genotype matrix by variants into separate `GenotypeMatrix` objects
+        based on the groups defined in `variant_group_dict`. The dictionary should have
+        the group name as the key and the list of SNP rsIDs in that group as the value.
+
+        :param variant_group_dict: A dictionary where the key is the group name and the value
+        is a list of SNP rsIDs to group together.
+
+        :return: A dictionary of `GenotypeMatrix` objects, one for each group.
+        """
+
+        if isinstance(variant_group_dict, dict):
+
+            variant_group_dict = pd.concat([
+                pd.DataFrame({'group': group, 'SNP': snps})
+                for group, snps in variant_group_dict.items()
+            ])
+        elif isinstance(variant_group_dict, pd.DataFrame):
+            assert 'SNP' in variant_group_dict.columns and 'group' in variant_group_dict.columns
+        else:
+            raise ValueError("The variant group dictionary is invalid!")
+
+        grouped_table = self.snp_table.merge(variant_group_dict, on='SNP').groupby('group')
+
+        return {
+            group: self.__class__(sample_table=self.sample_table,
+                                  snp_table=grouped_table.get_group(group).drop(columns='group'),
+                                  bed_file=self.bed_file,
+                                  temp_dir=self.temp_dir.name,
+                                  genome_build=self.genome_build,
+                                  threads=self.threads)
+            for group in grouped_table.groups
+        }
 
     def cleanup(self):
         """
         Clean up all temporary files and directories
         """
 
-        for tmp in self.cleanup_dir_list:
-            try:
-                tmp.cleanup()
-            except FileNotFoundError:
-                continue
+        try:
+            self.temp_dir.cleanup()
+        except FileNotFoundError:
+            pass
 
 
 class xarrayGenotypeMatrix(GenotypeMatrix):
@@ -685,7 +721,12 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
         """
 
         super().filter_snps(extract_snps=extract_snps, extract_file=extract_file)
-        self.xr_mat = self.xr_mat.sel(variant=np.isin(self.xr_mat.variant.coords['snp'], self.snps))
+
+        from .utils.compute_utils import intersect_arrays
+
+        idx = intersect_arrays(self.xr_mat.variant.coords['snp'].values, self.snps, return_index=True)
+
+        self.xr_mat = self.xr_mat.isel(variant=idx)
 
     def filter_samples(self, keep_samples=None, keep_file=None):
         """
@@ -730,7 +771,7 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
         :param standardize_genotype: If True, standardize the genotype when computing the polygenic score.
         :param skip_na: If True, skip missing values when computing the polygenic score.
 
-        :return: The polygenic score (PGS) for each sample in the genotype matrix.
+        :return: The polygenic score(s) (PGS) for each sample in the genotype matrix.
 
         """
 
@@ -789,6 +830,26 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
 
         return split
 
+    def split_by_variants(self, variant_group_dict):
+        """
+        Split the genotype matrix by variants into separate `xarrayGenotypeMatrix` objects
+        based on the groups defined in `variant_group_dict`. The dictionary should have
+        the group name as the key and the list of SNP rsIDs in that group as the value.
+
+        :param variant_group_dict: A dictionary where the key is the group name and the value
+        is a list of SNP rsIDs to group together.
+
+        :return: A dictionary of `xarrayGenotypeMatrix` objects, one for each group.
+        """
+
+        split = super().split_by_variants(variant_group_dict)
+
+        for g, gt in split.items():
+            gt.xr_mat = self.xr_mat.copy()
+            gt.filter_snps(extract_snps=gt.snps)
+
+        return split
+
 
 class plinkBEDGenotypeMatrix(GenotypeMatrix):
     """
@@ -834,6 +895,7 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
 
         if self.snp_table is None and self.bed_file:
             self.snp_table = parse_bim_file(self.bed_file)
+            self.snp_table['original_index'] = np.arange(len(self.snp_table))
 
     @classmethod
     def from_file(cls, file_path, temp_dir='temp', **kwargs):
@@ -867,10 +929,11 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
         from .stats.score.utils import score_plink2
 
         # Create a temporary directory where we store intermediate results:
-        tmp_score_dir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix='score_')
-        self.cleanup_dir_list.append(tmp_score_dir)
+        tmp_score_dir = tempfile.TemporaryDirectory(dir=self.temp_dir.name, prefix='score_')
 
-        return score_plink2(self, beta, standardize_genotype=standardize_genotype, temp_dir=tmp_score_dir.name)
+        return score_plink2(self, beta,
+                            standardize_genotype=standardize_genotype,
+                            temp_dir=tmp_score_dir.name)
 
     def perform_gwas(self, **gwa_kwargs):
         """
@@ -884,8 +947,7 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
         from .stats.gwa.utils import perform_gwa_plink2
 
         # Create a temporary directory where we store intermediate results:
-        tmp_gwas_dir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix='gwas_')
-        self.cleanup_dir_list.append(tmp_gwas_dir)
+        tmp_gwas_dir = tempfile.TemporaryDirectory(dir=self.temp_dir.name, prefix='gwas_')
 
         return perform_gwa_plink2(self, temp_dir=tmp_gwas_dir.name, **gwa_kwargs)
 
@@ -899,8 +961,7 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
         from .stats.variant.utils import compute_allele_frequency_plink2
 
         # Create a temporary directory where we store intermediate results:
-        tmp_freq_dir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix='freq_')
-        self.cleanup_dir_list.append(tmp_freq_dir)
+        tmp_freq_dir = tempfile.TemporaryDirectory(dir=self.temp_dir.name, prefix='freq_')
 
         self.snp_table['MAF'] = compute_allele_frequency_plink2(self, temp_dir=tmp_freq_dir.name)
 
@@ -916,20 +977,6 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
         from .stats.variant.utils import compute_sample_size_per_snp_plink2
 
         # Create a temporary directory where we store intermediate results:
-        tmp_miss_dir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix='miss_')
-        self.cleanup_dir_list.append(tmp_miss_dir)
+        tmp_miss_dir = tempfile.TemporaryDirectory(dir=self.temp_dir.name, prefix='miss_')
 
         self.snp_table['N'] = compute_sample_size_per_snp_plink2(self, temp_dir=tmp_miss_dir.name)
-
-    def split_by_chromosome(self):
-        """
-        Split the genotype matrix by chromosome.
-        :return: A dictionary of `plinkBEDGenotypeMatrix` objects, one for each chromosome.
-        """
-
-        split = super().split_by_chromosome()
-
-        for c, gt in split.items():
-            gt.bed_file = self.bed_file
-
-        return split

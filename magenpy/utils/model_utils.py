@@ -92,6 +92,7 @@ def merge_snp_tables(ref_table,
         if not all([col in tab.columns for col in ('A1', 'A2')]):
             raise ValueError("To merge SNP tables, we require that the columns `A1` and `A2` are present.")
 
+    # Determine which columns to merge on:
     if on == 'auto':
         # Check that the `SNP` column is present in both tables:
         if all(['SNP' in tab.columns for tab in (ref_table, alt_table)]):
@@ -131,18 +132,20 @@ def merge_snp_tables(ref_table,
     # Detect cases where the effect and reference alleles are flipped:
     flip = np.all(merged_table[['A2_x', 'A1_x']].values == merged_table[['A1_y', 'A2_y']].values, axis=1)
 
-    # Variants to keep:
+    if how == 'inner':
+        # Variants to keep:
+        if correct_flips:
+            keep_snps = matching_allele | flip
+        else:
+            keep_snps = matching_allele
+
+        # Keep only SNPs with matching alleles or SNPs with flipped alleles:
+        merged_table = merged_table.loc[keep_snps, ]
+        flip = flip[keep_snps]
+
     if correct_flips:
-        keep_snps = matching_allele | flip
-    else:
-        keep_snps = matching_allele
 
-    # Keep only SNPs with matching alleles or SNPs with flipped alleles:
-    merged_table = merged_table.loc[keep_snps, ]
-
-    if correct_flips:
-
-        flip = flip[keep_snps].astype(int)
+        flip = flip.astype(int)
         num_flips = flip.sum()
 
         if num_flips > 0:

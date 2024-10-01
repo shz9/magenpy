@@ -171,6 +171,8 @@ class LDMatrix(object):
         and integer quantized data types int8 and int16).
         :param compressor_name: The name of the compressor or compression algorithm to use with Zarr.
         :param compression_level: The compression level to use with the compressor (1-9).
+
+        :return: An `LDMatrix` object.
         """
 
         from scipy.sparse import triu
@@ -210,6 +212,7 @@ class LDMatrix(object):
                          plink_ld_file,
                          snps,
                          store_path,
+                         ld_boundaries=None,
                          pandas_chunksize=None,
                          overwrite=False,
                          dtype='int8',
@@ -221,8 +224,11 @@ class LDMatrix(object):
         TODO: Determine the chunksize based on the avg neighborhood size?
 
         :param plink_ld_file: The path to the plink LD table file.
-        :param snps: An iterable containing the list of SNPs in the LD matrix.
+        :param snps: An iterable containing the list of ordered SNP rsIDs to be included in the LD matrix.
         :param store_path: The path to the Zarr LD store.
+        :param ld_boundaries: The LD boundaries for each SNP in the LD matrix (delineates the indices of
+        the leftmost and rightmost neighbors of each SNP). If not provided, the LD matrix will be constructed
+        using the full LD table from plink.
         :param pandas_chunksize: If the LD table is large, provide chunk size
         (i.e. number of rows to process at each step) to keep memory footprint manageable.
         :param overwrite: If True, it overwrites the LD store at `store_path`.
@@ -230,6 +236,8 @@ class LDMatrix(object):
         and integer quantized data types int8 and int16).
         :param compressor_name: The name of the compressor or compression algorithm to use with Zarr.
         :param compression_level: The compression level to use with the compressor (1-9).
+
+        :return: An `LDMatrix` object.
         """
 
         dtype = np.dtype(dtype)
@@ -245,11 +253,19 @@ class LDMatrix(object):
         mat = z.create_group('matrix')
         mat.empty('data', shape=len(snps)**2, dtype=dtype, compressor=compressor)
 
+        if ld_boundaries is not None:
+            use_cols = ['SNP_A', 'SNP_B', 'R']
+            bounds_df = pd.DataFrame(np.column_stack((np.arange(len(snps)).reshape(-1, 1),
+                                                      ld_boundaries[1:, :].T)),
+                                     columns=['SNP_idx', 'end'])
+        else:
+            use_cols = ['SNP_A', 'R']
+
         # Create a chunked iterator with pandas:
         # Chunk size will correspond to the average chunk size for the Zarr array:
         ld_chunks = pd.read_csv(plink_ld_file,
                                 sep=r'\s+',
-                                usecols=['SNP_A', 'R'],
+                                usecols=use_cols,
                                 engine='c',
                                 chunksize=pandas_chunksize,
                                 dtype={'SNP_A': str, 'R': np.float32})
@@ -267,11 +283,23 @@ class LDMatrix(object):
         # For each chunk in the LD file:
         for ld_chunk in ld_chunks:
 
-            # Create an indexed LD chunk:
-            row_index = snp_idx[ld_chunk['SNP_A'].values]
-
             # Fill N/A in R before storing it:
             ld_chunk.fillna({'R': 0.}, inplace=True)
+
+            # If LD boundaries are provided, filter the LD table accordingly:
+            if ld_boundaries is not None:
+
+                row_index = snp_idx[ld_chunk['SNP_A'].values]
+
+                ld_chunk['SNP_A_index'] = snp_idx[ld_chunk['SNP_A'].values].values
+                ld_chunk['SNP_B_index'] = snp_idx[ld_chunk['SNP_B'].values].values
+
+                ld_chunk = ld_chunk.merge(bounds_df, left_on='SNP_A_index', right_on='SNP_idx')
+                ld_chunk = ld_chunk.loc[(ld_chunk['SNP_B_index'] >= ld_chunk['SNP_A_index'] + 1) &
+                                        (ld_chunk['SNP_B_index'] < ld_chunk['end'])]
+
+            # Create an indexed LD chunk:
+            row_index = snp_idx[ld_chunk['SNP_A'].values]
 
             # Add LD data to the zarr array:
             if np.issubdtype(dtype, np.integer):
@@ -324,6 +352,8 @@ class LDMatrix(object):
             and integer quantized data types int8 and int16).
          :param compressor_name: The name of the compressor or compression algorithm to use with Zarr.
          :param compression_level: The compression level to use with the compressor (1-9).
+
+         :return: An `LDMatrix` object.
         """
 
         dtype = np.dtype(dtype)
@@ -423,6 +453,8 @@ class LDMatrix(object):
         and integer quantized data types int8 and int16).
         :param compressor_name: The name of the compressor or compression algorithm to use with Zarr.
         :param compression_level: The compression level to use with the compressor (1-9).
+
+        :return: An `LDMatrix` object.
         """
 
         dtype = np.dtype(dtype)
@@ -858,7 +890,7 @@ class LDMatrix(object):
         else:
             return self._zg['matrix/indptr']
 
-    def filter_long_range_ld_regions(self):
+    def get_long_range_ld_variants(self, return_value='snps'):
         """
         A utility method to exclude variants that are in long-range LD regions. The
         boundaries of those regions are derived from here:
@@ -870,9 +902,14 @@ class LDMatrix(object):
         > Anderson, Carl A., et al. "Data quality control in genetic case-control association studies."
         Nature protocols 5.9 (2010): 1564-1573.
 
-        .. note ::
-            This method is experimental and may not work as expected for all LD matrices.
+        :param return_value: The value to return. Options are 'mask', 'index', 'snps'. If `mask`, then
+        it returns a boolean array of which variants are in long-range LD regions. If `index`, then it returns
+        the index of those variants. If `snps`, then it returns the rsIDs of those variants.
+
+        :return: An array of the variants that are in long-range LD regions.
         """
+
+        assert return_value in ('mask', 'index', 'snps')
 
         from .parsers.annotation_parsers import parse_annotation_bed_file
         from .utils.data_utils import lrld_path
@@ -883,15 +920,35 @@ class LDMatrix(object):
         bed_df = bed_df.loc[bed_df['CHR'] == self.chromosome]
 
         bp_pos = self.bp_position
-        snp_mask = np.ones(len(bp_pos), dtype=bool)
+        snp_mask = np.zeros(len(bp_pos), dtype=bool)
 
-        # Loop over the LRLD region on this chromosome and exclude the SNPs in these regions:
+        # Loop over the LRLD region on this chromosome and include the SNPs in these regions:
         for _, row in bed_df.iterrows():
             start, end = row['Start'], row['End']
-            snp_mask &= ~((bp_pos >= start) & (bp_pos <= end))
+            snp_mask |= ((bp_pos >= start) & (bp_pos <= end))
+
+        if return_value == 'mask':
+            return snp_mask
+        elif return_value == 'index':
+            return np.where(snp_mask)[0]
+        else:
+            return self.snps[snp_mask]
+
+    def filter_long_range_ld_regions(self):
+        """
+        A utility method to exclude variants that are in long-range LD regions. The
+        boundaries of those regions are derived from here:
+
+        https://genome.sph.umich.edu/wiki/Regions_of_high_linkage_disequilibrium_(LD)
+
+        Which is based on the work of
+
+        > Anderson, Carl A., et al. "Data quality control in genetic case-control association studies."
+        Nature protocols 5.9 (2010): 1564-1573.
+        """
 
         # Filter the SNP to only those not in the LRLD regions:
-        self.filter_snps(self.snps[snp_mask])
+        self.filter_snps(self.snps[~self.get_long_range_ld_variants(return_value='mask')])
 
     def filter_snps(self, extract_snps=None, extract_file=None):
         """
@@ -1128,22 +1185,23 @@ class LDMatrix(object):
 
         return svds(mat, **svds_kwargs)
 
-    def estimate_min_eigenvalue(self,
-                                block_size=None,
-                                block_size_cm=None,
-                                block_size_kb=None,
-                                blocks=None,
-                                return_block_boundaries=False,
-                                assign_to_variants=False):
+    def estimate_extremal_eigenvalues(self,
+                                      block_size=None,
+                                      block_size_cm=None,
+                                      block_size_kb=None,
+                                      blocks=None,
+                                      which='both',
+                                      return_block_boundaries=False,
+                                      assign_to_variants=False):
         """
-        Estimate the smallest eigen value for the LD matrix. This is useful for
-        computing understanding the spectral properties of the LD matrix and detecting potential
+        Estimate the smallest/largest algebraic eigenvalues of the LD matrix. This is useful for
+        analyzing the spectral properties of the LD matrix and detecting potential
         issues for downstream applications that leverage the LD matrix. For instance, many LD
         matrices are not positive semi-definite (PSD) and this manifests in having negative eigenvalues.
         This function can be used to detect such issues.
 
         To perform this computation efficiently, we leverage fast ARPACK routines provided by `scipy` to
-        compute only the smallest eigenvalue of the LD matrix. Another advantage of this implementation
+        compute only the extremal eigenvalues of the LD matrix. Another advantage of this implementation
         is that it doesn't require symmetric or dequantized LD matrices. The `LDLinearOperator` class
         can be used to perform all the computations without symmetrizing or dequantizing the matrix beforehand,
         which should make it more efficient in terms of memory and CPU resources.
@@ -1163,118 +1221,105 @@ class LDMatrix(object):
         :param blocks: An array or list specifying the block boundaries to compute the minimum eigenvalue for.
         If there are B blocks, then the array should be of size B + 1, with the entries specifying the start position
         of each block.
+        :param which: The extremal eigenvalues to compute. Options are 'min', 'max', or 'both'.
         :param return_block_boundaries: If True, return the block boundaries used to compute the minimum eigenvalue.
         :param assign_to_variants: If True, assign the minimum eigenvalue to the variants used to compute it.
 
-        :return: The smallest eigenvalue(s) of the LD matrix or sub-blocks of the LD matrix. If `assign_to_variants`
-        is set to True, then return an array of size `n_snps` mapping the minimum eigenvalue to each variant.
+        :return: The extremal eigenvalue(s) of the LD matrix or sub-blocks of the LD matrix. If `assign_to_variants`
+        is set to True, then return an array of size `n_snps` mapping the extremal eigenvalues to each variant.
         """
 
-        from scipy.sparse.linalg import eigsh, ArpackNoConvergence
+        assert which in ('min', 'max', 'both')
 
         n_snps = self.stored_n_snps
+
+        from .utils.compute_utils import generate_overlapping_windows
 
         if blocks is not None:
             block_iter = blocks
         elif block_size is not None:
 
-            block_iter = np.clip(np.array(range(0, n_snps + (n_snps % block_size), block_size)),
-                                 a_min=0, a_max=n_snps)
-
-            # If the last remaining block is too small, merge it with the previous block:
-            if block_iter[-1] - block_iter[-2] < 50:
-                block_iter[-2] = block_iter[-1]
-                block_iter = block_iter[:-1]
+            windows = generate_overlapping_windows(np.arange(n_snps), block_size-1, block_size, min_window_size=50)
+            block_iter = np.insert(windows[:, 1], 0, 0)
 
         elif block_size_cm is not None or block_size_kb is not None:
 
             if block_size_cm is not None:
                 dist = self.get_metadata('cm', apply_mask=False)
+                windows = generate_overlapping_windows(dist, block_size_cm, block_size_cm, min_window_size=50)
             else:
                 dist = self.get_metadata('bp', apply_mask=False) / 1000
+                windows = generate_overlapping_windows(dist, block_size_kb, block_size_kb, min_window_size=50)
 
-            dist -= dist[0]
-
-            block_iter = np.concatenate([[0],
-                                         np.where((dist[1:] // block_size_cm) !=
-                                                  (dist[:-1] // block_size_cm))[0] + 1,
-                                         ])
-
-            # If the last remaining block is too small, merge it with the previous block:
-            if n_snps - block_iter[-1] < 50:
-                block_iter[-1] = n_snps
-            else:
-                block_iter = np.concatenate([block_iter, [n_snps]])
+            block_iter = np.insert(windows[:, 1], 0, 0)
 
         else:
             block_iter = [0, n_snps]
 
         if assign_to_variants:
-            eigs_per_var = np.zeros(n_snps, dtype=np.float32)
+            if which == 'both':
+                eigs_per_var = np.zeros((n_snps, 2), dtype=np.float32)
+            else:
+                eigs_per_var = np.zeros(n_snps, dtype=np.float32)
         else:
             eigs = []
 
-        def fast_min_eig(lop, **eigsh_kwargs):
-            """
-            A helper function to compute the smallest eigenvalue of the LD matrix efficiently.
-            This function uses a trick to shift the eigenvalues to the right by the maximum eigenvalue
-            and then computes the smallest eigenvalue of the shifted matrix. This is a more stable
-            and efficient approach for computing the smallest eigenvalue of the LD matrix.
+        block_boundaries = []
 
-            :param lop: The LDLinearOperator object to compute the smallest eigenvalue for.
-
-            :return: The smallest eigenvalue of the LD matrix.
-
-            """
-            lop.set_diag_add(None)
-            lm_max = eigsh(lop, k=1, which='LM', return_eigenvectors=False, **eigsh_kwargs)[0]
-            lop.set_diag_add(-lm_max)
-            lm_max_hat = eigsh(lop, k=1, which='LM', return_eigenvectors=False, **eigsh_kwargs)[0]
-            lop.set_diag_add(None)
-
-            return lm_max + lm_max_hat
+        from .stats.ld.utils import compute_extremal_eigenvalues
 
         for bidx in range(len(block_iter) - 1):
 
             start = block_iter[bidx]
             end = block_iter[bidx + 1]
 
+            block_boundaries.append({'block_start': start, 'block_end': end})
+
             mat = self.get_linear_operator(start_row=start, end_row=end)
-
-            try:
-
-                eig = fast_min_eig(mat)
-            except ArpackNoConvergence:
-                # If there are convergence issues, try to re-run by increasing
-                # the number of iterations or decreasing the tolerance threshold:
-                if mat.shape[0]*10 < 10000:
-                    eig = fast_min_eig(mat, maxiter=10000)
-                else:
-                    eig = fast_min_eig(mat, tol=1e-4)
+            eig = compute_extremal_eigenvalues(mat, which=which)
 
             if assign_to_variants:
-                eigs_per_var[start:end] = eig
+                if which == 'both':
+                    eigs_per_var[start:end, 0] = eig['min']
+                    eigs_per_var[start:end, 1] = eig['max']
+                else:
+                    eigs_per_var[start:end] = eig
             else:
                 eigs.append(eig)
+
+        block_boundaries = pd.DataFrame(block_boundaries).to_dict(orient='list')
 
         if assign_to_variants:
 
             if self._mask is not None:
-                eigs_per_var = eigs_per_var[self._mask]
+                eigs_per_var = eigs_per_var[self._mask, :]
+
+            if which == 'both':
+                eigs_per_var = {
+                    'min': eigs_per_var[:, 0],
+                    'max': eigs_per_var[:, 1]
+                }
 
             if return_block_boundaries:
-                return eigs_per_var, block_iter
+                return eigs_per_var, block_boundaries
             else:
                 return eigs_per_var
+
         elif return_block_boundaries:
-            return eigs, block_iter
+            if which == 'both':
+                return pd.DataFrame(eigs).to_dict(orient='list'), block_boundaries
+            else:
+                return eigs, block_boundaries
         else:
             if len(eigs) == 1:
                 return eigs[0]
             else:
-                return eigs
+                if which == 'both':
+                    return pd.DataFrame(eigs).to_dict(orient='list')
+                else:
+                    return eigs
 
-    def get_lambda_min(self, aggregate=None):
+    def get_lambda_min(self, aggregate=None, min_max_ratio=0.):
         """
         A utility method to compute the `lambda_min` value for the LD matrix. `lambda_min` is the smallest
         eigenvalue of the LD matrix and this quantity can be useful to know about in some applications.
@@ -1292,6 +1337,8 @@ class LDMatrix(object):
         :param aggregate: A summary of the minimum eigenvalue across variants or across blocks (if available).
         Supported aggregation functions are `mean_block`, `median_block`, `min_block`, and `min`. If `min` is selected,
         we return the minimum eigenvalue for the entire matrix (rather than sub-blocks of it).
+        :param min_max_ratio: The ratio between the absolute values of the minimum and maximum eigenvalues.
+        This could be used to target a particular threshold for the minimum eigenvalue.
 
         :return: The `lambda_min` value for the LD matrix.
         """
@@ -1302,43 +1349,71 @@ class LDMatrix(object):
         # Get the attributes of the LD store:
         store_attrs = self.list_store_attributes()
 
-        if aggregate in ('mean_block', 'median_block', 'min_block'):
-            assert 'Min eigenvalue per block' in store_attrs, (
-                'Aggregating lambda_min across blocks '
-                'requires that these blocks are pre-defined.')
+        def threshold_lambda_min(eigs):
+            return np.abs(np.minimum(eigs['min'] + min_max_ratio*eigs['max'], 0.)) / (1. + min_max_ratio)
 
         lambda_min = 0.
 
-        if aggregate == 'min' or 'Min eigenvalue per block' not in store_attrs:
-
-            if 'Min eigenvalue' in store_attrs:
-                lambda_min = self.get_store_attr('Min eigenvalue')
+        if 'Spectral properties' not in store_attrs:
+            if aggregate in ('mean_block', 'median_block', 'min_block'):
+                raise ValueError('Aggregating lambda_min across blocks '
+                                 'requires that these blocks are pre-defined.')
             else:
-                lambda_min = self.estimate_min_eigenvalue()
+                lambda_min = threshold_lambda_min(self.estimate_extremal_eigenvalues())
 
-        elif 'Min eigenvalue per block' in store_attrs:
+        else:
 
-            # If we have eigenvalues per block, map the block value to each variant:
-            block_eigs = self.get_store_attr('Min eigenvalue per block')
+            spectral_props = self.get_store_attr('Spectral properties')
 
-            if aggregate is None:
+            if aggregate in ('mean_block', 'median_block', 'min_block'):
+                assert 'Eigenvalues per block' in spectral_props, (
+                    'Aggregating lambda_min across blocks '
+                    'requires that these blocks are pre-defined.')
 
-                indices = np.arange(block_eigs['Block boundaries'][-1])
-                # Use searchsorted to find which boundary each index belongs to:
-                value_indices = np.searchsorted(block_eigs['Block boundaries'], indices, side='right') - 1
-                lambda_min = np.array(block_eigs['Min eigenvalue'])[value_indices]
+            if aggregate == 'min' or 'Eigenvalues per block' not in spectral_props:
 
-                if self._mask is not None:
-                    lambda_min = lambda_min[self._mask]
+                if 'Extremal' in spectral_props:
+                    lambda_min = threshold_lambda_min(spectral_props['Extremal'])
+                else:
+                    lambda_min = threshold_lambda_min(self.estimate_extremal_eigenvalues())
 
-            elif aggregate == 'mean_block':
-                lambda_min = np.mean(block_eigs['Min eigenvalue'])
-            elif aggregate == 'median_block':
-                lambda_min = np.median(block_eigs['Min eigenvalue'])
-            elif aggregate == 'min_block':
-                lambda_min = np.min(block_eigs['Min eigenvalue'])
+            elif 'Eigenvalues per block' in spectral_props:
 
-        return np.abs(np.minimum(lambda_min, 0.))
+                # If we have eigenvalues per block, map the block value to each variant:
+                block_eigs = spectral_props['Eigenvalues per block']
+
+                if aggregate is None:
+
+                    # Create a dataframe with the block information:
+                    block_df = pd.DataFrame(block_eigs)
+                    block_df['add_lam'] = block_df.apply(threshold_lambda_min, axis=1)
+
+                    merged_df = pd.merge_asof(pd.DataFrame({'SNP_idx': np.arange(self.stored_n_snps)}),
+                                              block_df,
+                                              right_on='block_start', left_on='SNP_idx', direction='backward')
+                    # Filter merged_df to only include variants that were matched properly with a block:
+                    merged_df = merged_df.loc[
+                        (merged_df.SNP_idx >= merged_df.block_start) & (merged_df.SNP_idx < merged_df.block_end)
+                    ]
+
+                    if len(merged_df) < 1:
+                        raise ValueError('No variants were matched to blocks. '
+                                         'This could be due to incorrect block boundaries.')
+
+                    lambda_min = np.zeros(self.stored_n_snps)
+                    lambda_min[merged_df['SNP_idx'].values] = merged_df['add_lam'].values
+
+                    if self._mask is not None:
+                        lambda_min = lambda_min[self._mask]
+
+                elif aggregate == 'mean_block':
+                    lambda_min = np.mean(block_eigs['min'])
+                elif aggregate == 'median_block':
+                    lambda_min = np.median(block_eigs['min'])
+                elif aggregate == 'min_block':
+                    lambda_min = np.min(block_eigs['min'])
+
+        return lambda_min
 
     def estimate_uncompressed_size(self, dtype=None):
         """

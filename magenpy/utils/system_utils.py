@@ -8,7 +8,7 @@ import sys
 
 def available_cpu():
     """
-    Get the number of available CPUs on the system.
+    :return: The number of available cores on the system minus 1.
     """
     return psutil.cpu_count() - 1
 
@@ -44,7 +44,7 @@ def get_peak_memory_usage(include_children=False):
 
 def get_memory_usage():
     """
-    Get the current memory usage of the running process in Mega Bytes (MB)
+    :return: The current memory usage of the running process in Mega Bytes (MB)
     """
     process = psutil.Process(os.getpid())
     mem_info = process.memory_info()
@@ -55,6 +55,7 @@ def valid_url(path):
     """
     Check whether the provided `path` is a valid URL.
     :param path: A string with the URL to check.
+    :return: True if the URL is valid, False otherwise.
     """
 
     import urllib.request
@@ -71,6 +72,7 @@ def is_cmd_tool(name):
     Check whether `name` is on PATH and marked as executable.
     From: https://stackoverflow.com/a/34177358
     :param name: A string with the name of the command-line tool.
+    :return: True if the command-line tool is available, False otherwise.
     """
     from shutil import which
 
@@ -83,7 +85,10 @@ def is_path_writable(path):
     This function supports checking for nested directories (i.e.,
     we iterate upwards until finding a parent directory that currently
     exists, and we check the write-access of that directory).
+
     :param path: A string with the path to check.
+
+    :return: True if the path is writable, False otherwise.
     """
 
     # Get the absolute path first:
@@ -103,6 +108,7 @@ def makedir(dirs):
     """
     Create directories on the filesystem, recursively.
     :param dirs: A string or list of strings with the paths to create.
+    :raises: OSError if it fails to create the directory structure.
     """
 
     if isinstance(dirs, str):

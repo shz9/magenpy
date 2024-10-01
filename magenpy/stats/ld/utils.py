@@ -1,5 +1,6 @@
 import os
 import os.path as osp
+import copy
 
 import pandas as pd
 import numpy as np
@@ -14,6 +15,8 @@ def move_ld_store(z_arr, target_path, overwrite=True):
     :param z_arr: An LDMatrix object
     :param target_path: The target path where to move the LD store
     :param overwrite: If True, overwrites the target path if it exists.
+
+    :return: A Zaarr array object pointing to the new location of the LD store.
     """
 
     source_path = z_arr.store.dir_path()
@@ -36,6 +39,82 @@ def delete_ld_store(ld_mat):
         ld_mat.store.rmdir()
     except Exception as e:
         print(e)
+
+
+def combine_ld_matrices(ld_matrices, output_dir, overwrite=True, delete_original=False):
+    """
+    Combine the Zarr arrays underlying multiple `LDMatrix` objects into
+    a single store, which will reside in `output_dir`. This function combines
+    the `matrix/data/` and `matrix/indptr` arrays of the Zarr stores, in addition
+    to the metadata, such as SNP rsIDs, basepair position, centi Morgan distance, etc.
+
+    !!! warning
+        This function does not copy any of the attributes of the individual `LDMatrix` objects.
+
+    !!! warning
+        This implementation assumes there is no overlap in the set of variants present in
+        the LD matrices.
+
+    :param ld_matrices: A list of `LDMatrix` objects to combine.
+    :param output_dir: The output directory where to store the combined LD matrix.
+    :param overwrite: If True, overwrites the output directory if it exists.
+    :param delete_original: If True, deletes the original LD matrices after combining them.
+
+    :return: An `LDMatrix` object pointing to the combined LD matrix.
+    """
+
+    # Determine the total number of variants and total number of elements in the `data` array:
+    total_n_snps = sum([ld.stored_n_snps for ld in ld_matrices])
+    total_elements = sum([ld.data.shape[0] for ld in ld_matrices])
+    compressor = ld_matrices[0].compressor
+    metadata = list(ld_matrices[0].zarr_group['metadata'].keys())
+
+    # Create hierarchical storage with zarr groups:
+    store = zarr.DirectoryStore(output_dir)
+    z = zarr.group(store=store, overwrite=overwrite)
+
+    # Create sub-hierarchy to store the data of the sparse LD matrix:
+    mat = z.create_group('matrix')
+    mat.empty('data', shape=total_elements,
+              dtype=ld_matrices[0].stored_dtype,
+              compressor=compressor)
+    mat.zeros('indptr', shape=total_n_snps + 1,
+              dtype=np.int64, compressor=compressor)
+
+    # Create sub-hierarchy to store the metadata for the LD matrix:
+    meta = z.create_group('metadata')
+    for meta_col, meta_zarr in ld_matrices[0].zarr_group['metadata'].items():
+
+        if meta_zarr.dtype == object:
+            meta.empty(meta_col, shape=total_n_snps, dtype=str, compressor=compressor)
+        else:
+            meta.empty(meta_col, shape=total_n_snps,
+                       dtype=meta_zarr.dtype, compressor=compressor)
+
+    curr_n_snps = 0
+    curr_n_entries = 0
+
+    for ld in ld_matrices:
+
+        # Copy the matrix data:
+        mat['data'][curr_n_entries:curr_n_entries + ld.data.shape[0]] = ld.data[:]
+        mat['indptr'][curr_n_snps + 1:curr_n_snps + ld.stored_n_snps + 1] = curr_n_entries + ld.indptr[1:]
+
+        # Copy the metadata:
+
+        for meta_col in metadata:
+            meta[meta_col][curr_n_snps:curr_n_snps + ld.stored_n_snps] = ld.zarr_group[f'metadata/{meta_col}'][:]
+
+        # Update the counters:
+        curr_n_snps += ld.stored_n_snps
+        curr_n_entries += ld.data.shape[0]
+
+        # Delete the original store (if requested):
+
+        if delete_original:
+            delete_ld_store(ld)
+
+    return LDMatrix(z)
 
 
 def clump_snps(ldm,
@@ -122,6 +201,83 @@ def expand_snps(seed_snps, ldm, rsq_threshold=0.9):
         final_set = final_set.union(set(ldm_snps[indices[np.where(r**2 > rsq_threshold)[0]]]))
 
     return list(final_set)
+
+
+def compute_extremal_eigenvalues(mat, k=1, which='both', **eigsh_kwargs):
+    """
+    A helper function to compute the extremal eigenvalues (minimum and maximum) of the LD matrix efficiently.
+    This function uses a trick to shift the eigenvalues to the right by the maximum eigenvalue
+    and then computes the smallest eigenvalue of the shifted matrix. This is a more stable
+    and efficient approach for computing the smallest eigenvalue of the LD matrix.
+
+    :param mat: A `scipy` sparse CSR matrix object or an LDLinearOperator object for which to compute the
+    extremal eigenvalues.
+    :param k: The number of eigenvalues to compute.
+    :param which: Which extremal eigenalue to return. Can be 'both', 'min', or 'max'.
+    :param eigsh_kwargs: Additional keyword arguments to pass to the `scipy.sparse.linalg.eigsh` function.
+
+    :return: A dictionary containing the extremal eigenvalues of the LD matrix.
+    """
+
+    assert which in ('both', 'min', 'max')
+
+    if 'maxiter' not in eigsh_kwargs:
+        eigsh_kwargs['maxiter'] = 10000
+
+    if 'tol' not in eigsh_kwargs:
+        eigsh_kwargs['tol'] = 1e-6
+
+    from scipy.sparse.linalg import eigsh, ArpackNoConvergence
+    from scipy.sparse import csr_matrix, identity
+
+    eig_result = {}
+
+    # In all cases we need to compute the largest eigenvalue:
+    eig_result['max'] = eigsh(mat, k=k, which='LM', return_eigenvectors=False, **eigsh_kwargs)
+    max_eig = np.max(eig_result['max'])
+
+    # Compute the minimum eigenvalue (if requested):
+    if which in ('min', 'both'):
+
+        if isinstance(mat, csr_matrix):
+            diag_add = max_eig*identity(mat.shape[0], format='csr', dtype=mat.dtype)
+            mat -= diag_add
+        else:
+            if mat.diag_add is not None:
+                orig_diag_add = copy.copy(mat.diag_add)
+                mat.set_diag_add(mat.diag_add-max_eig)
+            else:
+                orig_diag_add = None
+                mat.set_diag_add(-max_eig)
+
+        # TODO: Try other solvers here?
+        try:
+            lm_max_hat = eigsh(mat, k=k, which='LM', return_eigenvectors=False, **eigsh_kwargs)
+        except ArpackNoConvergence:
+            # If the solver does not converge, we can try to increase the number of iterations and the tolerance:
+            if 'maxiter' in eigsh_kwargs:
+                eigsh_kwargs['maxiter'] *= 2
+
+            if 'tol' in eigsh_kwargs:
+                eigsh_kwargs['tol'] *= 10
+
+            lm_max_hat = eigsh(mat, k=k, which='LM', return_eigenvectors=False, **eigsh_kwargs)
+
+        if isinstance(mat, csr_matrix):
+            mat += diag_add
+        else:
+            mat.set_diag_add(orig_diag_add)
+
+        eig_result['min'] = lm_max_hat + max_eig
+
+    if k == 1:
+        for key in eig_result:
+            eig_result[key] = eig_result[key][0]
+
+    if which == 'both':
+        return eig_result
+    else:
+        return eig_result[which]
 
 
 def shrink_ld_matrix(ld_mat_obj,
@@ -267,6 +423,7 @@ def compute_ld_plink1p9(genotype_matrix,
                         ld_boundaries,
                         output_dir,
                         window_size_thresholds,
+                        trim_boundaries=False,
                         temp_dir='temp',
                         overwrite=True,
                         dtype='int8',
@@ -280,6 +437,8 @@ def compute_ld_plink1p9(genotype_matrix,
     :param ld_boundaries: An 2xM matrix of LD boundaries for every variant.
     :param output_dir: The output directory for the final LD matrix file (after processing).
     :param window_size_thresholds: A dictionary of the window size thresholds to pass to plink1.9.
+    :param trim_boundaries: If True, trims the LD rows computed by plink. This is useful in cases where the
+    window size varies per variant, but we ask plink to compute the LD for a fixed (maximum) window size.
     :param temp_dir: A temporary directory to store intermediate files (e.g. files created for and by plink).
     :param overwrite: If True, it overwrites any LD matrices in `output_dir`.
     :param dtype: The data type for the entries of the LD matrix (supported data types are float32, float64
@@ -366,6 +525,7 @@ def compute_ld_plink1p9(genotype_matrix,
     return LDMatrix.from_plink_table(f"{plink_output}.ld.gz",
                                      genotype_matrix.snps,
                                      fin_ld_store,
+                                     ld_boundaries=[None, ld_boundaries][trim_boundaries],
                                      pandas_chunksize=pandas_chunksize,
                                      overwrite=overwrite,
                                      dtype=dtype,
@@ -391,8 +551,10 @@ def compute_ld_xarray(genotype_matrix,
     from the `LDMatrix` class to sparsify the dense matrix according to the parameters
     specified by the `ld_boundaries` matrix.
 
-    NOTE: We don't recommend using this for large-scale genotype matrices.
-    Use `compute_ld_plink1p9` instead if you have plink installed on your system.
+
+    !!! Warning
+        We don't recommend using this for large-scale genotype matrices.
+        Use `compute_ld_plink1p9` instead if you have plink1.9 installed on your system.
 
     :param genotype_matrix: An `xarrayGenotypeMatrix` object
     :param ld_boundaries: An array of LD boundaries for every SNP
@@ -442,7 +604,7 @@ def compute_ld_xarray(genotype_matrix,
         ld_mat = (da.dot(g_mat.T, g_mat) / genotype_matrix.sample_size).astype(dot_dtype)
         ld_mat.to_zarr(temp_dir, overwrite=overwrite)
 
-    fin_ld_store = osp.join(output_dir, 'ld', 'chr_' + str(genotype_matrix.chromosome))
+    fin_ld_store = osp.join(output_dir, 'chr_' + str(genotype_matrix.chromosome))
 
     # Load the dense matrix and transform it to a sparse matrix using utilities implemented in the
     # `LDMatrix` class:

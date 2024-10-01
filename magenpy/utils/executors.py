@@ -31,6 +31,7 @@ class plink2Executor(object):
         Execute a `plink2` command
         :param cmd: The flags to pass to plink2. For example, ['--bfile', 'file', '--out', 'output']
         :type cmd: list of strings
+        :raises CalledProcessError: If the command returns a non-zero exit code
         """
 
         cmd = [self.plink2_path] + cmd + [f'--threads {self.threads}']
@@ -77,6 +78,7 @@ class plink1Executor(object):
         Execute a plink command
         :param cmd: The flags to pass to plink. For example, ['--bfile', 'file', '--out', 'output']
         :type cmd: list of strings
+        :raises: CalledProcessError if the command fails
         """
 
         cmd = [self.plink1_path] + cmd + [f'--threads {self.threads}']

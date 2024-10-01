@@ -35,7 +35,7 @@ def rint(phenotype, offset=3./8):
     return norm.ppf((ranked_pheno - offset) / (len(ranked_pheno) - 2 * offset + 1))
 
 
-def detect_outliers(phenotype, sigma_threshold=5, nan_policy='omit'):
+def detect_outliers(phenotype, sigma_threshold=3, nan_policy='omit'):
     """
     Detect samples with outlier phenotype values.
     This function takes a vector of quantitative phenotypes,
@@ -44,7 +44,7 @@ def detect_outliers(phenotype, sigma_threshold=5, nan_policy='omit'):
     within the specified standard deviations `sigma_threshold`.
     :param phenotype: A numpy vector of continuous or quantitative phenotypes.
     :param sigma_threshold: The multiple of standard deviations or sigmas after
-    which we consider the phenotypic value an outlier.
+    which we consider the phenotypic value an outlier. Default is 3.
     :param nan_policy: The policy to use when encountering NaN values in the phenotype vector.
     By default, we compute the z-scores ignoring NaN values.
 
@@ -101,7 +101,7 @@ def chained_transform(sample_table,
             elif transform == 'covariate_adjust':
                 # Adjust the phenotype for a set of covariates:
                 if adjust_covariates:
-                    phenotype = adjust_for_covariates(phenotype, sample_table.get_covariates()[mask, :])
+                    phenotype = adjust_for_covariates(phenotype, sample_table.get_covariates_matrix()[mask, :])
 
             elif transform == 'rint':
                 # Apply Rank-based inverse normal transform (RINT) to the phenotype:

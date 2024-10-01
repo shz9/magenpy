@@ -10,7 +10,7 @@ class SampleTable(object):
     the context of a genotype matrix. The sample table is a wrapper around
     a `pandas.DataFrame` object that contains the sample information. The
     table provides methods to read and write sample information from/to
-    disk, filter samples, perofm checks/validation, and extract specific columns
+    disk, filter samples, perform checks/validation, and extract specific columns
     from the table.
 
     :ivar table: The sample table as a pandas `DataFrame`.
@@ -165,6 +165,10 @@ class SampleTable(object):
         Individual ID (`IID`) and the phenotype column `phenotype`. You may adjust
         the parsing configurations with keyword arguments that will be passed to `pandas.read_csv`.
 
+        !!! warning "Warning"
+            If a phenotype column is already present in the sample table, it will be replaced.
+            The data structure currently does not support multiple phenotype columns.
+
         :param phenotype_file: The path to the phenotype file.
         :param drop_na: Drop samples whose phenotype value is missing (Default: True).
         :param read_csv_kwargs: keyword arguments to pass to the `read_csv` function of `pandas`.
@@ -179,16 +183,24 @@ class SampleTable(object):
         if 'dtype' not in read_csv_kwargs:
             read_csv_kwargs['dtype'] = {'phenotype': float}
 
+        from .utils.compute_utils import detect_header_keywords
+
+        if all([col not in read_csv_kwargs for col in ('header', 'names')]):
+
+            if detect_header_keywords(phenotype_file, ['FID', 'IID']):
+                read_csv_kwargs['header'] = 0
+            else:
+                read_csv_kwargs['names'] = ['FID', 'IID', 'phenotype']
+
         pheno_table = pd.read_csv(phenotype_file, **read_csv_kwargs)
-        pheno_table.columns = ['FID', 'IID', 'phenotype']
 
         if self.table is not None:
             pheno_table['FID'] = pheno_table['FID'].astype(type(self.fid[0]))
             pheno_table['IID'] = pheno_table['IID'].astype(type(self.iid[0]))
 
-            # Drop the phenotype column if already exists:
+            # Drop the phenotype column if it already exists:
             if 'phenotype' in self.table.columns:
-                self.table.drop(columns=['phenotype'])
+                self.table.drop(columns=['phenotype'], inplace=True)
 
             self.table = self.table.merge(pheno_table, on=['FID', 'IID'])
         else:
@@ -208,6 +220,10 @@ class SampleTable(object):
         Individual ID (`IID`) and the remaining columns are assumed to be covariates. You may adjust
         the parsing configurations with keyword arguments that will be passed to `pandas.read_csv`.
 
+        !!! warning "Warning"
+            If covariate columns are already present in the sample table, they will be replaced.
+            The data structure currently does not support reading separate covariates files.
+
         :param covar_file: The path to the covariates file.
         :param read_csv_kwargs: keyword arguments to pass to the `read_csv` function of `pandas`.
         """
@@ -215,8 +231,25 @@ class SampleTable(object):
         if 'sep' not in read_csv_kwargs and 'delimiter' not in read_csv_kwargs:
             read_csv_kwargs['sep'] = r'\s+'
 
+        from .utils.compute_utils import detect_header_keywords
+
+        if 'header' not in read_csv_kwargs:
+
+            if detect_header_keywords(covar_file, ['FID', 'IID']):
+                read_csv_kwargs['header'] = 0
+            else:
+                read_csv_kwargs['header'] = None
+
         covar_table = pd.read_csv(covar_file, **read_csv_kwargs)
-        self._covariate_cols = covar_table.columns[2:]
+
+        if self._covariate_cols is not None:
+            self.table.drop(columns=self._covariate_cols, inplace=True)
+
+        if read_csv_kwargs['header'] is None:
+            self._covariate_cols = np.array([f'covar_{i + 1}' for i in range(covar_table.shape[1] - 2)])
+        else:
+            self._covariate_cols = covar_table.columns[2:]
+
         covar_table.columns = ['FID', 'IID'] + list(self._covariate_cols)
 
         if self.table is not None:
@@ -325,12 +358,12 @@ class SampleTable(object):
 
         return self.to_table(col_subset=['FID', 'IID'] + covar)
 
-    def get_covariates(self, covar_subset=None):
+    def get_covariates_matrix(self, covar_subset=None):
         """
         Get the covariates associated with each individual in the sample table as a matrix.
         :param covar_subset: A subset of the covariate names or IDs to include in the matrix.
 
-        :return: A numpy array with the covariate values.
+        :return: A numpy matrix with the covariates values for each individual.
         """
         return self.get_covariates_table(covar_subset=covar_subset).drop(['FID', 'IID'], axis=1).values
 
@@ -343,7 +376,7 @@ class SampleTable(object):
 
         self.table['phenotype'] = phenotype
 
-        if phenotype_likelihood:
+        if phenotype_likelihood is not None:
             self._phenotype_likelihood = phenotype_likelihood
         else:
             self.post_check_phenotype()

@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [0.1.4] - 2024-07-29
+## [0.1.4] - 2024-10-01
 
 ### Changed
 
@@ -19,6 +19,10 @@ not work well for very large datasets with millions of variants and it causes ov
 - Update `run_shell_script` to check for and capture errors.
 - Refactored code to slightly reduce import/load times.
 - Cleaned up `load_data` method of `LDMatrix` and subsumed functionality in `load_rows`.
+- Fixed bugs in `match_snp_tables`.
+- Fixed bugs and re-wrote how the `block` LD estimator is computed using both the `plink` and `xarray` backends.
+- Updated `from_plink_table` method in `LDMatrix` to handle cases where boundaries are different from what 
+`plink` computes.
 
 ### Added
 
@@ -26,9 +30,14 @@ not work well for very large datasets with millions of variants and it causes ov
 - `LDLinearOperator` class to allow for efficient linear algebra operations on the LD matrix without
 representing the full symmetric matrix in memory.
 - Added utility methods to `LDMatrix` class to allow for computing eigenvalues, performing SVD, etc.
-- Added `Min eigenvalue` to the attributes of LD matrices.
+- Added `Spectral properties` to the attributes of LD matrices.
 - Added support to slice/retrieve entries of LD matrix by using SNP rsIDs.
 - Added support to reading LD matrices from AWS s3 storage.
+- Added utility method to detect if a file contains header information.
+- Added utility method to generate overlapping windows over a sequence.
+- Added `compute_extremal_eigenvalues` to allow the user to compute extremal (minimum and maximum) eigenvalues 
+of LD matrices.
+- Added the utility function `combine_ld_matrices` to allow for combining LD matrices from different sources.
 
 ## [0.1.3] - 2024-05-21
 

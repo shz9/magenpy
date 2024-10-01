@@ -54,6 +54,56 @@ def intersect_arrays(arr1, arr2, return_index=False):
         return common_elements['ID'].values
 
 
+def generate_overlapping_windows(seq, window_size, step_size, min_window_size=1):
+    """
+    Generate overlapping windows of a fixed size over a sequence.
+
+    :param seq: A numpy array of sorted values
+    :param window_size: The size of each window.
+    :param step_size: The step size between each window. If step_size < window_size, windows will overlap.
+    :param min_window_size: The minimum size of a window. Windows smaller than this size will be discarded.
+
+    :return: A numpy array of start and end indices of each window.
+    """
+
+    # Calculate the start of each window
+    starts = np.arange(seq[0], seq[-1] - window_size, step_size)
+
+    # Find the indices where each window starts and ends
+    start_indices = np.searchsorted(seq, starts)
+    end_indices = np.searchsorted(seq, starts + window_size, side='right')
+
+    if end_indices[-1] < seq.shape[0]:
+        end_indices[-1] = seq.shape[0]
+
+    # Combine start and end indices:
+    block_iter = np.column_stack((start_indices, end_indices))
+    # Filter to keep only valid blocks:
+    block_iter = block_iter[block_iter[:, 0] + min_window_size <= block_iter[:, 1], :]
+
+    return block_iter
+
+
+def detect_header_keywords(fname, keywords):
+    """
+    Detect if the first line of a file contains any of the provided keywords.
+    This is used to check for whether headers are present in a file.
+
+    :param fname: The fpath to the file
+    :param keywords: A string or list of strings representing keywords to search for.
+
+    :return: True if any of the keywords are found, False otherwise.
+    """
+
+    if isinstance(keywords, str):
+        keywords = [keywords]
+
+    with open(fname, 'r') as f:
+        line = f.readline().strip()
+
+    return any([kw in line for kw in keywords])
+
+
 def is_numeric(obj):
     """
     Check if a python object is numeric. This function handles
