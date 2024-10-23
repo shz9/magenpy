@@ -660,6 +660,9 @@ class GWADataLoader(object):
         the implementations of `WindowedLD`, `ShrinkageLD`, and `BlockLD` for details.
         """
 
+        if self.genotype is None:
+            raise ValueError("Cannot compute LD without genotype data.")
+
         if self.verbose and len(self.genotype) < 2:
             print("> Computing LD matrix...")
 

@@ -23,6 +23,7 @@ not work well for very large datasets with millions of variants and it causes ov
 - Fixed bugs and re-wrote how the `block` LD estimator is computed using both the `plink` and `xarray` backends.
 - Updated `from_plink_table` method in `LDMatrix` to handle cases where boundaries are different from what 
 `plink` computes.
+- Fixed bug in `symmetrize_ut_csr_matrix` utility functions.
 
 ### Added
 

@@ -279,8 +279,8 @@ cpdef symmetrize_ut_csr_matrix_with_mask(indptr_type[::1] indptr,
         int64_t[::1] new_indptr = new_idx[0]
         int32_t[::1] leftmost_col = new_idx[1]
         int32_t[::1] cum_skipped_rows = np.cumsum(~mask, dtype=np.int32)
-        int32_t curr_row, curr_col, curr_row_size, filt_curr_row, filt_curr_col
-        int32_t curr_data_idx, new_idx_1, new_idx_2, curr_shape=indptr.shape[0]-1
+        int32_t curr_row, curr_col, curr_row_size, filt_curr_row, filt_curr_col, curr_shape=indptr.shape[0]-1
+        int64_t curr_data_idx, new_idx_1, new_idx_2
         noncomplex_numeric[::1] new_data = np.empty_like(data, shape=(new_idx[0][new_indptr.shape[0] - 1], ))
 
 
@@ -343,8 +343,8 @@ cpdef symmetrize_ut_csr_matrix(indptr_type[::1] indptr,
     cdef:
         int64_t[::1] new_indptr = new_idx[0]
         int32_t[::1] leftmost_col = new_idx[1]
-        int32_t curr_row, curr_col, curr_row_size
-        int32_t curr_data_idx, new_idx_1, new_idx_2, curr_shape=indptr.shape[0] - 1
+        int32_t curr_row, curr_col, curr_row_size, curr_shape=indptr.shape[0] - 1
+        int64_t curr_data_idx, new_idx_1, new_idx_2
         noncomplex_numeric[::1] new_data = np.empty_like(data, shape=(new_idx[0][new_indptr.shape[0] - 1], ))
 
     with nogil:
