@@ -24,6 +24,7 @@ not work well for very large datasets with millions of variants and it causes ov
 - Updated `from_plink_table` method in `LDMatrix` to handle cases where boundaries are different from what 
 `plink` computes.
 - Fixed bug in `symmetrize_ut_csr_matrix` utility functions.
+- Changed default storage data type for LD matrices to `int16`.
 
 ### Added
 

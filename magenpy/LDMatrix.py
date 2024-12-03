@@ -22,6 +22,8 @@ class LDMatrix(object):
     * Initialize an `LDMatrix` object from a Zarr array store.
     * Compute LD scores for each SNP in the LD matrix.
     * Filter the LD matrix based on SNP indices or ranges.
+    * Perform linear algebra operations on LD matrices, including SVD, estimating extremal eigenvalues,
+    and efficient matrix-vector multiplication.
 
     The Zarr hierarchy is structured as follows:
 
@@ -156,7 +158,7 @@ class LDMatrix(object):
                  csr_mat,
                  store_path,
                  overwrite=False,
-                 dtype='int8',
+                 dtype='int16',
                  compressor_name='zstd',
                  compression_level=7):
         """
@@ -215,7 +217,7 @@ class LDMatrix(object):
                          ld_boundaries=None,
                          pandas_chunksize=None,
                          overwrite=False,
-                         dtype='int8',
+                         dtype='int16',
                          compressor_name='zstd',
                          compression_level=7):
         """
@@ -332,7 +334,7 @@ class LDMatrix(object):
                                store_path,
                                overwrite=False,
                                delete_original=False,
-                               dtype='int8',
+                               dtype='int16',
                                compressor_name='zstd',
                                compression_level=7):
         """
@@ -433,7 +435,7 @@ class LDMatrix(object):
                                 store_path,
                                 overwrite=False,
                                 delete_original=False,
-                                dtype='int8',
+                                dtype='int16',
                                 compressor_name='zstd',
                                 compression_level=7):
         """
@@ -1322,7 +1324,7 @@ class LDMatrix(object):
     def get_lambda_min(self, aggregate=None, min_max_ratio=0.):
         """
         A utility method to compute the `lambda_min` value for the LD matrix. `lambda_min` is the smallest
-        eigenvalue of the LD matrix and this quantity can be useful to know about in some applications.
+        algebraic eigenvalue of the LD matrix. This quantity is useful to know in some applications.
         The function retrieves minimum eigenvalue (if pre-computed and stored) per block and maps it
         to each variant in the corresponding block. If minimum eigenvalues per block are not available,
          we use global minimum eigenvalue (either from matrix attributes or we compute it on the spot).
@@ -1331,20 +1333,23 @@ class LDMatrix(object):
 
         abs(min(lambda_min, 0.))
 
-        This implies that if the minimum eigenvalue is positive, we just return 0. for `lambda_min`. We are mainly
+        This implies that if the minimum eigenvalue is non-negative, we just return 0. for `lambda_min`. We are mainly
         interested in negative eigenvalues here (if they exist).
 
         :param aggregate: A summary of the minimum eigenvalue across variants or across blocks (if available).
-        Supported aggregation functions are `mean_block`, `median_block`, `min_block`, and `min`. If `min` is selected,
-        we return the minimum eigenvalue for the entire matrix (rather than sub-blocks of it).
+        Supported aggregation functions are `min_block` and `min`. If `min` is selected,
+        we return the minimum eigenvalue for the entire matrix (rather than sub-blocks of it). If `min_block` is
+        selected, we return the minimum eigenvalue for each block separately (mapped to variants within that block).
+
         :param min_max_ratio: The ratio between the absolute values of the minimum and maximum eigenvalues.
         This could be used to target a particular threshold for the minimum eigenvalue.
 
-        :return: The `lambda_min` value for the LD matrix.
+        :return: The absolute value of the minimum eigenvalue for the LD matrix. If the minimum
+        eigenvalue is non-negative, we return zero.
         """
 
         if aggregate is not None:
-            assert aggregate in ('mean_block', 'median_block', 'min_block', 'min')
+            assert aggregate in ('min_block', 'min')
 
         # Get the attributes of the LD store:
         store_attrs = self.list_store_attributes()
@@ -1365,7 +1370,7 @@ class LDMatrix(object):
 
             spectral_props = self.get_store_attr('Spectral properties')
 
-            if aggregate in ('mean_block', 'median_block', 'min_block'):
+            if aggregate == 'min_block':
                 assert 'Eigenvalues per block' in spectral_props, (
                     'Aggregating lambda_min across blocks '
                     'requires that these blocks are pre-defined.')
@@ -1406,10 +1411,6 @@ class LDMatrix(object):
                     if self._mask is not None:
                         lambda_min = lambda_min[self._mask]
 
-                elif aggregate == 'mean_block':
-                    lambda_min = np.mean(block_eigs['min'])
-                elif aggregate == 'median_block':
-                    lambda_min = np.median(block_eigs['min'])
                 elif aggregate == 'min_block':
                     lambda_min = np.min(block_eigs['min'])
 
@@ -1432,6 +1433,30 @@ class LDMatrix(object):
             dtype = self.stored_dtype
 
         return 2.*self._zg['matrix/data'].shape[0]*np.dtype(dtype).itemsize / 1024 ** 2
+
+    def get_total_stored_bytes(self):
+        """
+        Estimate the storage size for all elements of the `LDMatrix` hierarchy,
+        including the LD data arrays, metadata arrays, and attributes.
+
+        :return: The estimated size of the stored and compressed LDMatrix object in bytes.
+        """
+
+        total_bytes = 0
+
+        # Estimate contribution of matrix arrays
+        for arr_name, array in self.zarr_group.matrix.arrays():
+            total_bytes += array.nbytes_stored
+
+        # Estimate contribution of metadata arrays
+        for arr_name, array in self.zarr_group.metadata.arrays():
+            total_bytes += array.nbytes_stored
+
+        # Estimate the contribution of the attributes:
+        if hasattr(self.zarr_group, 'attrs'):
+            total_bytes += len(str(dict(self.zarr_group.attrs)).encode('utf-8'))
+
+        return total_bytes
 
     def get_metadata(self, key, apply_mask=True):
         """

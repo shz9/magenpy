@@ -82,7 +82,7 @@ parser.add_argument('--metadata', dest='metadata', type=str,
 
 # Argument for the float precision:
 parser.add_argument('--storage-dtype', dest='storage_dtype', type=str,
-                    default='int8', help='The data type for the entries of the LD matrix.',
+                    default='int16', help='The data type for the entries of the LD matrix.',
                     choices={'float32', 'float64', 'int16', 'int8'})
 
 # Other options:

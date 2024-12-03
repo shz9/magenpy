@@ -400,7 +400,7 @@ def shrink_ld_matrix(ld_mat_obj,
     return ld_mat_obj
 
 
-def estimate_rows_per_chunk(rows, cols, dtype='int8', mem_size=128):
+def estimate_rows_per_chunk(rows, cols, dtype='int16', mem_size=128):
     """
     Estimate the number of rows per chunk for matrices conditional on the desired size of the chunk in MB.
     The estimator takes as input the number of rows, columns, data type, and projected size of the chunk in memory.
@@ -426,7 +426,7 @@ def compute_ld_plink1p9(genotype_matrix,
                         trim_boundaries=False,
                         temp_dir='temp',
                         overwrite=True,
-                        dtype='int8',
+                        dtype='int16',
                         compressor_name='zstd',
                         compression_level=7):
 
@@ -539,7 +539,7 @@ def compute_ld_xarray(genotype_matrix,
                       temp_dir='temp',
                       overwrite=True,
                       delete_original=True,
-                      dtype='int8',
+                      dtype='int16',
                       compressor_name='zstd',
                       compression_level=7):
 

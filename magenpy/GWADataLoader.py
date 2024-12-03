@@ -635,7 +635,7 @@ class GWADataLoader(object):
     def compute_ld(self,
                    estimator,
                    output_dir,
-                   dtype='int8',
+                   dtype='int16',
                    compressor_name='zstd',
                    compression_level=7,
                    compute_spectral_properties=False,

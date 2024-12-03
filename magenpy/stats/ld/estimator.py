@@ -142,7 +142,7 @@ class SampleLD(object):
                 output_dir,
                 overwrite=True,
                 delete_original=True,
-                dtype='int8',
+                dtype='int16',
                 compressor_name='zstd',
                 compression_level=7,
                 compute_spectral_properties=False) -> LDMatrix:
@@ -341,7 +341,7 @@ class WindowedLD(SampleLD):
                 output_dir,
                 overwrite=True,
                 delete_original=True,
-                dtype='int8',
+                dtype='int16',
                 compressor_name='zstd',
                 compression_level=7,
                 compute_spectral_properties=False) -> LDMatrix:
@@ -425,7 +425,6 @@ class WindowedLD(SampleLD):
             n_snps_after = ld_mat.n_snps
 
             if n_snps_after < n_snps_before:
-
                 spectral_prop['Extremal (excluding LRLD)'] = ld_mat.estimate_extremal_eigenvalues()
 
             # Update or set the spectral properties attribute:
@@ -510,7 +509,7 @@ class ShrinkageLD(SampleLD):
                 output_dir,
                 overwrite=True,
                 delete_original=True,
-                dtype='int8',
+                dtype='int16',
                 compressor_name='zstd',
                 compression_level=7,
                 compute_spectral_properties=False,
@@ -694,7 +693,7 @@ class BlockLD(SampleLD):
                 output_dir,
                 overwrite=True,
                 delete_original=True,
-                dtype='int8',
+                dtype='int16',
                 compressor_name='zstd',
                 compression_level=7,
                 compute_spectral_properties=False) -> LDMatrix:

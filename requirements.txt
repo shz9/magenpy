@@ -1,5 +1,6 @@
 dask<=2024.1.0  # Seen installation issues with newer versions
 scipy
+xarray<=2024.7.0
 numpy<2
 pandas
 pandas-plink
