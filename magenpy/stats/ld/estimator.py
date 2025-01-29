@@ -640,41 +640,24 @@ class BlockLD(SampleLD):
         else:
             self.ld_blocks = ld_blocks
 
-        split_geno_matrices = self.genotype_matrix.split_by_variants(self._map_snps_to_blocks())
+        from ...utils.model_utils import map_variants_to_genomic_blocks
+
+        # Map variants to their associated genomic blocks:
+        variants_to_blocks = map_variants_to_genomic_blocks(
+            pd.DataFrame({'SNP': self.genotype_matrix.snps,
+                          'bp_pos': self.genotype_matrix.bp_pos}),
+            pd.DataFrame(self.ld_blocks, columns=['block_start', 'block_end']).assign(
+                group=np.arange(len(self.ld_blocks))),
+            variant_pos_col='bp_pos',
+            filter_unmatched=True
+        )
+
+        # Split the genotype matrix by the blocks:
+        split_geno_matrices = self.genotype_matrix.split_by_variants(variants_to_blocks)
 
         self._block_estimators = {
             i: SampleLD(geno_matrix) for i, geno_matrix in split_geno_matrices.items()
         }
-
-    def _map_snps_to_blocks(self):
-        """
-        Map each variant in the LD matrix to its corresponding LD block.
-
-        :return: A dataframe mapping the block ID to the SNPs in that block.
-        :raises ValueError: If no variants were matched to the LD blocks.
-
-        """
-
-        block_df = pd.DataFrame(self.ld_blocks, columns=['block_start', 'block_end'])
-        block_df['group'] = np.arange(block_df.shape[0])
-
-        snp_df = pd.DataFrame({
-            'bp_pos': self.genotype_matrix.bp_pos,
-            'SNP': self.genotype_matrix.snps
-        })
-
-        # Merge the two dataframes to assign each SNP to its corresponding block:
-        merged_df = pd.merge_asof(snp_df, block_df,
-                                  left_on='bp_pos', right_on='block_start', direction='backward')
-
-        # Filter merged_df to only include variants that were matched properly with a block:
-        merged_df = merged_df.loc[(merged_df.bp_pos >= merged_df.block_start) &
-                                  (merged_df.bp_pos < merged_df.block_end)]
-
-        if len(merged_df) < 1:
-            raise ValueError("No variants were matched to the LD blocks. Please check the LD blocks file.")
-
-        return merged_df
 
     def compute_ld_boundaries(self):
         """
@@ -725,14 +708,16 @@ class BlockLD(SampleLD):
             makedir(block_output_dir)
 
             ld_mats.append(
-                block_estimator.compute(block_output_dir,
-                                        overwrite=overwrite,
-                                        delete_original=delete_original,
-                                        dtype=dtype,
-                                        compressor_name=compressor_name,
-                                        compression_level=compression_level,
-                                        compute_spectral_properties=compute_spectral_properties)
+                block_estimator.compute(
+                    block_output_dir,
+                    overwrite=overwrite,
+                    delete_original=delete_original,
+                    dtype=dtype,
+                    compressor_name=compressor_name,
+                    compression_level=compression_level,
+                    compute_spectral_properties=compute_spectral_properties
                 )
+            )
 
         # If the user requested computing the spectral properties, we need to obtain
         # the minimum eigenvalue from the blocks:

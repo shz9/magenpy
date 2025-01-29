@@ -168,6 +168,48 @@ def merge_snp_tables(ref_table,
     return merged_table
 
 
+def map_variants_to_genomic_blocks(variant_table,
+                                   block_table,
+                                   variant_pos_col='POS',
+                                   block_boundary_cols=('block_start', 'block_end'),
+                                   filter_unmatched=False):
+    """
+    Merge a variant table with a genomic block table. This function assumes that the
+    variant table includes a column with the positions of the variants `POS` and the block table
+    contains the start and end positions of each block.
+
+     !!! warning
+         This function assumes that the tables contains data for a single chromosome only.
+
+    :param variant_table: A pandas dataframe with variant information
+    :param block_table: A pandas dataframe with block information
+    :param variant_pos_col: The name of the column in the variant table that contains the positions. By default,
+    this is set to `POS`.
+    :param block_boundary_cols: A tuple of two strings specifying the column names in the block table that contain
+    the start and end positions of the blocks. By default, this is set to `('block_start', 'block_end')`.
+    :param filter_unmatched: If True, filter out variants that were not matched to a block.
+    """
+
+    # Sanity checks:
+    assert variant_pos_col in variant_table.columns
+    assert all([col in block_table.columns for col in block_boundary_cols])
+
+    # Sort the variant table by position:
+    variant_table.sort_values(variant_pos_col, inplace=True)
+
+    # Merge the two dataframes to assign each SNP to its corresponding block:
+    merged_df = pd.merge_asof(variant_table, block_table,
+                              left_on=variant_pos_col, right_on=block_boundary_cols[0],
+                              direction='backward')
+
+    if filter_unmatched:
+        # Filter merged_df to only include variants that were matched properly with a block:
+        merged_df = merged_df.loc[(merged_df[variant_pos_col] >= merged_df[block_boundary_cols[0]]) &
+                                  (merged_df[variant_pos_col] < merged_df[block_boundary_cols[1]])]
+
+    return merged_df
+
+
 def identify_mismatched_snps(gdl,
                              chrom=None,
                              n_iter=10,

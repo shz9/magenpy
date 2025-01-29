@@ -3,7 +3,126 @@ import os.path as osp
 import subprocess
 import glob
 import psutil
-import sys
+import time
+import threading
+
+
+class PeakMemoryProfiler:
+    """
+    A context manager that monitors and tracks the peak memory usage of a process
+    (and optionally its children) over a period of time. The memory usage can be
+    reported in various units (bytes, MB, or GB).
+
+    Example:
+
+    ```
+    with PeakMemoryProfiler() as profiler:
+        # Code block to monitor memory usage
+        ...
+    ```
+
+    Class Attributes:
+    :ivar pid: The PID of the process being monitored. Defaults to the current process.
+    :ivar interval: Time interval (in seconds) between memory checks. Defaults to 0.1.
+    :ivar include_children: Whether memory usage from child processes is included. Defaults to True.
+    :ivar unit: The unit used to report memory usage (either 'bytes', 'MB', or 'GB'). Defaults to 'MB'.
+    :ivar max_memory: The peak memory usage observed during the monitoring period.
+    :ivar monitoring_thread: Thread used for monitoring memory usage.
+    :ivar _stop_monitoring: Event used to signal when to stop monitoring.
+    """
+
+    def __init__(self, pid=None, interval=0.1, include_children=True, unit="MB"):
+        """
+        Initializes the PeakMemoryProfiler instance with the provided parameters.
+
+        :param pid: The PID of the process to monitor. Defaults to None (current process).
+        :param interval: The interval (in seconds) between memory checks. Defaults to 0.1.
+        :param include_children: Whether to include memory usage from child processes. Defaults to True.
+        :param unit: The unit in which to report memory usage. Options are 'bytes', 'MB', or 'GB'. Defaults to 'MB'.
+        """
+        self.pid = pid or psutil.Process().pid  # Default to current process if no PID is provided
+        self.interval = interval
+        self.include_children = include_children
+        self.unit = unit
+        self.max_memory = 0
+        self.monitoring_thread = None
+        self._stop_monitoring = threading.Event()
+
+    def __enter__(self):
+        """
+        Starts monitoring memory usage when entering the context block.
+
+        :return: Returns the instance of PeakMemoryProfiler, so that we can access peak memory later.
+        """
+        self.process = psutil.Process(self.pid)
+        self.max_memory = 0
+        self._stop_monitoring.clear()  # Clear the stop flag to begin monitoring
+        self.monitoring_thread = threading.Thread(target=self._monitor_memory)
+        self.monitoring_thread.start()
+        return self  # Return the instance so that the caller can access max_memory
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """
+        Stops the memory monitoring when exiting the context block.
+
+        :param exc_type: The exception type if an exception was raised in the block.
+        :param exc_value: The exception instance if an exception was raised.
+        :param traceback: The traceback object if an exception was raised.
+        """
+        self._stop_monitoring.set()  # Signal the thread to stop monitoring
+        self.monitoring_thread.join()  # Wait for the monitoring thread to finish
+
+    def get_curr_memory(self):
+        """
+        Get the current memory usage of the monitored process and its children.
+
+        :return: The current memory usage in the specified unit (bytes, MB, or GB).
+        :rtype: float
+        """
+
+        memory = self.process.memory_info().rss
+
+        if self.include_children:
+            # Include memory usage of child processes recursively
+            for child in self.process.children(recursive=True):
+                try:
+                    memory += child.memory_info().rss
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+        if self.unit == "MB":
+            return memory / (1024 ** 2)  # Convert to MB
+        elif self.unit == "GB":
+            return memory / (1024 ** 3)  # Convert to GB
+        else:
+            return memory  # Return in bytes if no conversion is requested
+
+    def _monitor_memory(self):
+        """
+        Monitors the memory usage of the process and its children continuously
+        until the monitoring is stopped.
+
+        This method runs in a separate thread and updates the peak memory usage
+        as long as the monitoring flag is not set.
+        """
+        while not self._stop_monitoring.is_set():
+            try:
+                curr_memory = self.get_curr_memory()
+
+                # Update max memory if a new peak is found
+                self.max_memory = max(self.max_memory, curr_memory)
+                time.sleep(self.interval)
+            except psutil.NoSuchProcess:
+                break  # Process no longer exists, stop monitoring
+
+    def get_peak_memory(self):
+        """
+        Get the peak memory usage observed during the monitoring period.
+
+        :return: The peak memory usage in the specified unit (bytes, MB, or GB).
+        :rtype: float
+        """
+        return self.max_memory
 
 
 def available_cpu():
@@ -11,35 +130,6 @@ def available_cpu():
     :return: The number of available cores on the system minus 1.
     """
     return psutil.cpu_count() - 1
-
-
-def get_peak_memory_usage(include_children=False):
-    """
-    Get the peak memory usage of the running process in Mega Bytes (MB).
-
-    !!! warning
-        This function is only available on Unix-based systems for now.
-
-    :param include_children: A boolean flag to include the memory usage of the child processes.
-    :return: The peak memory usage of the running process in Mega Bytes (MB).
-    """
-
-    try:
-        import resource
-    except ImportError:
-        return
-
-    mem_usage_self = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-
-    if include_children:
-        mem_usage_self = max(mem_usage_self, resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
-
-    if sys.platform != 'darwin':
-        mem_usage_self /= 1024
-    else:
-        mem_usage_self /= 1024**2
-
-    return mem_usage_self
 
 
 def get_memory_usage():
@@ -62,7 +152,8 @@ def valid_url(path):
 
     try:
         with urllib.request.urlopen(path) as response:
-            return response.getcode() == 200  # Check if the response status is OK (HTTP 200)
+            v_url = response.getcode() == 200  # Check if the response status is OK (HTTP 200)
+        return v_url
     except Exception:
         return False
 

@@ -1025,9 +1025,9 @@ class LDMatrix(object):
         !!! note
             Experimental for now. Needs further testing & improvement.
 
-        :param threshold: The absolute value of the Pearson correlation coefficient above which to prune variants.
-        :return: A boolean array indicating whether a variant is kept after pruning. A positive floating point number
-        between 0. and 1.
+        :param threshold: The absolute value of the Pearson correlation coefficient above which to prune variants. A
+        positive floating point number between 0. and 1.
+        :return: A boolean array indicating whether a variant is kept after pruning.
         """
 
         from .stats.ld.c_utils import prune_ld_ut
@@ -1050,7 +1050,12 @@ class LDMatrix(object):
 
         col_subset = col_subset or ['CHR', 'SNP', 'POS', 'A1', 'A2', 'MAF', 'LDScore']
 
-        table = pd.DataFrame({'SNP': self.snps})
+        # Create the index according to the original SNP order:
+        original_index = np.arange(len(self.stored_n_snps))
+        if self._mask is not None:
+            original_index = original_index[self._mask]
+
+        table = pd.DataFrame({'SNP': self.snps}, index=original_index)
 
         for col in col_subset:
             if col == 'CHR':
@@ -1233,36 +1238,11 @@ class LDMatrix(object):
 
         assert which in ('min', 'max', 'both')
 
-        n_snps = self.stored_n_snps
-
-        from .utils.compute_utils import generate_overlapping_windows
-
-        if blocks is not None:
-            block_iter = blocks
-        elif block_size is not None:
-
-            windows = generate_overlapping_windows(np.arange(n_snps), block_size-1, block_size, min_window_size=50)
-            block_iter = np.insert(windows[:, 1], 0, 0)
-
-        elif block_size_cm is not None or block_size_kb is not None:
-
-            if block_size_cm is not None:
-                dist = self.get_metadata('cm', apply_mask=False)
-                windows = generate_overlapping_windows(dist, block_size_cm, block_size_cm, min_window_size=50)
-            else:
-                dist = self.get_metadata('bp', apply_mask=False) / 1000
-                windows = generate_overlapping_windows(dist, block_size_kb, block_size_kb, min_window_size=50)
-
-            block_iter = np.insert(windows[:, 1], 0, 0)
-
-        else:
-            block_iter = [0, n_snps]
-
         if assign_to_variants:
             if which == 'both':
-                eigs_per_var = np.zeros((n_snps, 2), dtype=np.float32)
+                eigs_per_var = np.zeros((self.stored_n_snps, 2), dtype=np.float32)
             else:
-                eigs_per_var = np.zeros(n_snps, dtype=np.float32)
+                eigs_per_var = np.zeros(self.stored_n_snps, dtype=np.float32)
         else:
             eigs = []
 
@@ -1270,14 +1250,14 @@ class LDMatrix(object):
 
         from .stats.ld.utils import compute_extremal_eigenvalues
 
-        for bidx in range(len(block_iter) - 1):
-
-            start = block_iter[bidx]
-            end = block_iter[bidx + 1]
+        for mat, (start, end) in self.iter_blocks(block_size=block_size,
+                                                  block_size_cm=block_size_cm,
+                                                  block_size_kb=block_size_kb,
+                                                  blocks=blocks,
+                                                  return_type='linop',
+                                                  return_block_boundaries=True):
 
             block_boundaries.append({'block_start': start, 'block_end': end})
-
-            mat = self.get_linear_operator(start_row=start, end_row=end)
             eig = compute_extremal_eigenvalues(mat, which=which)
 
             if assign_to_variants:
@@ -1574,6 +1554,7 @@ class LDMatrix(object):
     def get_linear_operator(self,
                             start_row=None,
                             end_row=None,
+                            ld_data_dtype=None,
                             **linop_kwargs):
         """
         Use `scipy.sparse` interface to construct a `LinearOperator` object representing the LD matrix.
@@ -1591,12 +1572,16 @@ class LDMatrix(object):
 
         :param start_row: The start row to load to memory (if loading a subset of the matrix).
         :param end_row: The end row (not inclusive) to load to memory (if loading a subset of the matrix).
+        :param ld_data_dtype: The data type for the entries of the LD matrix.
         :param linop_kwargs: Keyword arguments to pass to the `LDLinearOperator` constructor.
 
         :return: A scipy `LinearOperator` object representing the LD matrix.
         """
 
-        ld_data = self.load_data(start_row=start_row, end_row=end_row, return_square=True)
+        ld_data = self.load_data(start_row=start_row,
+                                 end_row=end_row,
+                                 dtype=ld_data_dtype,
+                                 return_square=True)
 
         from .LDLinearOperator import LDLinearOperator
 
@@ -1906,6 +1891,110 @@ class LDMatrix(object):
         # TODO: Add other sanity checks here?
 
         return True
+
+    def iter_blocks(self,
+                    block_size=None,
+                    block_size_cm=None,
+                    block_size_kb=None,
+                    blocks=None,
+                    min_block_size=2,
+                    return_type='csr',
+                    return_block_boundaries=False,
+                    **return_type_kwargs
+                    ):
+        """
+        Iterator over blocks of the LD matrix.
+
+        This function allows for iterating over blocks of the LD matrix, either based on the number of variants
+        per block, or based on the physical distance between variants. The function yields the requested data
+        in the form of a sparse CSR matrix, a `LinearOperator`, or a dense numpy array.
+
+        .. note::
+            For now, all block-related information is with reference to the original, unfiltered LD matrix.
+            In future releases, we may consider supporting block iterators based on subsets of the
+            matrix.
+
+        :param block_size: An integer specifying the block size in terms of the number of variants.
+        :param block_size_cm: The block size in centi-Morgans (cM).
+        :param block_size_kb: The block size in kilo-base pairs (kb).
+        :param blocks: An array or list specifying the block boundaries to iterate over.
+        :param min_block_size: The minimum block size.
+        :param return_type: The type of data to return. Options are 'csr', 'linop', or 'numpy'.
+        :param return_type_kwargs: Additional keyword arguments to pass to the return type constructor.
+        :param return_block_boundaries: If True, return the boundaries of the generated blocks along with the
+        LD data itself.
+
+        """
+
+        # Sanity checks:
+        assert return_type in ('csr', 'linop', 'numpy')
+        assert min_block_size >= 1
+
+        # Determine the block boundaries based on the input parameters:
+        n_snps = self.stored_n_snps
+
+        from .utils.compute_utils import generate_overlapping_windows
+
+        if blocks is not None:
+            block_iter = blocks
+        elif block_size is not None:
+
+            windows = generate_overlapping_windows(np.arange(n_snps),
+                                                   block_size - 1, block_size,
+                                                   min_window_size=min_block_size)
+            block_iter = np.insert(windows[:, 1], 0, 0)
+
+        elif block_size_cm is not None or block_size_kb is not None:
+
+            if block_size_cm is not None:
+                dist = self.get_metadata('cm', apply_mask=False)
+                windows = generate_overlapping_windows(dist, block_size_cm,
+                                                       block_size_cm, min_window_size=min_block_size)
+            else:
+                dist = self.get_metadata('bp', apply_mask=False) / 1000
+                windows = generate_overlapping_windows(dist, block_size_kb,
+                                                       block_size_kb, min_window_size=min_block_size)
+
+            block_iter = np.insert(windows[:, 1], 0, 0)
+        elif self.ld_estimator == 'block':
+
+            from .utils.model_utils import map_variants_to_genomic_blocks
+
+            variants_to_blocks = map_variants_to_genomic_blocks(
+                pd.DataFrame({'POS': self.get_metadata('bp', apply_mask=False)}).reset_index(),
+                pd.DataFrame(np.array(self.estimator_properties['LD blocks']),
+                             columns=['block_start', 'block_end'],
+                             dtype=np.int32),
+                filter_unmatched=True
+            )
+
+            block_iter = [0] + list(variants_to_blocks.groupby('block_end')['index'].max().values + 1)
+
+        else:
+            block_iter = [0, n_snps]
+
+        mat = None
+
+        # Loop over the blocks and yield the requested data:
+        for bidx in range(len(block_iter) - 1):
+
+            start = block_iter[bidx]
+            end = block_iter[bidx + 1]
+
+            if return_type in ('csr', 'numpy'):
+                mat = self.load_data(start_row=start, end_row=end, return_as_csr=True, **return_type_kwargs)
+                if return_type == 'numpy':
+                    mat = mat.todense()
+            elif return_type == 'linop':
+                mat = self.get_linear_operator(start_row=start, end_row=end, **return_type_kwargs)
+
+            if mat.shape[0] == 0:
+                continue
+
+            if return_block_boundaries:
+                yield mat, (start, end)
+            else:
+                yield mat
 
     def __getstate__(self):
         return self.store.path, self.in_memory, self.is_symmetric, self._mask, self.dtype

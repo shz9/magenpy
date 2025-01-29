@@ -241,4 +241,58 @@ ld_matrix_dot(int c_size,
     }
 }
 
+
+template <typename T, typename U, typename I>
+typename std::enable_if<std::is_floating_point<T>::value && std::is_arithmetic<U>::value && std::is_integral<I>::value, void>::type
+ld_rank_one_update(int c_size,
+                   int* ld_left_bound,
+                   I* ld_indptr,
+                   U* ld_data,
+                   T* vec,
+                   T* out,
+                   T alpha,
+                   T dq_scale,
+                   int threads) {
+    /*
+        Perform rank-one update or perturbation on the LD matrix, which we define as:
+
+        out = R + alpha * vec * vec^T,
+
+        where R is the original LD matrix, vec is a vector, and alpha is a scaling factor. The input parameters
+        are as follows:
+
+        - `c_size`: The number of rows/columns in the LD matrix.
+        - `ld_left_bound`: An array of size `c_size` that contains the left bound of each column in the full matrix.
+        - `ld_indptr`: An array of size `c_size + 1` that contains the indices of the start and end of each column in `ld_data`.
+        - `ld_data`: An array of size `ld_indptr[c_size]` that contains the non-zero entries of the LD matrix.
+        - `vec`: A vector of size `c_size` that is used to perform the rank-one update.
+        - `out`: A vector of size `ld_indptr[c_size]` that stores the result of the rank-one update.
+        - `alpha`: A scaling factor that multiplies the outer product of `vec` with itself.
+        - `dq_scale`: A scaling factor used to quantize the matrix. If the matrix is not quantized, set this to 1.
+        - `threads`: The number of threads to use for parallelization.
+
+        The function is parallelized using OpenMP if the compiler supports it. It also uses BLAS
+        if the library is available on the user's system. Finally, the function is templated to allow
+        the user to pass quantized matrices and vectors of different data types (e.g., float, double, etc.).
+        If the matrix is quantized, ensure to pass the correct scaling factor `dq_scale` to the function.
+    */
+
+    I ld_start, ld_end;
+    int col_idx;
+
+    #ifdef _OPENMP
+        #pragma omp parallel for private(ld_start, ld_end, col_idx) schedule(static) num_threads(threads)
+    #endif
+    for (int j = 0; j < c_size; ++j) {
+
+        ld_start = ld_indptr[j];
+        ld_end = ld_indptr[j + 1];
+
+        for (int i = 0; i < ld_end - ld_start; ++i) {
+            col_idx = ld_left_bound[j] + i; // The column index of the entry in the full matrix
+            out[ld_start + i] = ld_data[ld_start + i]*dq_scale + alpha*vec[j]*vec[col_idx];
+        }
+    }
+}
+
 #endif // LD_UTLS_H

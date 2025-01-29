@@ -240,15 +240,15 @@ def compute_extremal_eigenvalues(mat, k=1, which='both', **eigsh_kwargs):
     if which in ('min', 'both'):
 
         if isinstance(mat, csr_matrix):
-            diag_add = max_eig*identity(mat.shape[0], format='csr', dtype=mat.dtype)
-            mat -= diag_add
+            diag_shift = max_eig*identity(mat.shape[0], format='csr', dtype=mat.dtype)
+            mat -= diag_shift
         else:
-            if mat.diag_add is not None:
-                orig_diag_add = copy.copy(mat.diag_add)
-                mat.set_diag_add(mat.diag_add-max_eig)
+            if mat.diag_shift is not None:
+                orig_diag_shift = copy.copy(mat.diag_shift)
+                mat.set_diag_shift(mat.diag_shift-max_eig)
             else:
-                orig_diag_add = None
-                mat.set_diag_add(-max_eig)
+                orig_diag_shift = None
+                mat.set_diag_shift(-max_eig)
 
         # TODO: Try other solvers here?
         try:
@@ -264,9 +264,9 @@ def compute_extremal_eigenvalues(mat, k=1, which='both', **eigsh_kwargs):
             lm_max_hat = eigsh(mat, k=k, which='LM', return_eigenvectors=False, **eigsh_kwargs)
 
         if isinstance(mat, csr_matrix):
-            mat += diag_add
+            mat += diag_shift
         else:
-            mat.set_diag_add(orig_diag_add)
+            mat.set_diag_shift(orig_diag_shift)
 
         eig_result['min'] = lm_max_hat + max_eig
 

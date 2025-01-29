@@ -17,10 +17,9 @@ import numpy as np
 cimport numpy as cnp
 
 
-ctypedef fused indptr_type:
+ctypedef fused int_dtype:
     cnp.int32_t
     cnp.int64_t
-
 
 ctypedef fused noncomplex_numeric:
     cnp.int8_t
@@ -44,10 +43,20 @@ cdef extern from "ld_utils.hpp" nogil:
               bint include_lower_triangle,
               bint include_upper_triangle,
               bint include_diag,
-              int threads)
+              int threads) noexcept nogil
+
+    void ld_rank_one_update[T, U, I](int c_size,
+                   int* ld_left_bound,
+                   I* ld_indptr,
+                   U* ld_data,
+                   T* vec,
+                   T* out,
+                   T alpha,
+                   T dq_scale,
+                   int threads) noexcept nogil
 
 
-cpdef ld_dot(indptr_type[::1] ld_indptr,
+cpdef ld_dot(int_dtype[::1] ld_indptr,
              noncomplex_numeric[::1] ld_data,
              floating[::1] vec,
              floating dq_scale = 1.,
@@ -72,8 +81,31 @@ cpdef ld_dot(indptr_type[::1] ld_indptr,
 
     return np.asarray(out)
 
+
+cpdef rank_one_update(int[::1] ld_left_bound,
+                      int_dtype[::1] ld_indptr,
+                      noncomplex_numeric[::1] ld_data,
+                      floating[::1] vec,
+                      floating[::1] out,
+                      floating alpha = 1.,
+                      floating dq_scale = 1.,
+                      int threads = 1):
+
+    ld_rank_one_update(
+        vec.shape[0],
+        &ld_left_bound[0],
+        &ld_indptr[0],
+        &ld_data[0],
+        &vec[0],
+        &out[0],
+        alpha,
+        dq_scale,
+        threads
+    )
+
+
 cpdef find_tagging_variants(int[::1] variant_indices,
-                           indptr_type[::1] indptr,
+                           int_dtype[::1] indptr,
                            noncomplex_numeric[::1] data,
                            noncomplex_numeric threshold):
     """
@@ -94,7 +126,7 @@ cdef noncomplex_numeric numeric_abs(noncomplex_numeric x) noexcept nogil:
         return -x
     return x
 
-cpdef prune_ld_ut(indptr_type[::1] indptr,
+cpdef prune_ld_ut(int_dtype[::1] indptr,
                   noncomplex_numeric[::1] data,
                   noncomplex_numeric r_threshold):
     """
@@ -141,7 +173,7 @@ cpdef prune_ld_ut(indptr_type[::1] indptr,
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef get_symmetrized_indptr_with_mask(indptr_type[::1] indptr,
+cpdef get_symmetrized_indptr_with_mask(int_dtype[::1] indptr,
                                        cnp.ndarray[cnp.npy_bool, ndim=1] mask):
     """
     Given an index pointer array from an upper triangular CSR matrix, this function 
@@ -200,7 +232,7 @@ cpdef get_symmetrized_indptr_with_mask(indptr_type[::1] indptr,
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef get_symmetrized_indptr(indptr_type[::1] indptr):
+cpdef get_symmetrized_indptr(int_dtype[::1] indptr):
     """
     Given an index pointer array from an upper triangular CSR matrix, this function 
     computes the equivalent indptr for the symmetric matrix and returns also the 
@@ -250,7 +282,7 @@ cpdef get_symmetrized_indptr(indptr_type[::1] indptr):
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef symmetrize_ut_csr_matrix_with_mask(indptr_type[::1] indptr,
+cpdef symmetrize_ut_csr_matrix_with_mask(int_dtype[::1] indptr,
                                          noncomplex_numeric[::1] data,
                                          cnp.ndarray[cnp.npy_bool, ndim=1] mask,
                                          noncomplex_numeric diag_fill_value):
@@ -319,7 +351,7 @@ cpdef symmetrize_ut_csr_matrix_with_mask(indptr_type[::1] indptr,
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef symmetrize_ut_csr_matrix(indptr_type[::1] indptr,
+cpdef symmetrize_ut_csr_matrix(int_dtype[::1] indptr,
                                 noncomplex_numeric[::1] data,
                                 noncomplex_numeric diag_fill_value):
     """
@@ -375,7 +407,7 @@ cpdef symmetrize_ut_csr_matrix(indptr_type[::1] indptr,
     return np.asarray(new_data), np.asarray(new_idx[0]), np.asarray(new_idx[1])
 
 
-cpdef filter_ut_csr_matrix_inplace(indptr_type[::1] indptr,
+cpdef filter_ut_csr_matrix_inplace(int_dtype[::1] indptr,
                                   noncomplex_numeric[::1] data,
                                   char[::1] bool_mask,
                                   int new_size):
@@ -388,7 +420,7 @@ cpdef filter_ut_csr_matrix_inplace(indptr_type[::1] indptr,
         2. The diagonal elements aren't present in the upper triangular matrix.
         
     .. note::
-        This function modifies the input data array in place.
+        This function modifies the input data array inplace.
 
     :param indptr: The index pointer array for the CSR matrix to be filtered.
     :param data: The data array for the CSR matrix to be filtered.
@@ -435,7 +467,7 @@ cpdef filter_ut_csr_matrix_inplace(indptr_type[::1] indptr,
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef generate_data_mask_ut_csr_matrix(indptr_type[::1] indptr, char[::1] bool_mask):
+cpdef generate_data_mask_ut_csr_matrix(int_dtype[::1] indptr, char[::1] bool_mask):
     """
     This is a utility function to generate a mask with the purpose of filtering 
     the data array of upper-triangular CSR matrices. The function also generates a new 
@@ -487,7 +519,7 @@ cpdef generate_data_mask_ut_csr_matrix(indptr_type[::1] indptr, char[::1] bool_m
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef expand_ranges(indptr_type[::1] start, indptr_type[::1] end, int64_t output_size):
+cpdef expand_ranges(int_dtype[::1] start, int_dtype[::1] end, int64_t output_size):
     """
     Given a set of start and end indices, expand them into one long vector that contains 
     the indices between all start and end positions.
@@ -499,9 +531,9 @@ cpdef expand_ranges(indptr_type[::1] start, indptr_type[::1] end, int64_t output
     """
 
     cdef:
-        indptr_type i, j, size=start.shape[0]
+        int_dtype i, j, size=start.shape[0]
         int64_t out_idx = 0
-        indptr_type[::1] output = np.empty_like(start, shape=(output_size, ))
+        int_dtype[::1] output = np.empty_like(start, shape=(output_size, ))
 
     with nogil:
         for i in range(size):
@@ -516,7 +548,7 @@ cpdef expand_ranges(indptr_type[::1] start, indptr_type[::1] end, int64_t output
 @cython.nonecheck(False)
 @cython.cdivision(True)
 @cython.exceptval(check=False)
-cpdef find_ld_block_boundaries(indptr_type[:] pos, int[:, :] block_boundaries):
+cpdef find_ld_block_boundaries(int_dtype[:] pos, int[:, :] block_boundaries):
     """
     Find the LD boundaries for the blockwise estimator of LD, i.e., the 
     indices of the leftmost and rightmost neighbors for each SNP.
@@ -527,7 +559,7 @@ cpdef find_ld_block_boundaries(indptr_type[:] pos, int[:, :] block_boundaries):
 
     cdef:
         int i, j, ldb_idx, B = block_boundaries.shape[0], M = pos.shape[0]
-        indptr_type block_start, block_end
+        int_dtype block_start, block_end
         int[:] v_min = np.zeros_like(pos, dtype=np.int32)
         int[:] v_max = M*np.ones_like(pos, dtype=np.int32)
 
@@ -558,7 +590,7 @@ cpdef find_ld_block_boundaries(indptr_type[:] pos, int[:, :] block_boundaries):
 @cython.nonecheck(False)
 @cython.cdivision(True)
 @cython.exceptval(check=False)
-cpdef find_windowed_ld_boundaries(floating[:] pos, double max_dist):
+cpdef find_windowed_ld_boundaries(floating[::1] pos, double max_dist):
     """
     Find the LD boundaries for the windowed estimator of LD, i.e., the 
     indices of the leftmost and rightmost neighbors for each SNP.
@@ -574,8 +606,8 @@ cpdef find_windowed_ld_boundaries(floating[:] pos, double max_dist):
 
     cdef:
         int i, j, M = pos.shape[0]
-        int[:] v_min = np.zeros_like(pos, dtype=np.int32)
-        int[:] v_max = M*np.ones_like(pos, dtype=np.int32)
+        int[::1] v_min = np.zeros_like(pos, dtype=np.int32)
+        int[::1] v_max = M*np.ones_like(pos, dtype=np.int32)
 
     with nogil:
         for i in range(M):
@@ -597,7 +629,7 @@ cpdef find_windowed_ld_boundaries(floating[:] pos, double max_dist):
 @cython.nonecheck(False)
 @cython.cdivision(True)
 @cython.exceptval(check=False)
-cpdef find_shrinkage_ld_boundaries(floating[:] cm_pos,
+cpdef find_shrinkage_ld_boundaries(floating[::1] cm_pos,
                                   double genmap_ne,
                                   int genmap_sample_size,
                                   double cutoff):
@@ -612,8 +644,8 @@ cpdef find_shrinkage_ld_boundaries(floating[:] cm_pos,
 
     cdef:
         int i, j, M = cm_pos.shape[0]
-        int[:] v_min = np.zeros_like(cm_pos, dtype=np.int32)
-        int[:] v_max = M*np.ones_like(cm_pos, dtype=np.int32)
+        int[::1] v_min = np.zeros_like(cm_pos, dtype=np.int32)
+        int[::1] v_max = M*np.ones_like(cm_pos, dtype=np.int32)
 
     # The multiplicative term for the shrinkage factor
     # The shrinkage factor is 4 * Ne * (rho_ij/100) / (2*m)
