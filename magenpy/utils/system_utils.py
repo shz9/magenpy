@@ -293,3 +293,68 @@ def delete_temp_files(prefix):
             os.remove(f)
         except (OSError, FileNotFoundError):
             continue
+
+
+def setup_logger(loggers=None,
+                 modules=None,
+                 log_file=None,
+                 log_format=None,
+                 log_level='WARNING',
+                 clear_file=False):
+    """
+    Set up the logger with the provided configuration.
+
+    :param loggers: A list of logger instances to apply the logger configurations to.
+    :param modules: A list of modules to apply the logger configurations to. This allows
+    for setting up different logger configs for different modules.
+    :param log_file: A string with the path to the log file.
+    :param log_format: A string with the format of the log messages.
+    :param log_level: A string with the logging level.
+    :param clear_file: A boolean flag to clear the log file before writing.
+    """
+
+    # ------------------ Sanity checks ------------------
+    assert log_level in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], \
+        f"Invalid log level: {log_level}"
+
+    assert loggers is not None or modules is not None, \
+        "Either `loggers` or `modules` must be provided!"
+
+    loggers = loggers or []
+
+    # ------------------ Set up the configurations ------------------
+
+    import logging
+
+    log_level = logging.getLevelName(log_level)
+    handlers = []
+
+    # Create a file handler:
+    if log_file is not None:
+        assert is_path_writable(log_file), f"Cannot write to {log_file}!"
+        file_handler = logging.FileHandler(log_file, mode='w' if clear_file else 'a')
+        file_handler.setLevel(logging.getLevelName(log_level))
+        handlers.append(file_handler)
+
+    # Create a console handler:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.getLevelName(log_level))
+    handlers.append(console_handler)
+
+    # Set up the formatter:
+    log_format = log_format or '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    formatter = logging.Formatter(log_format)
+
+    # Add the formatter to the handlers and add the handlers to the logger:
+    for handler in handlers:
+        handler.setFormatter(formatter)
+
+        for lgr in loggers:
+            lgr.setLevel(log_level)
+            lgr.addHandler(handler)
+
+        if modules is not None:
+            for lgr_name, lgr in logging.root.manager.loggerDict.items():
+                if any([m in lgr_name for m in modules]) and isinstance(lgr, logging.Logger):
+                    lgr.setLevel(log_level)
+                    lgr.addHandler(handler)

@@ -311,9 +311,11 @@ def perform_gwa_xarray(genotype_matrix,
     # Standardize or center the genotype matrix (account for missing values):
     if standardize_genotype:
         from ..transforms.genotype import standardize
-        xr_mat = standardize(xr_mat, fill_na=True)
+        xr_mat = standardize(xr_mat)
     else:
-        xr_mat = (xr_mat - 2.*maf).fillna(0.)
+        xr_mat = (xr_mat - 2.*maf)
+
+    xr_mat = xr_mat.fillna(0.)
 
     # Compute the sum of squares per SNP:
     sum_x_sq = (xr_mat**2).sum(axis=0).compute().values

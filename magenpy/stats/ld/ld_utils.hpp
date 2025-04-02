@@ -190,15 +190,52 @@ blas_axpy(T *y, U *x, T alpha, int size) {
 template <typename T, typename U, typename I>
 typename std::enable_if<std::is_floating_point<T>::value && std::is_arithmetic<U>::value && std::is_integral<I>::value, void>::type
 ld_matrix_dot(int c_size,
+              int* ld_left_bound,
               I* ld_indptr,
               U* ld_data,
               T* vec,
               T* out,
               T dq_scale,
-              bool include_lower_triangle,
-              bool include_upper_triangle,
-              bool include_diag,
               int threads) {
+    /*
+        Perform matrix-vector multiplication between a Linkage-Disequilibrium (LD) matrix where the entries
+        are stored in a compressed format (CSR) and a vector `vec`. This function assumes that
+        the entries of the matrix are contiguous around the diagonal.
+        The result is stored in the output vector `out` of the same length and data type as `vec`.
+
+        The function is parallelized using OpenMP if the compiler supports it. It also uses BLAS
+        if the library is available on the user's system. Finally, the function is templated to allow
+        the user to pass quantized matrices and vectors of different data types (e.g., float, double, etc.).
+        If the matrix is quantized, ensure to pass the correct scaling factor `dq_scale` to the function.
+    */
+
+    I ld_start, ld_end;
+
+    #ifdef _OPENMP
+        #pragma omp parallel for private(ld_start, ld_end) schedule(static) num_threads(threads)
+    #endif
+    for (int j = 0; j < c_size; ++j) {
+
+        ld_start = ld_indptr[j];
+        ld_end = ld_indptr[j + 1];
+
+        out[j] += dq_scale*blas_dot(vec + ld_left_bound[j], ld_data + ld_start, ld_end - ld_start);
+    }
+}
+
+
+template <typename T, typename U, typename I>
+typename std::enable_if<std::is_floating_point<T>::value && std::is_arithmetic<U>::value && std::is_integral<I>::value, void>::type
+ut_ld_matrix_dot(int c_size,
+                 I* ld_indptr,
+                 U* ld_data,
+                 T* vec,
+                 T* out,
+                 T dq_scale,
+                 bool include_lower_triangle,
+                 bool include_upper_triangle,
+                 bool include_diag,
+                 int threads) {
     /*
         Perform matrix-vector multiplication between an upper-triangular matrix where the entries
         are stored in a compressed format (CSR) and a vector `vec`. This function assumes that

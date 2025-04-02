@@ -34,7 +34,7 @@ class SumstatsTable(object):
         """
         self.table: pd.DataFrame = ss_table
 
-        # Check that the table contains some of the required columns (non exhaustive):
+        # Check that the table contains some of the required columns (non-exhaustive):
 
         # Either has SNP or CHR+POS:
         assert 'SNP' in self.table.columns or all([col in self.table.columns for col in ('CHR', 'POS')])

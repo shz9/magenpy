@@ -168,6 +168,74 @@ def merge_snp_tables(ref_table,
     return merged_table
 
 
+def sumstats_train_test_split(gdl, prop_train=0.9, **kwargs):
+    """
+    Perform a train-test split on the GWAS summary statistics data.
+    This function implemented the PUMAS procedure described in
+
+    > Zhao, Z., Yi, Y., Song, J. et al. PUMAS: fine-tuning polygenic risk scores with GWAS summary statistics.
+    Genome Biol 22, 257 (2021). https://doi.org/10.1186/s13059-021-02479-9
+
+    Specifically, the function takes harmonized LD and summary statistics data (in the form of a
+    `GWADataLoader` object) and samples the marginal beta values for the training set, conditional
+    on the LD matrix and the proportion of training data specified by `prop_train`.
+
+    :param gdl: A `GWADataLoader` object containing the harmonized GWAS summary statistics and LD data.
+    :param prop_train: The proportion of training data to sample.
+    :param kwargs: Additional keyword arguments to pass to the
+    `multivariate_normal_conditional_sampling` function.
+
+    :return: A dictionary with the sampled beta values for the training and test sets.
+    """
+
+    # Sanity checks:
+    assert 0. < prop_train < 1., "The proportion of training data must be between 0 and 1."
+    assert gdl.sumstats_table is not None, "The GWADataLoader object must have summary statistics initialized."
+    assert gdl.ld is not None, "The GWADataLoader object must have LD matrices initialized."
+
+    from ..stats.ld.utils import multivariate_normal_conditional_sampling
+
+    prop_test = 1. - prop_train
+
+    results = {}
+
+    for chrom in gdl.chromosomes:
+
+        assert gdl.ld[chrom].n_snps == gdl.sumstats_table[chrom].n_snps, (
+            "The number of SNPs in the LD matrix and the summary statistics table must match. Invoke the "
+            "`harmonize_data` method on the GWADataLoader object to ensure that the data is harmonized."
+        )
+
+        n_per_snp = gdl.sumstats_table[chrom].n_per_snp
+        n = n_per_snp.max()  # Get the GWAS sample size
+
+        # The covariance scale is computed based on the proportion of training data:
+        cov_scale = 1. / (prop_train * n) - (1. / n)
+        # Use the standardized marginal beta as the mean:
+        mean = gdl.sumstats_table[chrom].standardized_marginal_beta
+
+        # Sample the training beta values:
+        sampled_train_beta = multivariate_normal_conditional_sampling(
+            gdl.ld[chrom],
+            mean=mean,
+            cov_scale=cov_scale,
+            **kwargs
+        )
+
+        # Calculate the test beta values:
+        sampled_test_beta = mean * (1. / prop_test) - sampled_train_beta * (prop_train / prop_test)
+
+        # Store the results:
+        results[chrom] = {
+            'train_beta': sampled_train_beta,
+            'train_n': n_per_snp * prop_train,
+            'test_beta': sampled_test_beta,
+            'test_n': n_per_snp * prop_test
+        }
+
+    return results
+
+
 def map_variants_to_genomic_blocks(variant_table,
                                    block_table,
                                    variant_pos_col='POS',

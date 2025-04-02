@@ -1,21 +1,24 @@
 
 from typing import Union, Dict
 
-import warnings
 import copy
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
 
-from .GenotypeMatrix import GenotypeMatrix, xarrayGenotypeMatrix, plinkBEDGenotypeMatrix
+from .GenotypeMatrix import *
 from .SampleTable import SampleTable
 from .SumstatsTable import SumstatsTable
 from .AnnotationMatrix import AnnotationMatrix
 from .LDMatrix import LDMatrix
 
-from .utils.compute_utils import iterable
+from .utils.compute_utils import iterable, intersect_multiple_arrays
 from .utils.system_utils import makedir, get_filenames
 from .utils.model_utils import match_chromosomes
+
+# Set up the logger:
+import logging
+logger = logging.getLogger(__name__)
 
 
 class GWADataLoader(object):
@@ -63,7 +66,6 @@ class GWADataLoader(object):
                  backend='xarray',
                  temp_dir='temp',
                  output_dir='output',
-                 verbose=True,
                  threads=1):
         """
         Initialize the `GWADataLoader` object with the data sources required for
@@ -96,13 +98,12 @@ class GWADataLoader(object):
         `xarray` and `plink`.
         :param temp_dir: The temporary directory where to store intermediate files.
         :param output_dir: The output directory where to store the results of the computation.
-        :param verbose: Verbosity of the information printed to standard output.
         :param threads: The number of threads to use for computations.
         """
 
         # ------- Sanity checks -------
 
-        assert backend in ('xarray', 'plink')
+        assert backend in ('xarray', 'plink', 'bed-reader')
         assert phenotype_likelihood in ('gaussian', 'binomial')
 
         # ------- General options -------
@@ -115,7 +116,6 @@ class GWADataLoader(object):
 
         makedir([temp_dir, output_dir])
 
-        self.verbose = verbose
         self.threads = threads
 
         # ------- General parameters -------
@@ -353,18 +353,16 @@ class GWADataLoader(object):
             annot_files = annot_path
 
         if len(annot_files) < 1:
-            warnings.warn(f"No annotation files were found at: {annot_path}")
+            logger.warning(f"No annotation files were found at: {annot_path}")
             return
 
-        if self.verbose and len(annot_files) < 2:
-            print("> Reading annotation file...")
+        logger.info("> Reading annotation file...")
 
         self.annotation = {}
 
         for annot_file in tqdm(annot_files,
                                total=len(annot_files),
-                               desc="Reading annotation files",
-                               disable=not self.verbose or len(annot_files) < 2):
+                               desc="Reading annotation files"):
             annot_mat = AnnotationMatrix.from_file(annot_file,
                                                    annot_format=annot_format,
                                                    annot_parser=parser,
@@ -405,24 +403,24 @@ class GWADataLoader(object):
             bed_files = bed_paths
 
         if len(bed_files) < 1:
-            warnings.warn(f"No BED files were found at: {bed_paths}")
+            logger.warning(f"No BED files were found at: {bed_paths}")
             return
 
         # Depending on the backend, select the `GenotypeMatrix` class:
         if self.backend == 'xarray':
             gmat_class = xarrayGenotypeMatrix
+        elif self.backend == 'bed-reader':
+            gmat_class = bedReaderGenotypeMatrix
         else:
             gmat_class = plinkBEDGenotypeMatrix
 
-        if self.verbose and len(bed_files) < 2:
-            print("> Reading genotype metadata...")
+        logger.info("> Reading genotype metadata...")
 
         self.genotype = {}
 
         for bfile in tqdm(bed_files,
                           total=len(bed_files),
-                          desc="Reading genotype metadata",
-                          disable=not self.verbose or len(bed_files) < 2):
+                          desc="Reading genotype metadata"):
             # Read BED file and update the genotypes dictionary:
             self.genotype.update(gmat_class.from_file(bfile,
                                                       temp_dir=self.temp_dir,
@@ -463,8 +461,7 @@ class GWADataLoader(object):
         if phenotype_file is None:
             return
 
-        if self.verbose:
-            print("> Reading phenotype file...")
+        logger.info("> Reading phenotype file...")
 
         assert self.sample_table is not None
 
@@ -494,8 +491,7 @@ class GWADataLoader(object):
         if covariates_file is None:
             return
 
-        if self.verbose:
-            print("> Reading covariates file...")
+        logger.info("> Reading covariates file...")
 
         assert self.sample_table is not None
 
@@ -535,18 +531,16 @@ class GWADataLoader(object):
             sumstats_files = sumstats_path
 
         if len(sumstats_files) < 1:
-            warnings.warn(f"No summary statistics files were found at: {sumstats_path}")
+            logger.warning(f"No summary statistics files were found at: {sumstats_path}")
             return
 
-        if self.verbose and len(sumstats_files) < 2:
-            print("> Reading summary statistics...")
+        logger.info("> Reading summary statistics...")
 
         self.sumstats_table = {}
 
         for f in tqdm(sumstats_files,
                       total=len(sumstats_files),
-                      desc="Reading summary statistics",
-                      disable=not self.verbose or len(sumstats_files) < 2):
+                      desc="Reading summary statistics"):
 
             ss_tab = SumstatsTable.from_file(f,
                                              sumstats_format=sumstats_format,
@@ -601,18 +595,16 @@ class GWADataLoader(object):
             ld_store_files = ld_store_paths
 
         if len(ld_store_files) < 1:
-            warnings.warn(f"No LD matrix files were found at: {ld_store_paths}")
+            logger.warning(f"No LD matrix files were found at: {ld_store_paths}")
             return
 
-        if self.verbose and len(ld_store_files) < 2:
-            print("> Reading LD metadata...")
+        logger.info("> Reading LD metadata...")
 
         self.ld = {}
 
         for f in tqdm(ld_store_files,
                       total=len(ld_store_files),
-                      desc="Reading LD metadata",
-                      disable=not self.verbose or len(ld_store_files) < 2):
+                      desc="Reading LD metadata"):
             z = LDMatrix.from_path(f)
             self.ld[z.chromosome] = z
 
@@ -663,8 +655,7 @@ class GWADataLoader(object):
         if self.genotype is None:
             raise ValueError("Cannot compute LD without genotype data.")
 
-        if self.verbose and len(self.genotype) < 2:
-            print("> Computing LD matrix...")
+        logger.info("> Computing LD matrix...")
 
         self.ld = {
             c: g.compute_ld(estimator,
@@ -676,8 +667,7 @@ class GWADataLoader(object):
                             **ld_kwargs)
             for c, g in tqdm(sorted(self.genotype.items(), key=lambda x: x[0]),
                              total=len(self.genotype),
-                             desc='Computing LD matrices',
-                             disable=not self.verbose or len(self.genotype) < 2)
+                             desc='Computing LD matrices')
         }
 
     def get_ld_matrices(self):
@@ -715,13 +705,11 @@ class GWADataLoader(object):
         # Get the chromosomes information from all the data sources:
         chromosomes = list(set.union(*[set(ds.keys()) for ds in initialized_data_sources]))
 
-        if self.verbose and len(chromosomes) < 2:
-            print("> Harmonizing data...")
+        logger.info("> Harmonizing data...")
 
         for c in tqdm(chromosomes,
                       total=len(chromosomes),
-                      desc='Harmonizing data',
-                      disable=not self.verbose or len(chromosomes) < 2):
+                      desc='Harmonizing data'):
 
             # Which initialized data sources have information for chromosome `c`
             miss_chroms = [c not in ds for ds in initialized_data_sources]
@@ -730,6 +718,8 @@ class GWADataLoader(object):
                 # If the chromosome data only exists for some data sources but not others, remove the chromosome
                 # from all data source.
                 # Is this the best way to handle the missingness? Should we just post a warning?
+                logger.debug(f"Chromosome {c} is missing in some data sources. "
+                             f"Removing it from all data sources.")
                 for ds in initialized_data_sources:
                     if c in ds:
                         del ds[c]
@@ -737,8 +727,7 @@ class GWADataLoader(object):
             else:
 
                 # Find the set of SNPs that are shared across all data sources (exclude missing values):
-                common_snps = np.array(list(set.intersection(*[set(ds[c].snps[~pd.isnull(ds[c].snps)])
-                                                               for ds in initialized_data_sources])))
+                common_snps = intersect_multiple_arrays([ds[c].snps for ds in initialized_data_sources])
 
                 # If necessary, filter the data sources to only have the common SNPs:
                 for ds in initialized_data_sources:
@@ -776,15 +765,13 @@ class GWADataLoader(object):
         for relevant keyword arguments for each backend.
         """
 
-        if self.verbose and len(self.genotype) < 2:
-            print("> Performing GWAS...")
+        logger.info("> Performing GWAS...")
 
         self.sumstats_table = {
             c: g.perform_gwas(**gwa_kwargs)
             for c, g in tqdm(sorted(self.genotype.items(), key=lambda x: x[0]),
                              total=len(self.genotype),
-                             desc='Performing GWAS',
-                             disable=not self.verbose or len(self.genotype) < 2)
+                             desc='Performing GWAS')
         }
 
     def score(self, beta=None, standardize_genotype=False):
@@ -813,15 +800,13 @@ class GWADataLoader(object):
             raise ValueError("No common chromosomes found between "
                              "the genotype and the effect size estimates!")
 
-        if self.verbose and len(common_chr_g) < 2:
-            print("> Generating polygenic scores...")
+        logger.info("> Generating polygenic scores...")
 
         pgs = None
 
         for c_g, c_b in tqdm(zip(common_chr_g, common_chr_b),
                              total=len(common_chr_g),
-                             desc='Generating polygenic scores',
-                             disable=not self.verbose or len(common_chr_g) < 2):
+                             desc='Generating polygenic scores'):
 
             if pgs is None:
                 pgs = self.genotype[c_g].score(beta[c_b], standardize_genotype=standardize_genotype)
@@ -1096,8 +1081,8 @@ class GWADataLoader(object):
         """
         Clean up all temporary files and directories
         """
-        if self.verbose:
-            print("> Cleaning up workspace.")
+
+        logger.info("> Cleaning up workspace.")
 
         for tmpdir in self.cleanup_dir_list:
             try:

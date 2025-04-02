@@ -8,7 +8,7 @@ def plot_ld_matrix(ldm: LDMatrix,
                    start_row=None,
                    end_row=None,
                    symmetric=False,
-                   cmap='OrRd',
+                   cmap='RdBu',
                    include_colorbar=True):
     """
     Plot a heatmap representing the LD matrix or portions of it.
@@ -37,7 +37,7 @@ def plot_ld_matrix(ldm: LDMatrix,
                            return_as_csr=True,
                            dtype=np.float32).todense()
 
-    plt.imshow(ld_mat, cmap=cmap, vmin=-1., vmax=1.)
+    plt.imshow(ld_mat, cmap=cmap, vmin=-1., vmax=1., interpolation='none')
 
     if include_colorbar:
         plt.colorbar()

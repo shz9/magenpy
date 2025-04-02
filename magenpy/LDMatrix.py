@@ -2,8 +2,9 @@ import zarr
 import os.path as osp
 import numpy as np
 import pandas as pd
-import warnings
+from typing import Union
 from .utils.model_utils import quantize, dequantize
+from .LDLinearOperator import LDLinearOperator
 
 
 class LDMatrix(object):
@@ -43,21 +44,19 @@ class LDMatrix(object):
         was calculated, including the chromosome number, sample size, genome build, LD estimator,
         and estimator properties.
 
-    :ivar _zg: The Zarr group object that stores the LD matrix and its metadata.
-    :ivar _mat: The in-memory CSR matrix object.
-    :ivar in_memory: A boolean flag indicating whether the LD matrix is in memory.
-    :ivar is_symmetric: A boolean flag indicating whether the LD matrix is symmetric.
+    :ivar _zg: The Zarr group object containing the LD matrix and its metadata.
+    :ivar _cached_lop: A cached `LDLinearOperator` object for performing linear algebra operations.
     :ivar index: An integer index for the current SNP in the LD matrix (useful for iterators).
     :ivar _mask: A boolean mask for filtering the LD matrix.
+    :ivar _n_masked: The number of SNPs masked (i.e. discarded) by the current mask.
 
     """
 
-    def __init__(self, zarr_group, symmetric=False):
+    def __init__(self, zarr_group):
         """
         Initialize an `LDMatrix` object from a Zarr group store.
 
         :param zarr_group: The Zarr group object that stores the LD matrix.
-        :param symmetric: A boolean flag indicating whether to represent the LD matrix as symmetric.
         """
 
         # Checking the input for correct formatting:
@@ -71,35 +70,39 @@ class LDMatrix(object):
         assert all([arr in arr_keys
                     for arr in ('data', 'indptr')])
 
-        self._zg = zarr_group
+        # The Zarr storage hierarchy:
+        self._zg: zarr.hierarchy.Group = zarr_group
 
-        self._mat = None
-        self.in_memory = False
-        self.is_symmetric = symmetric
-        self.index = 0
+        # Caching loaded/processed data of the LD matrix:
+        self._cached_lop: Union[LDLinearOperator, None] = None
 
+        # To support dynamically filtering the LD matrix:
         self._mask = None
+        self._n_masked = 0
+
+        # To support iteration over the LD matrix:
+        self.index: int = 0
 
     @classmethod
-    def from_path(cls, ld_store_path):
+    def from_path(cls, ld_store_path, cache_size=None):
         """
         Initialize an `LDMatrix` object from a pre-computed Zarr group store. This is a genetic method
         that can work with both cloud-based stores (e.g. s3 storage) or local filesystems.
 
         :param ld_store_path: The path to the Zarr array store.
+        :param cache_size: The size of the cache for the Zarr store (in bytes). Default is `None` (no caching).
 
         !!! seealso "See Also"
             * [from_directory][magenpy.LDMatrix.LDMatrix.from_directory]
             * [from_s3][magenpy.LDMatrix.LDMatrix.from_s3]
 
         :return: An `LDMatrix` object.
-
         """
 
         if 's3://' in ld_store_path:
-            return cls.from_s3(ld_store_path)
+            return cls.from_s3(ld_store_path, cache_size)
         else:
-            return cls.from_directory(ld_store_path)
+            return cls.from_directory(ld_store_path, cache_size)
 
     @classmethod
     def from_s3(cls, s3_path, cache_size=None):
@@ -108,7 +111,7 @@ class LDMatrix(object):
 
         :param s3_path: The path to the Zarr group store on AWS s3. s3 paths are expected
         to be of the form `s3://bucket-name/path/to/zarr-store`.
-        :param cache_size: The size of the cache for the Zarr store (in bytes).
+        :param cache_size: The size of the cache for the Zarr store (in bytes). Default is 16MB.
 
         .. note::
             Requires installing the `s3fs` package to access the Zarr store on AWS s3.
@@ -118,23 +121,24 @@ class LDMatrix(object):
             * [from_directory][magenpy.LDMatrix.LDMatrix.from_directory]
 
         :return: An `LDMatrix` object.
-
         """
 
         import s3fs
 
         s3 = s3fs.S3FileSystem(anon=True, client_kwargs=dict(region_name='us-east-2'))
         store = s3fs.S3Map(root=s3_path.replace('s3://', ''), s3=s3, check=False)
-        cache = zarr.LRUStoreCache(store, max_size=cache_size)
-        ld_group = zarr.open_group(store=cache, mode='r')
+        if cache_size is not None:
+            store = zarr.LRUStoreCache(store, max_size=cache_size)
+        ld_group = zarr.open_group(store=store, mode='r')
 
         return cls(ld_group)
 
     @classmethod
-    def from_directory(cls, dir_path):
+    def from_directory(cls, dir_path, cache_size=None):
         """
         Initialize an `LDMatrix` object from a Zarr array store.
         :param dir_path: The path to the Zarr array store on the local filesystem.
+        :param cache_size: The size of the cache for the Zarr store (in bytes).  Default is `None` (no caching).
 
         !!! seealso "See Also"
             * [from_s3][magenpy.LDMatrix.LDMatrix.from_s3]
@@ -145,7 +149,10 @@ class LDMatrix(object):
 
         for level in range(2):
             try:
-                ld_group = zarr.open_group(dir_path, mode='r')
+                dir_store = zarr.storage.DirectoryStore(dir_path)
+                if cache_size is not None:
+                    dir_store = zarr.LRUStoreCache(dir_store, max_size=cache_size)
+                ld_group = zarr.open_group(dir_store, mode='r')
                 return cls(ld_group)
             except zarr.hierarchy.GroupNotFoundError as e:
                 if level < 1:
@@ -544,7 +551,7 @@ class LDMatrix(object):
         try:
             ld_mat.set_metadata('ldscore', np.array(ragged_zarr.attrs['LDScore']))
         except KeyError:
-            print("Did not find LD scores in old LD matrix format! Skipping...")
+            pass
 
         # Set matrix attributes:
         ld_mat.set_store_attr('Chromosome', ragged_zarr.attrs['Chromosome'])
@@ -564,15 +571,10 @@ class LDMatrix(object):
         :return: The number of variants in the LD matrix. If a mask is set, we return the
         number of variants included in the mask.
         """
-        if self._mat is not None:
-            return self._mat.shape[0]
-        elif self._mask is not None:
-            if self._mask.dtype == bool:
-                return self._mask.sum()
-            else:
-                return len(self._mask)
+        if self._cached_lop is not None:
+            return self._cached_lop.shape[0]
         else:
-            return self.stored_n_snps
+            return self.stored_n_snps - self._n_masked
 
     @property
     def shape(self):
@@ -584,6 +586,23 @@ class LDMatrix(object):
         :return: The shape of the square LD matrix.
         """
         return self.n_snps, self.n_snps
+
+    @property
+    def in_memory(self):
+        """
+        :return: A boolean flag indicating whether the LD matrix is in memory.
+        """
+        return self._cached_lop is not None
+
+    @property
+    def is_symmetric(self):
+        """
+        :return: A boolean flag indicating whether the loaded LD matrix is symmetric.
+        """
+        if self.in_memory:
+            return self._cached_lop.symmetric
+        else:
+            return False
 
     @property
     def store(self):
@@ -650,7 +669,7 @@ class LDMatrix(object):
         dtype of the entries in the Zarr array.
         """
         if self.in_memory:
-            return self.csr_matrix.dtype
+            return self._cached_lop.ld_data_type
         else:
             return self.stored_dtype
 
@@ -781,29 +800,15 @@ class LDMatrix(object):
         """
 
         indptr = self.indptr
+        leftmost_idx = self.leftmost_index
 
-        if self.in_memory and self.is_symmetric:
-
-            # Check that the matrix has canonical format (indices are sorted / no duplicates):
-            assert self.csr_matrix.has_canonical_format
-
-            return np.vstack([self.indices[indptr[:-1]], self.indices[indptr[1:] - 1] + 1]).astype(np.int32)
-
-        else:
-
-            # If the matrix is not in memory, then the format is upper triangular.
-            # Therefore, it goes from diagonal + 1 to the end of the row.
-            left_bound = np.arange(1, len(indptr) - 1)  # The leftmost neighbor of each SNP (diagonal + 1)
-            return np.vstack([left_bound, left_bound + np.diff(indptr[:-1])]).astype(np.int32)
+        return np.vstack([leftmost_idx, leftmost_idx + np.diff(indptr)]).astype(np.int32)
 
     @property
     def window_size(self):
         """
         !!! seealso "See Also"
             * [n_neighbors][magenpy.LDMatrix.LDMatrix.n_neighbors]
-
-        !!! note
-            This includes the variant itself if the matrix is in memory and is symmetric.
 
         :return: The number of variants in the LD window for each SNP.
 
@@ -823,31 +828,10 @@ class LDMatrix(object):
         !!! seealso "See Also"
             * [window_size][magenpy.LDMatrix.LDMatrix.window_size]
 
-        !!! note
-            This includes the variant itself if the matrix is in memory and is symmetric.
-
         :return: The number of variants in the LD window for each SNP.
 
         """
         return self.window_size
-
-    @property
-    def csr_matrix(self):
-        """
-        ..note ::
-            If the LD matrix is not in-memory, then it'll be loaded using default settings.
-            This means that the matrix will be loaded as upper-triangular matrix with
-            default data type. To customize the loading, call the `.load(...)` method before
-            accessing the CSR matrix in this way.
-
-        :return: The in-memory CSR matrix object.
-        """
-        if self._mat is None:
-            warnings.warn("> Warning: Loading LD matrix with default settings. "
-                          "To customize, call the `.load(...)` method before invoking `.csr_matrix`.",
-                          stacklevel=2)
-            self.load()
-        return self._mat
 
     @property
     def data(self):
@@ -855,23 +839,31 @@ class LDMatrix(object):
         :return: The `data` array of the sparse `CSR` matrix, containing the entries of the LD matrix.
         """
         if self.in_memory:
-            return self.csr_matrix.data
+            return self._cached_lop.ld_data
         else:
             return self._zg['matrix/data']
+
+    @property
+    def leftmost_index(self):
+        """
+        :return: The index of the leftmost neighbor of each variant in the LD matrix.
+        """
+        if self.in_memory:
+            return self._cached_lop.leftmost_idx
+        else:
+            return np.arange(1, len(self.indptr) - 1)
 
     @property
     def indices(self):
         """
         :return: The column indices of the non-zero elements of the sparse, CSR representation of the LD matrix.
         """
-        if self.in_memory:
-            return self.csr_matrix.indices
-        else:
-            ld_bounds = self.ld_boundaries
 
-            from .stats.ld.c_utils import expand_ranges
+        ld_bounds = self.ld_boundaries
 
-            return expand_ranges(ld_bounds[0], ld_bounds[1], self.data.shape[0])
+        from .stats.ld.c_utils import expand_ranges
+
+        return expand_ranges(ld_bounds[0], ld_bounds[1], self.data.shape[0])
 
     @property
     def row_indices(self):
@@ -888,9 +880,16 @@ class LDMatrix(object):
         sparse CSR representation of the lD matrix.
         """
         if self.in_memory:
-            return self.csr_matrix.indptr
+            return self._cached_lop.ld_indptr
         else:
             return self._zg['matrix/indptr']
+
+    @property
+    def is_mask_set(self):
+        """
+        :return: A boolean flag indicating whether a mask is set for the LD matrix.
+        """
+        return self._mask is not None
 
     def get_long_range_ld_variants(self, return_value='snps'):
         """
@@ -988,17 +987,32 @@ class LDMatrix(object):
         :param mask: An array of indices or boolean mask for SNPs to retain.
         """
 
+        # Check that mask is a numpy array:
+        if not isinstance(mask, np.ndarray):
+            raise ValueError("Mask must be a numpy array.")
+
+        # Check that mask is either a boolean array or an array of indices:
+        if mask.dtype != bool and not np.issubdtype(mask.dtype, np.integer):
+            raise ValueError("Mask must be a boolean array or an array of indices.")
+
+        # If mask is a boolean array, ensure that it matches the number of stored SNPs:
+        if mask.dtype == bool and len(mask) != self.stored_n_snps:
+            raise ValueError("Boolean mask must have the same length as the number of stored SNPs.")
+
         # If the mask is equivalent to the current mask, return:
         if np.array_equal(mask, self._mask):
             return
 
-        # If the mask is boolean, convert to indices (should we?):
-        if mask.dtype == bool:
-            self._mask = np.where(mask)[0]
+        # If the mask consists of indices, convert to boolean mask:
+        if mask.dtype != bool:
+            self._mask = np.zeros(self.stored_n_snps, dtype=bool)
+            self._mask[mask] = True
         else:
             self._mask = mask
 
-        # If the data is already in memory, reload:
+        self._n_masked = np.sum(~self._mask)
+
+        # If the data has already been loaded to memory, reload:
         if self.in_memory:
             self.load(force_reload=True,
                       return_symmetric=self.is_symmetric,
@@ -1008,7 +1022,9 @@ class LDMatrix(object):
         """
         Reset the mask to its default value (None).
         """
+
         self._mask = None
+        self._n_masked = 0
 
         if self.in_memory:
             self.load(force_reload=True,
@@ -1034,15 +1050,17 @@ class LDMatrix(object):
 
         assert 0. < threshold <= 1.
 
-        if np.issubdtype(self.stored_dtype, np.integer):
-            threshold = quantize(np.array([threshold]), int_dtype=self.stored_dtype)[0]
+        if np.issubdtype(self.dtype, np.integer):
+            threshold = quantize(np.array([threshold]), int_dtype=self.dtype)[0]
 
         return prune_ld_ut(self.indptr[:], self.data[:], threshold)
 
-    def to_snp_table(self, col_subset=None):
+    def to_snp_table(self, col_subset=None, use_original_index=False):
         """
         :param col_subset: The subset of columns to add to the table. If None, it returns
         all available columns.
+        :param use_original_index: If True, it uses the original index of the SNPs in the LD matrix (
+        before applying any filters).
 
         :return: A `pandas` dataframe of the SNP attributes and metadata for variants
         included in the LD matrix.
@@ -1051,9 +1069,12 @@ class LDMatrix(object):
         col_subset = col_subset or ['CHR', 'SNP', 'POS', 'A1', 'A2', 'MAF', 'LDScore']
 
         # Create the index according to the original SNP order:
-        original_index = np.arange(len(self.stored_n_snps))
-        if self._mask is not None:
-            original_index = original_index[self._mask]
+        if use_original_index:
+            original_index = np.arange(self.stored_n_snps)
+            if self._mask is not None:
+                original_index = original_index[self._mask]
+        else:
+            original_index = None
 
         table = pd.DataFrame({'SNP': self.snps}, index=original_index)
 
@@ -1102,13 +1123,16 @@ class LDMatrix(object):
 
         if annotation_matrix is None:
             annotation_matrix = np.ones((self.n_snps, 1), dtype=np.float32)
+        else:
+            assert annotation_matrix.shape[0] == self.n_snps, ("Annotation matrix must have the same "
+                                                               "number of rows as the LD matrix.")
 
-        ld_scores = np.zeros((self.n_snps, annotation_matrix.shape[1]))
+        ld_scores = np.zeros((self.n_snps, annotation_matrix.shape[1]), dtype=np.float32)
 
         for chunk_idx in range(int(np.ceil(self.n_snps / chunk_size))):
 
             start_row = chunk_idx*chunk_size
-            end_row = (chunk_idx + 1)*chunk_size
+            end_row = min((chunk_idx + 1)*chunk_size, self.n_snps)
 
             csr_mat = self.load_data(start_row=start_row,
                                      end_row=end_row,
@@ -1152,9 +1176,9 @@ class LDMatrix(object):
         """
 
         if self.in_memory:
-            return self.csr_matrix.dot(vec)
+            return self._cached_lop.dot(vec)
         else:
-            ld_opr = self.get_linear_operator()
+            ld_opr = self.to_linear_operator()
             return ld_opr.dot(vec)
 
     def dot(self, vec):
@@ -1166,7 +1190,8 @@ class LDMatrix(object):
         !!! seealso "See Also"
             * [multiply][magenpy.LDMatrix.LDMatrix.multiply]
 
-        :return: The product of the LD matrix with the input vector.
+        :return: A numpy array that is the result of the matrix multiplication between
+        the LD matrix with the input vector.
 
         """
         return self.multiply(vec)
@@ -1185,10 +1210,10 @@ class LDMatrix(object):
 
         from scipy.sparse.linalg import svds
 
-        if self.in_memory and not np.issubdtype(self.dtype, np.integer):
-            mat = self.csr_matrix
+        if self.in_memory:
+            mat = self._cached_lop
         else:
-            mat = self.get_linear_operator()
+            mat = self.to_linear_operator()
 
         return svds(mat, **svds_kwargs)
 
@@ -1388,7 +1413,7 @@ class LDMatrix(object):
                     lambda_min = np.zeros(self.stored_n_snps)
                     lambda_min[merged_df['SNP_idx'].values] = merged_df['add_lam'].values
 
-                    if self._mask is not None:
+                    if self.is_mask_set:
                         lambda_min = lambda_min[self._mask]
 
                 elif aggregate == 'min_block':
@@ -1414,12 +1439,12 @@ class LDMatrix(object):
 
         return 2.*self._zg['matrix/data'].shape[0]*np.dtype(dtype).itemsize / 1024 ** 2
 
-    def get_total_stored_bytes(self):
+    def get_total_storage_size(self):
         """
         Estimate the storage size for all elements of the `LDMatrix` hierarchy,
         including the LD data arrays, metadata arrays, and attributes.
 
-        :return: The estimated size of the stored and compressed LDMatrix object in bytes.
+        :return: The estimated size of the stored and compressed LDMatrix object in MB.
         """
 
         total_bytes = 0
@@ -1436,7 +1461,7 @@ class LDMatrix(object):
         if hasattr(self.zarr_group, 'attrs'):
             total_bytes += len(str(dict(self.zarr_group.attrs)).encode('utf-8'))
 
-        return total_bytes
+        return total_bytes / 1024**2
 
     def get_metadata(self, key, apply_mask=True):
         """
@@ -1449,12 +1474,14 @@ class LDMatrix(object):
         :raises KeyError: if the metadata item is not set.
         """
         try:
-            if self._mask is not None and apply_mask:
-                return self._zg[f'metadata/{key}'][self._mask]
-            else:
-                return self._zg[f'metadata/{key}'][:]
+            metadata = self._zg[f'metadata/{key}'][:]
         except KeyError:
             raise KeyError(f"LD matrix metadata item {key} is not set!")
+
+        if self.is_mask_set and apply_mask:
+            metadata = metadata[self._mask]
+
+        return metadata
 
     def get_store_attr(self, attr):
         """
@@ -1487,7 +1514,7 @@ class LDMatrix(object):
 
     def set_metadata(self, key, value, overwrite=False):
         """
-        Set the metadata field associated with variants the LD matrix.
+        Set the metadata field associated with variants in the LD matrix.
         :param key: The key for the metadata item.
         :param value: The value for the metadata item (an array with the same length as the number of variants).
         :param overwrite: If True, overwrite the metadata item if it already exists.
@@ -1507,7 +1534,11 @@ class LDMatrix(object):
         else:
             dtype = str
 
-        meta.array(key, value, overwrite=overwrite, dtype=dtype, compressor=self.compressor)
+        meta.array(key,
+                   value,
+                   overwrite=overwrite,
+                   dtype=dtype,
+                   compressor=self.compressor)
 
     def update_rows_inplace(self, new_csr, start_row=None, end_row=None):
         """
@@ -1551,59 +1582,54 @@ class LDMatrix(object):
         else:
             self._zg['matrix/data'][data_start:data_end] = new_csr.data.astype(self.stored_dtype, copy=False)
 
-    def get_linear_operator(self,
-                            start_row=None,
-                            end_row=None,
-                            ld_data_dtype=None,
-                            **linop_kwargs):
+    def to_linear_operator(self, **load_kwargs):
         """
-        Use `scipy.sparse` interface to construct a `LinearOperator` object representing the LD matrix.
-        This is useful for performing various linear algebra routines on the LD matrix without
-        necessarily symmetrizing or de-quantizing it beforehand. For instance, this operator can
-        be used to compute matrix-vector products with the LD matrix, solve linear systems,
-        perform SVD, compute eigenvalues, etc.
+        Get the LD data as a `LDLinearOperator` object. This is useful for performing
+        linear algebra operations on the LD matrix efficiently.
 
         !!! seealso "See Also"
         * [LDLinearOperator][magenpy.LDMatrix.LDLinearOperator]
 
-        .. note ::
-            For now, start and end row positions are always with reference to the original matrix
-            (i.e. without applying any masks or filters).
+        :param load_kwargs: Additional keyword arguments to pass to the `load_data` method.
 
-        :param start_row: The start row to load to memory (if loading a subset of the matrix).
-        :param end_row: The end row (not inclusive) to load to memory (if loading a subset of the matrix).
-        :param ld_data_dtype: The data type for the entries of the LD matrix.
-        :param linop_kwargs: Keyword arguments to pass to the `LDLinearOperator` constructor.
-
-        :return: A scipy `LinearOperator` object representing the LD matrix.
+        :return: An `LDLinearOperator` object containing the LD data.
         """
 
-        ld_data = self.load_data(start_row=start_row,
-                                 end_row=end_row,
-                                 dtype=ld_data_dtype,
-                                 return_square=True)
+        if self.in_memory:
+            return self._cached_lop
+        else:
+            return self.load_data(**load_kwargs)
 
-        from .LDLinearOperator import LDLinearOperator
+    def to_csr(self, **load_kwargs):
+        """
+        Get the LD data as a `scipy.csr_matrix` object.
 
-        return LDLinearOperator(ld_data[1], ld_data[0], **linop_kwargs)
+        :param load_kwargs: Additional keyword arguments to pass to the `load_data` method.
+        :return: A `scipy.csr_matrix` object representing the LD matrix.
+        """
+
+        if self.in_memory:
+            return self._cached_lop.to_csr()
+        else:
+            return self.load_data(return_as_csr=True, **load_kwargs)
 
     def load_data(self,
                   start_row=None,
                   end_row=None,
                   dtype=None,
                   return_square=True,
+                  keep_original_shape=False,
                   return_symmetric=False,
-                  return_as_csr=False,
-                  keep_original_shape=False):
+                  return_as_csr=False):
         """
         A utility function to load and process the LD matrix data.
         This function is particularly useful for filtering, symmetrizing, and dequantizing the LD matrix
         after it's loaded to memory.
 
         .. note ::
-            Start and end row positions are always with reference to the stored on-disk LD matrix.
-
-        TODO: Implement caching mechanism for non-CSR-formatted data.
+            Start and end row positions are with reference to the stored on-disk LD matrix. This means
+            that the mask is not considered when defining the boundaries
+            based on the start and end row positions.
 
         :param start_row: The start row to load to memory (if loading a subset of the matrix).
         :param end_row: The end row (not inclusive) to load to memory (if loading a subset of the matrix).
@@ -1612,16 +1638,24 @@ class LDMatrix(object):
         conjunction with the `start_row` and `end_row` parameters. In particular, if `end_row` is less than the
         number of variants and `return_square=False`, then we return a rectangular slice of the LD matrix
         corresponding to the rows requested by the user.
+        :param keep_original_shape: If True, keep the original shape of the LD matrix. This is useful when
+        returning a subset of the matrix, but keeping the original shape.
         :param return_symmetric: If True, return a full symmetric representation of the LD matrix.
         :param return_as_csr: If True, return the data in the CSR format.
-        :param keep_original_shape: This flag is used in conjunction with the `return_as_csr` flag. If set to
-        True, we return the CSR matrix with the same shape as the original LD matrix, with the only
-        non-zero entries are those in the requested `start_row:end_row` region. If set to False, we return
-        a sub-matrix with the requested data only.
 
-        :return: A tuple of the index pointer array, the data array, and the leftmost index array. If
-        `return_as_csr` is set to True, we return the data as a CSR matrix instead.
+        :return: An LDLinearOperator object containing the LD data or a scipy CSR matrix (if
+        `return_as_csr` is set to `True`.
         """
+
+        # Sanity checking:
+
+        if start_row is not None:
+            assert 0. <= start_row < self.stored_n_snps
+        if end_row is not None:
+            assert 0. < end_row <= self.stored_n_snps
+
+        if keep_original_shape:
+            assert return_as_csr, "If keeping the original shape, the data must be returned as a CSR matrix."
 
         # -------------- Step 1: Preparing input data type --------------
         if dtype is None:
@@ -1640,7 +1674,6 @@ class LDMatrix(object):
         start_row = start_row or 0
         end_row = end_row or n_snps
 
-        assert start_row >= 0
         end_row = min(end_row, n_snps)
 
         # -------------- Step 2: Fetch the indptr array --------------
@@ -1664,14 +1697,14 @@ class LDMatrix(object):
         data = self._zg['matrix/data'][data_start:data_end]
 
         # Filter the data and index pointer arrays based on the mask (if set):
-        if self._mask is not None or (end_row < n_snps and return_square):
+        if self.is_mask_set or (end_row < n_snps and return_square):
 
             mask = np.zeros(n_snps, dtype=np.int8)
 
             # Two cases to consider:
 
             # 1) If the mask is not set:
-            if self._mask is None:
+            if not self.is_mask_set:
 
                 # If the returned matrix should be square:
                 if return_square:
@@ -1679,7 +1712,7 @@ class LDMatrix(object):
                 else:
                     mask[start_row:] = 1
 
-                new_size = end_row - start_row
+                new_nrows = end_row - start_row
             else:
                 # If the mask is set:
 
@@ -1690,11 +1723,11 @@ class LDMatrix(object):
                     mask[end_row:] = 0
 
                 # Compute new size:
-                new_size = mask[start_row:end_row].sum()
+                new_nrows = mask[start_row:end_row].sum()
 
             from .stats.ld.c_utils import filter_ut_csr_matrix_inplace
 
-            data, indptr = filter_ut_csr_matrix_inplace(indptr, data, mask[start_row:], new_size)
+            data, indptr = filter_ut_csr_matrix_inplace(indptr, data, mask[start_row:], new_nrows)
 
         # -------------- Step 4: Symmetrizing input matrix --------------
 
@@ -1719,9 +1752,20 @@ class LDMatrix(object):
             data = data.astype(dtype, copy=False)
 
         # ---------------------------------------------------------------------------
+        # Determine the shape of the data matrix:
+
+        if keep_original_shape:
+            shape = (n_snps, n_snps)
+        elif return_square or end_row == n_snps:
+            shape = (indptr.shape[0] - 1, indptr.shape[0] - 1)
+        else:
+            shape = (indptr.shape[0] - 1, n_snps)
+
+        # ---------------------------------------------------------------------------
         # Return the requested data:
 
         if return_as_csr:
+            # If the user requested the data as CSR matrix:
 
             from .stats.ld.c_utils import expand_ranges
             from scipy.sparse import csr_matrix
@@ -1731,15 +1775,11 @@ class LDMatrix(object):
                                     data.shape[0])
 
             if keep_original_shape:
-                shape = (n_snps, n_snps)
+                # TODO: Consider incorporating this in `LDLinearOperator.to_csr`
                 indices += start_row
                 indptr = np.concatenate([np.zeros(start_row, dtype=indptr.dtype),
                                          indptr,
                                          np.ones(n_snps - end_row, dtype=indptr.dtype) * indptr[-1]])
-            elif return_square or end_row == n_snps:
-                shape = (indptr.shape[0] - 1, indptr.shape[0] - 1)
-            else:
-                shape = (indptr.shape[0] - 1, n_snps)
 
             return csr_matrix(
                 (
@@ -1750,13 +1790,22 @@ class LDMatrix(object):
                 shape=shape,
                 dtype=dtype
             )
+
         else:
-            return data, indptr, leftmost_idx
+            # Otherwise, return as a linear operator:
+
+            return LDLinearOperator(
+                indptr,
+                data,
+                leftmost_idx,
+                symmetric=return_symmetric,
+                shape=shape
+            )
 
     def load(self,
              force_reload=False,
-             return_symmetric=True,
-             dtype=None):
+             return_symmetric=False,
+             dtype=None) -> LDLinearOperator:
 
         """
         Load the LD matrix from on-disk storage in the form of Zarr arrays to memory,
@@ -1777,76 +1826,42 @@ class LDMatrix(object):
         else:
             dtype = self.dtype
 
-        if not force_reload and self.in_memory and return_symmetric == self.is_symmetric:
+        if not force_reload and self.in_memory and return_symmetric == self._cached_lop.symmetric:
             # If the LD matrix is already in memory and the requested symmetry is the same,
             # then we don't need to reload the matrix. Here, we only transform its entries it to
             # conform to the requested data types of the user:
 
             # If the requested data type differs from the stored one, we need to cast the data:
-            if dtype is not None and self._mat.data.dtype != dtype:
+            if dtype is not None and self._cached_lop.ld_data_type != np.dtype(dtype):
 
-                if np.issubdtype(self._mat.data.dtype, np.floating) and np.issubdtype(dtype, np.floating):
+                if np.issubdtype(self._cached_lop.ld_data_type, np.floating) and np.issubdtype(dtype, np.floating):
                     # The user requested casting the data to different floating point precision:
-                    self._mat.data = self._mat.data.astype(dtype)
-                if np.issubdtype(self._mat.data.dtype, np.integer) and np.issubdtype(dtype, np.integer):
+                    self._cached_lop.ld_data = self._cached_lop.ld_data.astype(dtype)
+                if np.issubdtype(self._cached_lop.ld_data_type, np.integer) and np.issubdtype(dtype, np.integer):
                     # The user requested casting the data to different integer format:
-                    self._mat.data = quantize(dequantize(self._mat.data), int_dtype=dtype)
-                elif np.issubdtype(self._mat.data.dtype, np.floating) and np.issubdtype(dtype, np.integer):
+                    self._cached_lop.ld_data = quantize(dequantize(self._cached_lop.ld_data), int_dtype=dtype)
+                elif np.issubdtype(self._cached_lop.ld_data_type, np.floating) and np.issubdtype(dtype, np.integer):
                     # The user requested quantizing the data from floats to integers:
-                    self._mat.data = quantize(self._mat.data, int_dtype=dtype)
+                    self._cached_lop.ld_data = quantize(self._cached_lop.ld_data, int_dtype=dtype)
                 else:
-                    # The user requested de-quantizing the data from integers to floats:
-                    self._mat.data = dequantize(self._mat.data)
+                    # The user requested dequantizing the data from integers to floats:
+                    self._cached_lop.ld_data = dequantize(self._cached_lop.ld_data, float_dtype=dtype)
 
         else:
             # If we are re-loading the matrix, make sure to release the current one:
             self.release()
 
-            self._mat = self.load_data(return_symmetric=return_symmetric,
-                                       dtype=dtype,
-                                       return_as_csr=True)
+            self._cached_lop = self.load_data(return_symmetric=return_symmetric,
+                                              dtype=dtype)
 
-            # Update the flags:
-            self.in_memory = True
-            self.is_symmetric = return_symmetric
-
-        return self._mat
+        return self._cached_lop
 
     def release(self):
         """
-        Release the LD data from memory.
+        Release the LD data and associated arrays from memory.
         """
-        self._mat = None
-        self.in_memory = False
-        self.is_symmetric = False
+        self._cached_lop = None
         self.index = 0
-
-    def get_row(self, index, return_indices=False):
-        """
-        Extract a single row from the LD matrix.
-
-        :param index: The index of the row to extract.
-        :param return_indices: If True, return the indices of the non-zero elements of that row.
-
-        :return: The requested row of the LD matrix.
-        """
-
-        if self.in_memory:
-            row = self.csr_matrix.getrow(index)
-            if return_indices:
-                return row.data, row.indices
-            else:
-                return row.data
-        else:
-            indptr = self.indptr[:]
-            start_idx, end_idx = indptr[index], indptr[index + 1]
-            if return_indices:
-                return self.data[start_idx:end_idx], np.arange(
-                    index + 1,
-                    index + 1 + (indptr[index + 1] - indptr[index])
-                )
-            else:
-                return self.data[start_idx:end_idx]
 
     def validate_ld_matrix(self):
         """
@@ -1898,8 +1913,10 @@ class LDMatrix(object):
                     block_size_kb=None,
                     blocks=None,
                     min_block_size=2,
+                    max_block_size=None,
                     return_type='csr',
                     return_block_boundaries=False,
+                    dry_run=False,
                     **return_type_kwargs
                     ):
         """
@@ -1920,9 +1937,10 @@ class LDMatrix(object):
         :param blocks: An array or list specifying the block boundaries to iterate over.
         :param min_block_size: The minimum block size.
         :param return_type: The type of data to return. Options are 'csr', 'linop', or 'numpy'.
-        :param return_type_kwargs: Additional keyword arguments to pass to the return type constructor.
         :param return_block_boundaries: If True, return the boundaries of the generated blocks along with the
         LD data itself.
+        :param dry_run: If True, do not load the data, just return the block boundaries. Useful for debugging.
+        :param return_type_kwargs: Additional keyword arguments to pass to the return type constructor.
 
         """
 
@@ -1931,7 +1949,10 @@ class LDMatrix(object):
         assert min_block_size >= 1
 
         # Determine the block boundaries based on the input parameters:
-        n_snps = self.stored_n_snps
+        if self.in_memory:
+            n_snps = self.n_snps
+        else:
+            n_snps = self.stored_n_snps
 
         from .utils.compute_utils import generate_overlapping_windows
 
@@ -1947,21 +1968,47 @@ class LDMatrix(object):
         elif block_size_cm is not None or block_size_kb is not None:
 
             if block_size_cm is not None:
-                dist = self.get_metadata('cm', apply_mask=False)
-                windows = generate_overlapping_windows(dist, block_size_cm,
-                                                       block_size_cm, min_window_size=min_block_size)
+                dist = self.get_metadata('cm', apply_mask=self.in_memory)
+                block_size = block_size_cm
             else:
-                dist = self.get_metadata('bp', apply_mask=False) / 1000
-                windows = generate_overlapping_windows(dist, block_size_kb,
-                                                       block_size_kb, min_window_size=min_block_size)
+                dist = self.get_metadata('bp', apply_mask=self.in_memory) / 1000
+                block_size = block_size_kb
+
+            windows = generate_overlapping_windows(dist,
+                                                   block_size,
+                                                   block_size,
+                                                   min_window_size=min_block_size)
 
             block_iter = np.insert(windows[:, 1], 0, 0)
+        elif self.ld_estimator == 'windowed':
+
+            est_properties = self.estimator_properties
+
+            if 'Window size (cM)' in est_properties:
+                block_size = est_properties['Window size (cM)']
+                dist = self.get_metadata('cm', apply_mask=self.in_memory)
+            elif 'Window size (kb)' in est_properties:
+                block_size = est_properties['Window size (kb)']
+                dist = self.get_metadata('bp', apply_mask=self.in_memory) / 1000
+            else:
+                block_size = est_properties['Window size']
+                dist = np.arange(n_snps)
+
+            windows = generate_overlapping_windows(dist,
+                                                   block_size,
+                                                   block_size,
+                                                   min_window_size=min_block_size)
+
+            block_iter = np.insert(windows[:, 1], 0, 0)
+
         elif self.ld_estimator == 'block':
 
             from .utils.model_utils import map_variants_to_genomic_blocks
 
             variants_to_blocks = map_variants_to_genomic_blocks(
-                pd.DataFrame({'POS': self.get_metadata('bp', apply_mask=False)}).reset_index(),
+                pd.DataFrame({
+                    'POS': self.get_metadata('bp', apply_mask=self.in_memory)
+                }).reset_index(),
                 pd.DataFrame(np.array(self.estimator_properties['LD blocks']),
                              columns=['block_start', 'block_end'],
                              dtype=np.int32),
@@ -1969,9 +2016,21 @@ class LDMatrix(object):
             )
 
             block_iter = [0] + list(variants_to_blocks.groupby('block_end')['index'].max().values + 1)
-
         else:
             block_iter = [0, n_snps]
+
+        # If the maximum block size is specified by the user,
+        # then use the `split_block_boundaries` utility function to split
+        # blocks to conform to this constraint:
+        if max_block_size is not None:
+
+            from .utils.compute_utils import split_block_boundaries
+
+            block_iter = split_block_boundaries(
+                block_iter,
+                max_block_size,
+                mask=[self._mask, None][self.in_memory]
+            )
 
         mat = None
 
@@ -1981,20 +2040,156 @@ class LDMatrix(object):
             start = block_iter[bidx]
             end = block_iter[bidx + 1]
 
-            if return_type in ('csr', 'numpy'):
-                mat = self.load_data(start_row=start, end_row=end, return_as_csr=True, **return_type_kwargs)
-                if return_type == 'numpy':
-                    mat = mat.todense()
-            elif return_type == 'linop':
-                mat = self.get_linear_operator(start_row=start, end_row=end, **return_type_kwargs)
-
-            if mat.shape[0] == 0:
-                continue
-
-            if return_block_boundaries:
-                yield mat, (start, end)
+            if dry_run:
+                yield start, end
             else:
-                yield mat
+                # If the data is in memory, subset the data for the requested block:
+                if self.in_memory:
+
+                    if return_type == 'numpy':
+                        mat = self._cached_lop.to_numpy(start, end)
+                    elif return_type in ('csr', 'linop'):
+                        mat = self._cached_lop[start:end, start:end]
+                        if return_type == 'csr':
+                            mat = mat.to_csr()
+
+                else:
+
+                    mat = self.load_data(start_row=start,
+                                         end_row=end,
+                                         return_as_csr=return_type in ('csr', 'numpy'),
+                                         **return_type_kwargs)
+                    if return_type == 'numpy':
+                        mat = mat.todense()
+
+                if return_block_boundaries:
+                    yield mat, (start, end)
+                else:
+                    yield mat
+
+    def getrow(self, index, symmetric=False, return_indices=False):
+        """
+        Extract a single row from the LD matrix.
+
+        # TODO: Support extracting rows from the symmetric LD matrix.
+        # TODO: Verify that this is correct.
+
+        :param index: The index of the row to extract.
+        :param symmetric: If True, return a symmetric representation of the row (i.e. LD with
+        variants before and after the index variant).
+        :param return_indices: If True, return the indices of the non-zero elements of that row.
+
+        :return: The requested row of the LD matrix.
+        """
+
+        if symmetric:
+            raise NotImplementedError("Symmetric row extraction is not yet supported.")
+
+        if self.in_memory:
+            return self._cached_lop.getrow(index, symmetric=symmetric, return_indices=return_indices)
+        else:
+            start_idx, end_idx = self.indptr[index:index + 2]
+            data = self.data[start_idx:end_idx]
+
+            if return_indices:
+                return data, np.arange(
+                    index + 1,
+                    index + len(data)
+                )
+            else:
+                return data
+
+    def summary(self):
+        """
+        :return: A `pandas` dataframe with summary of the main attributes of the LD matrix.
+        """
+
+        return pd.DataFrame([
+            {'LD Matrix property': 'Chromosome', 'Value': self.chromosome},
+            {'LD Matrix property': 'Stored shape', 'Value': self.stored_shape},
+            {'LD Matrix property': 'Stored data type', 'Value': self.stored_dtype},
+            {'LD Matrix property': 'Stored entries', 'Value': self._zg['matrix/data'].shape[0]},
+            {'LD Matrix property': 'Path', 'Value': self.store.path},
+            {'LD Matrix property': 'In memory?', 'Value': self.in_memory},
+            {'LD Matrix property': 'Mask set?', 'Value': self.is_mask_set},
+            {'LD Matrix property': 'On-disk storage', 'Value': f'{self.get_total_storage_size():.3} MB'},
+            {'LD Matrix property': 'Estimated uncompressed size', 'Value': f'{self.estimate_uncompressed_size():.3} MB'}
+        ]).set_index('LD Matrix property')
+
+    def __repr__(self):
+        """
+        :return: A summary of the LDMatrix object as a string.
+        """
+        return self.summary().to_string()
+
+    def _repr_html_(self):
+        """
+        :return: A summary of the LDMatrix object as an HTML table.
+        """
+
+        styled_df = self.summary().style.set_table_attributes(
+            'class="dataframe" style="width: 50%"'
+        ).set_properties(**{
+            'text-align': 'left',
+            'white-space': 'normal',  # Allow text wrapping
+            'word-wrap': 'break-word',  # Break words at any character
+            'word-break': 'break-word',  # Allow breaking words when necessary
+            'font-size': '13px',
+            'padding': '10px 15px'
+        }).set_table_styles([
+            # Table border and design
+            {'selector': 'table', 'props': [
+                ('border-collapse', 'separate'),
+                ('border-spacing', '0px'),
+                ('border-radius', '5px'),
+                ('overflow', 'hidden'),
+                ('box-shadow', '0 2px 3px rgba(0,0,0,0.1)'),
+                ('margin', '20px 0'),
+                ('table-layout', 'fixed'),  # Fixed layout helps with word wrapping
+                ('width', '50%')  # Ensure table takes full width
+            ]},
+            # Header styling
+            {'selector': 'thead th', 'props': [
+                ('background-color', '#3b5f9e'),
+                ('color', 'white'),
+                ('font-weight', 'bold'),
+                ('text-align', 'left'),
+                ('padding', '12px 15px')
+            ]},
+            # Property name cells (index)
+            {'selector': 'tbody th', 'props': [
+                ('background-color', '#f8f9fa'),
+                ('color', '#333'),
+                ('font-weight', 'bold'),
+                ('border-bottom', '1px solid #eaeaea'),
+                ('text-align', 'left'),
+                ('padding', '10px 15px'),
+                ('width', '30%'),  # Control width of the property column
+                ('word-wrap', 'break-word'),
+                ('white-space', 'normal')
+            ]},
+            # Value cells
+            {'selector': 'tbody td', 'props': [
+                ('background-color', 'white'),
+                ('border-bottom', '1px solid #eaeaea'),
+                ('color', '#444'),
+                ('padding', '10px 15px'),
+                ('width', '70%'),  # Control width of the value column
+                ('word-wrap', 'break-word'),
+                ('white-space', 'normal'),
+                ('max-width', '0')  # Forces the cell to respect width constraints
+            ]},
+            # Alternating rows
+            {'selector': 'tbody tr:nth-of-type(odd) td', 'props': [
+                ('background-color', '#f8f9fa'),
+            ]},
+            # Hover effect on rows
+            {'selector': 'tbody tr:hover td, tbody tr:hover th', 'props': [
+                ('background-color', '#e8f0fe'),
+            ]}
+        ]).hide(axis='columns')
+
+        return styled_df._repr_html_()
 
     def __getstate__(self):
         return self.store.path, self.in_memory, self.is_symmetric, self._mask, self.dtype
@@ -2004,9 +2199,7 @@ class LDMatrix(object):
         path, in_mem, is_symmetric, mask, dtype = state
 
         self._zg = zarr.open_group(path, mode='r')
-        self.in_memory = in_mem
-        self.is_symmetric = is_symmetric
-        self._mat = None
+        self._cached_lop = None
         self.index = 0
         self._mask = None
 
@@ -2051,12 +2244,12 @@ class LDMatrix(object):
                 try:
                     index_1 = snps.index(item[0])
                 except ValueError:
-                    raise ValueError(f"Invalid SNP ID: {item[0]}")
+                    raise ValueError(f"Invalid variant rsID: {item[0]}")
 
                 try:
                     index_2 = snps.index(item[1])
                 except ValueError:
-                    raise ValueError(f"Invalid SNP ID: {item[1]}")
+                    raise ValueError(f"Invalid variant rsID: {item[1]}")
 
             else:
                 index_1, index_2 = item
@@ -2068,34 +2261,38 @@ class LDMatrix(object):
             if index_2 - index_1 > self.window_size[index_1]:
                 return 0.
             else:
-                row = self.get_row(index_1)
+                row = self.getrow(index_1)
                 return dq_scale*row[index_2 - index_1 - 1]
 
         if isinstance(item, int):
-            return dq_scale*self.get_row(item)
+            return dq_scale*self.getrow(item)
         elif isinstance(item, str):
             try:
                 index = self.snps.tolist().index(item)
             except ValueError:
-                raise ValueError(f"Invalid SNP ID: {item}")
+                raise ValueError(f"Invalid variant rsID: {item}")
 
-            return dq_scale*self.get_row(index)
+            return dq_scale*self.getrow(index)
 
     def __iter__(self):
         """
-        TODO: Add a flag to allow for chunked iterator, with limited memory footprint.
+        Iterate over the rows of the LD matrix.
+        This iterator supports fetching the rows of the LD matrix one by one from on-disk storage,
+        or, if the data is already loaded, it subsets the data for each row.
         """
         self.index = 0
-        self.load(return_symmetric=self.is_symmetric)
         return self
 
     def __next__(self):
+        """
+        Get the next row of the LD matrix.
+        """
 
         if self.index == len(self):
             self.index = 0
             raise StopIteration
 
-        next_item = self.get_row(self.index)
+        next_item = self.getrow(self.index)
         self.index += 1
 
         return next_item

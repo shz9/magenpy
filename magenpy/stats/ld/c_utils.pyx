@@ -35,6 +35,15 @@ cdef extern from "ld_utils.hpp" nogil:
     bint omp_supported() noexcept nogil
 
     void ld_matrix_dot[T, U, I](int c_size,
+              int* ld_left_bound,
+              I* ld_indptr,
+              U* ld_data,
+              T* vec,
+              T* out,
+              T dq_scale,
+              int threads) noexcept nogil
+
+    void ut_ld_matrix_dot[T, U, I](int c_size,
               I* ld_indptr,
               U* ld_data,
               T* vec,
@@ -56,7 +65,29 @@ cdef extern from "ld_utils.hpp" nogil:
                    int threads) noexcept nogil
 
 
-cpdef ld_dot(int_dtype[::1] ld_indptr,
+cpdef ld_dot(int[::1] ld_left_bound,
+             int_dtype[::1] ld_indptr,
+             noncomplex_numeric[::1] ld_data,
+             floating[::1] vec,
+             floating dq_scale = 1.,
+             int threads = 1):
+
+    cdef:
+        floating[::1] out = np.zeros_like(vec)
+
+    ld_matrix_dot(vec.shape[0],
+                  &ld_left_bound[0],
+                  &ld_indptr[0],
+                  &ld_data[0],
+                  &vec[0],
+                  &out[0],
+                  dq_scale,
+                  threads)
+
+    return np.asarray(out)
+
+
+cpdef ut_ld_dot(int_dtype[::1] ld_indptr,
              noncomplex_numeric[::1] ld_data,
              floating[::1] vec,
              floating dq_scale = 1.,
@@ -68,7 +99,7 @@ cpdef ld_dot(int_dtype[::1] ld_indptr,
     cdef:
         floating[::1] out = np.zeros_like(vec)
 
-    ld_matrix_dot(vec.shape[0],
+    ut_ld_matrix_dot(vec.shape[0],
                   &ld_indptr[0],
                   &ld_data[0],
                   &vec[0],
@@ -103,16 +134,8 @@ cpdef rank_one_update(int[::1] ld_left_bound,
         threads
     )
 
-
-cpdef find_tagging_variants(int[::1] variant_indices,
-                           int_dtype[::1] indptr,
-                           noncomplex_numeric[::1] data,
-                           noncomplex_numeric threshold):
-    """
-    TODO: Implement function to find tagging variants.
-    """
-    pass
-
+# -------------------------------------------------------------------------
+# Utilities for manipulating/interacting with generic numeric types:
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -125,6 +148,43 @@ cdef noncomplex_numeric numeric_abs(noncomplex_numeric x) noexcept nogil:
     if x < 0:
         return -x
     return x
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.exceptval(check=False)
+cdef noncomplex_numeric numeric_max(noncomplex_numeric x, noncomplex_numeric y) noexcept nogil:
+    """
+    Return maximum of two numeric values.
+    """
+    if x > y:
+        return x
+    return y
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.exceptval(check=False)
+cdef noncomplex_numeric numeric_min(noncomplex_numeric x, noncomplex_numeric y) noexcept nogil:
+    """
+    Return minimum of two numeric values.
+    """
+    if x < y:
+        return x
+    return y
+
+# -------------------------------------------------------------------------
+# Utilities for slicing, filtering, symmetrizing and interacting with the LD matrix:
+
+cpdef find_tagging_variants(int[::1] variant_indices,
+                           int_dtype[::1] indptr,
+                           noncomplex_numeric[::1] data,
+                           noncomplex_numeric threshold):
+    """
+    TODO: Implement function to find tagging variants.
+    """
+    pass
 
 cpdef prune_ld_ut(int_dtype[::1] indptr,
                   noncomplex_numeric[::1] data,
@@ -419,7 +479,7 @@ cpdef filter_ut_csr_matrix_inplace(int_dtype[::1] indptr,
         the diagonal + 1).
         2. The diagonal elements aren't present in the upper triangular matrix.
         
-    .. note::
+    !!! warning
         This function modifies the input data array inplace.
 
     :param indptr: The index pointer array for the CSR matrix to be filtered.
@@ -467,53 +527,133 @@ cpdef filter_ut_csr_matrix_inplace(int_dtype[::1] indptr,
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.exceptval(check=False)
-cpdef generate_data_mask_ut_csr_matrix(int_dtype[::1] indptr, char[::1] bool_mask):
+cpdef extract_block_from_ld_data(int[::1] ld_left_bound,
+                                 int_dtype[::1] indptr,
+                                 noncomplex_numeric[::1] data,
+                                 int block_start,
+                                 int block_end,
+                                 floating dq_scale):
     """
-    This is a utility function to generate a mask with the purpose of filtering 
-    the data array of upper-triangular CSR matrices. The function also generates a new 
-    index pointer (indptr) array that reflects the filter requested by the user.
-
-    The reason we have this implementation is to avoid row/column filtering with 
-    scipy's native functionality for CSR matrices, which involves using the `indices` 
-    array, which can take substantial amounts of memory that is not needed for 
-    matrices that have special structure, such as Linkage-Disequilibrium matrices.
-
+    Given LD data in the form of a CSR matrix represented by LDLinearOperator arrays, this function extracts 
+    a block from the matrix. The block is defined by the start and end indices of the rows to be included.
+    This implementation assumes that the non-zero elements are contiguous along the diagonal of each row.
+    
+    The function returns a symmetric numpy matrix of size 
+    (block_end - block_start) x (block_end - block_start) containing the data from this block.
+    
+    :param ld_left_bound: The leftmost column index for each row in the matrix.
     :param indptr: The index pointer array for the CSR matrix to be filtered.
-    :param bool_mask: A boolean mask of 0s and 1s represented as int8.
+    :param data: The data array for the CSR matrix to be filtered.
+    :param block_start: The start index of the block to be extracted.
+    :param block_end: The end index of the block to be extracted.
+    :param dq_scale: The scaling factor to apply to dequantize the data.
+    
+    :return: A symmetric numpy matrix containing the data from the block.
     """
-
 
     cdef:
-        int64_t i, curr_row, row_bound, new_indptr_idx = 1, curr_shape=indptr.shape[0] - 1
-        int64_t[::1] new_indptr = np.zeros(np.count_nonzero(bool_mask) + 1, dtype=np.int64)
-        char[::1] data_mask = np.zeros(indptr[curr_shape], dtype=np.int8)
+        int row_idx, col_idx, row, row_size, col_offset_start, col_offset_end, col_slice_size, block_size = block_end - block_start
+        int64_t data_offset
+        float[:, ::1] out = np.zeros((block_size, block_size), dtype=np.float32)
 
     with nogil:
-        # For each row in the current matrix:
-        for curr_row in range(curr_shape):
 
-            # If the row is to be included in the new matrix:
-            if bool_mask[curr_row]:
+        for row_idx in range(block_size):
 
-                # Useful quantity to convert the data array index `i` to the
-                # equivalent row index in the `bool` mask:
-                row_bound = curr_row - indptr[curr_row] + 1
+            # Determine the row in the original matrix:
+            row = block_start + row_idx
 
-                # For the new indptr array, copy the value from the previous row:
-                new_indptr[new_indptr_idx] = new_indptr[new_indptr_idx - 1]
+            # Determine the size of the row:
+            row_size = indptr[row + 1] - indptr[row]
 
-                # For each entry for this row in the data array
-                for i in range(indptr[curr_row], indptr[curr_row + 1]):
+            col_offset_start = row + 1 - ld_left_bound[row]
+            col_offset_end = numeric_min(ld_left_bound[row] + row_size, block_end) - ld_left_bound[row]
 
-                    # If the entry isn't filtered, make sure it's included in the new matrix
-                    # And increase the `indptr` by one unit:
-                    if bool_mask[row_bound + i]:
-                        data_mask[i] = 1
-                        new_indptr[new_indptr_idx] += 1
+            col_slice_size = col_offset_end - col_offset_start
 
-                new_indptr_idx += 1
+            # Compute the offset in the original data array:
+            data_offset = indptr[row] + (row + 1) - ld_left_bound[row] + col_offset_start
 
-    return np.asarray(data_mask).view(bool), np.asarray(new_indptr)
+            # Set the diagonal entry to 1:
+            out[row_idx, row_idx] = 1.
+
+            # Set the off-diagonal entries:
+            for j in range(col_slice_size):
+
+                # Determine the column index:
+                col_idx = row_idx + 1 + j
+
+                # Populate the output array:
+                out[row_idx, col_idx] = dq_scale*data[data_offset + j]
+                out[col_idx, row_idx] = out[row_idx, col_idx]
+
+    return np.asarray(out)
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.exceptval(check=False)
+cpdef slice_ld_data(int[::1] ld_left_bound,
+                    int_dtype[::1] indptr,
+                    noncomplex_numeric[::1] data,
+                    int row_start,
+                    int row_end,
+                    int col_start,
+                    int col_end):
+    """
+    A general method to slice LD data as represented in LDLinearOperator format, primarily
+    the leftmost column index, the index pointer array, and the data array. The function
+    take these input arrays and returns equivalent arrays with the sliced data.
+    
+    :param ld_left_bound: The leftmost column index for each row in the matrix.
+    :param indptr: The index pointer array for the CSR matrix to be filtered.
+    :param data: The data array for the CSR matrix to be filtered.
+    :param row_start: The start index of the rows to be included.
+    :param row_end: The end index of the rows to be included.
+    :param col_start: The start index of the columns to be included.
+    :param col_end: The end index of the columns to be included.
+    
+    :return: A tuple with the sliced leftmost column index, 
+    the sliced index pointer array, and the sliced data array.
+    """
+
+    cdef:
+        int row_idx, col_idx, row_size, col_offset_start, col_offset_end, col_slice_size, new_indptr_idx = 1
+        int_dtype row_offset
+        int64_t new_data_idx = 0
+        int32_t[::1] new_ld_left_bound = np.zeros(row_end - row_start, dtype=np.int32)
+        int64_t[::1] new_indptr = np.zeros(row_end - row_start + 1, dtype=np.int64)
+        noncomplex_numeric[::1] new_data = np.empty_like(data, shape=(indptr[row_end] - indptr[row_start], ))
+
+    with nogil:
+
+        for row_idx in range(row_start, row_end):
+
+            # The row offset in the old data array:
+            row_offset = indptr[row_idx]
+            # The row size in the old data array:
+            row_size = indptr[row_idx + 1] - row_offset
+
+            # Determine the offset for the columns depending on the column slice:
+            col_offset_start = numeric_max(ld_left_bound[row_idx], col_start) - ld_left_bound[row_idx]
+            col_offset_end = numeric_min(ld_left_bound[row_idx] + row_size, col_end) - ld_left_bound[row_idx]
+
+            col_slice_size = col_offset_end - col_offset_start
+
+            # Update the leftmost column index for the row:
+            new_ld_left_bound[new_indptr_idx - 1] = col_offset_start + ld_left_bound[row_idx] - row_start
+            # Copy the value from the previous row and add the number of columns in the slice:
+            new_indptr[new_indptr_idx] = new_indptr[new_indptr_idx - 1] + col_slice_size
+
+            for col_idx in range(col_offset_start, col_offset_end):
+                new_data[new_data_idx] = data[row_offset + col_idx]
+                new_data_idx += 1
+
+            new_indptr_idx += 1
+
+    return np.asarray(new_data)[:new_data_idx], np.asarray(new_indptr), np.asarray(new_ld_left_bound)
+
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -542,6 +682,10 @@ cpdef expand_ranges(int_dtype[::1] start, int_dtype[::1] end, int64_t output_siz
                 out_idx += 1
 
     return np.asarray(output)
+
+
+# -------------------------------------------------------------------------
+# LD Block Boundaries (for LD matrix computation)
 
 @cython.boundscheck(False)
 @cython.wraparound(False)

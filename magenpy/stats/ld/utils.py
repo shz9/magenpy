@@ -1,6 +1,7 @@
 import os
 import os.path as osp
 import copy
+from joblib import Parallel, delayed
 
 import pandas as pd
 import numpy as np
@@ -278,6 +279,96 @@ def compute_extremal_eigenvalues(mat, k=1, which='both', **eigsh_kwargs):
         return eig_result
     else:
         return eig_result[which]
+
+
+def multivariate_normal_conditional_sampling(ldm,
+                                             mean=None,
+                                             cov_scale=None,
+                                             size=None,
+                                             method='eigh',
+                                             threads=1,
+                                             seed=None,
+                                             max_block_size=500):
+    """
+    Perform conditional sampling from a multivariate normal distribution where the covariance
+    matrix is a linear scaling of the LD matrix. This function is useful for imputation or
+    generating synthetic data, with realistic LD structure.
+
+    The function generates a vector of dimension `n_snps` (i.e. the number of variants represented
+    in the LD matrix) with covariance structure determined by the LD matrix, according to the
+    following formula:
+
+    x ~ MVN(mean, cov_scale * LD)
+
+    where `mean` is the mean vector of the multivariate normal distribution, `cov_scale` is a scaling factor,
+    and `LD` is the LD matrix.
+
+    :param ldm: An `LDMatrix` object containing the LD matrix.
+    :param mean: The mean of the multivariate normal distribution.
+    :param cov_scale: The scaling factor for the covariance matrix.
+    :param size: The number of samples to generate.
+    :param method: The method to use for computing the factor matrix (see documentation for
+    `numpy.random.Generator.multivariate_normal`).
+    :param threads: The number of threads to use for parallel computation.
+    :param seed: The random seed for reproducibility.
+    :param max_block_size: The maximum block size to use for computing the conditional samples.
+
+    :return: A vector of samples from the conditional multivariate normal distribution.
+    """
+
+    if mean is not None:
+        assert mean.shape[0] == ldm.n_snps
+
+    if cov_scale is None:
+        cov_scale = 1.
+
+    rng = np.random.default_rng(seed)
+
+    def sample_block(cov):
+
+        try:
+            result = rng.multivariate_normal(np.zeros(cov.shape[0]),
+                                             cov,
+                                             check_valid='ignore',
+                                             size=size,
+                                             method=method)
+        except np.linalg.LinAlgError as e:
+            if method == 'cholesky':
+                # If cholesky, try again with eigen decomposition:
+                result = rng.multivariate_normal(np.zeros(cov.shape[0]),
+                                                 cov,
+                                                 size=size,
+                                                 method='eigh')
+            else:
+                raise e
+
+        del cov  # Free up memory
+        return result
+
+    parallel = Parallel(n_jobs=threads, backend='threading')
+
+    with parallel:
+        x = parallel(
+            delayed(sample_block)(cov_scale*cov_block) for cov_block in ldm.iter_blocks(
+                return_type='numpy',
+                return_symmetric=True,
+                dtype='float32',
+                max_block_size=max_block_size,
+            )
+        )
+
+    if size is not None:
+        x = np.concatenate(x, axis=1)
+    else:
+        x = np.concatenate(x)
+
+    if mean is not None:
+        return mean + x
+    else:
+        return x
+
+
+# -------------------------------------------------------------------------
 
 
 def shrink_ld_matrix(ld_mat_obj,
@@ -574,18 +665,19 @@ def compute_ld_xarray(genotype_matrix,
 
     assert isinstance(genotype_matrix, xarrayGenotypeMatrix)
 
-    g_data = genotype_matrix.xr_mat
+    g_data = genotype_matrix.xr_mat.data
 
     # Re-chunk the array to optimize computational speed and efficiency:
     # New chunksizes:
     new_chunksizes = (min(1024, g_data.shape[0]), min(1024, g_data.shape[1]))
-    g_data = g_data.chunk(dict(zip(g_data.dims, new_chunksizes)))
+    g_data = g_data.rechunk(new_chunksizes)
 
     from ..transforms.genotype import standardize
     import dask.array as da
 
     # Standardize the genotype matrix and fill missing data with zeros:
-    g_mat = standardize(g_data).data
+    g_mat = standardize(g_data)
+    g_mat = da.nan_to_num(g_mat)
 
     # Compute the full LD matrix and store to a temporary directory in the form of Zarr arrays:
     import warnings

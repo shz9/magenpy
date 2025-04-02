@@ -27,6 +27,7 @@ class SampleLD(object):
      :ivar genotype_matrix: The genotype matrix, an instance of `GenotypeMatrix` or its children.
      :ivar ld_boundaries: The LD boundaries for each variant in the LD matrix.
      :ivar temp_dir: A temporary directory to store intermediate files and results.
+     :ivar temp_dir_prefix: A prefix for the temporary directory.
 
     """
 
@@ -41,9 +42,8 @@ class SampleLD(object):
         self.genotype_matrix = genotype_matrix
         self.ld_boundaries = None
 
-        self.temp_dir = tempfile.TemporaryDirectory(dir=self.genotype_matrix.temp_dir.name,
-                                                    prefix='ld_').name
-        makedir(self.temp_dir)
+        self.temp_dir = self.genotype_matrix.temp_dir
+        self.temp_dir_prefix = self.genotype_matrix.temp_dir_prefix + 'ld_'
 
         # Ensure that the genotype matrix has data for a single chromosome only:
         if self.genotype_matrix.chromosome is None:
@@ -170,13 +170,16 @@ class SampleLD(object):
 
         assert str(dtype) in ('float32', 'float64', 'int8', 'int16')
 
+        # Create the temporary directory using tempfile:
+        temp_dir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix=self.temp_dir_prefix)
+
         ld_boundaries = self.compute_ld_boundaries()
 
         if isinstance(self.genotype_matrix, xarrayGenotypeMatrix):
             ld_mat = compute_ld_xarray(self.genotype_matrix,
                                        ld_boundaries,
                                        output_dir,
-                                       temp_dir=self.temp_dir,
+                                       temp_dir=temp_dir.name,
                                        overwrite=overwrite,
                                        delete_original=delete_original,
                                        dtype=dtype,
@@ -192,7 +195,7 @@ class SampleLD(object):
                                          output_dir,
                                          window_size_thersh,
                                          trim_boundaries=self.estimator_id not in ('sample', 'windowed'),
-                                         temp_dir=self.temp_dir,
+                                         temp_dir=temp_dir.name,
                                          overwrite=overwrite,
                                          dtype=dtype,
                                          compressor_name=compressor_name,
@@ -230,6 +233,7 @@ class SampleLD(object):
             })
 
         if ld_mat.validate_ld_matrix():
+            temp_dir.cleanup()
             return ld_mat
 
 
@@ -700,9 +704,11 @@ class BlockLD(SampleLD):
 
         # TODO: Parallelize this loop
 
+        temp_dir = tempfile.TemporaryDirectory(dir=self.temp_dir, prefix=self.temp_dir_prefix)
+
         for i, block_estimator in self._block_estimators.items():
 
-            block_output_dir = osp.join(self.genotype_matrix.temp_dir.name,
+            block_output_dir = osp.join(temp_dir.name,
                                         f'chr_{self.genotype_matrix.chromosome}_block_{i}/')
 
             makedir(block_output_dir)
@@ -723,7 +729,8 @@ class BlockLD(SampleLD):
         # the minimum eigenvalue from the blocks:
         if compute_spectral_properties:
 
-            extremal_eigs = pd.DataFrame([ld.get_store_attr('Spectral properties')['Extremal'] for ld in ld_mats])
+            extremal_eigs = pd.DataFrame([ld.get_store_attr('Spectral properties')['Extremal']
+                                          for ld in ld_mats])
             blocks = np.insert(np.cumsum([ld.stored_n_snps for ld in ld_mats]), 0, 0)
             block_starts = blocks[:-1]
             block_ends = blocks[1:]
@@ -768,5 +775,6 @@ class BlockLD(SampleLD):
             ld_mat.set_store_attr('Spectral properties', spectral_prop)
 
         if ld_mat.validate_ld_matrix():
+            temp_dir.cleanup()
             return ld_mat
 

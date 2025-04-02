@@ -7,6 +7,17 @@
 # $ source tests/conda_manual_testing.sh
 
 # ==============================================================================
+
+if [[ -t 1 ]]; then
+  set -e  # Enable exit on error, only in non-interactive sessions
+fi
+
+# Activate the base conda environment
+source activate base
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+echo "Running tests from: $SCRIPT_DIR"
+
 # Define Python versions (add more here if needed)
 python_versions=("3.8" "3.9" "3.10" "3.11" "3.12")
 
@@ -15,6 +26,8 @@ python_versions=("3.8" "3.9" "3.10" "3.11" "3.12")
 # Loop over Python versions
 for version in "${python_versions[@]}"
 do
+    echo -e "\n\n================================== Testing python $version =====================================\n\n"
+
     # Create a new conda environment for the Python version
     conda create --name "magenpy$version" python="$version" -y || return 1
 
@@ -29,7 +42,7 @@ do
 
     # Install magenpy
     make clean
-    python -m pip install --no-cache-dir -v -e .[test]
+    python -m pip install --no-cache-dir -e .[test]
 
     # List the installed packages:
     python -m pip list
@@ -37,13 +50,14 @@ do
     # Run pytest
     python -m pytest -v
 
-    # Check the installed scripts
-    magenpy_ld -h
-    magenpy_simulate -h
+    # Test the CLI scripts:
+    bash "$SCRIPT_DIR/test_cli.sh"
 
     # Deactivate the conda environment
     conda deactivate
 
     # Remove the conda environment
     conda env remove --name "magenpy$version" -y
+
+    echo -e "\n\n================================================================================================\n\n"
 done

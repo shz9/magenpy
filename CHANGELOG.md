@@ -5,15 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.5] - TBD
+## [0.1.5] - 2025-04-01
 
 ### Changed
 
+- Updated behavior of `.load` of `LDMatrix`. Now, by default it loads
+an `LDLinearOperator` object.
+  - Now the cached loaded data is in the form of a `LDLinearOperator` object.
+- Moved a lot of the functionality of converting LD data to `CSR` format 
+to the `LDLinearOperator`.
+- Removed printing where possible in the package and changed it to use 
+the `logging` module.
+- Resolved some issues in how the `pandas-plink` genotype matrix is 
+handled in case of splitting by chromosomes/variants.
+- Removed `fill_na` from the `standardize` method in `stats.transforms.genotype`.
+- Fixed how the package interfaces with `tempfile` to properly cleanup 
+temporary files/directories.
+- Made the tests for `LDMatrix` a bit more comprehensive.
+
 ### Added
 
+- Added preliminary tests to the CLI scripts (`magenpy_ld` and `magenpy_simulate`)
 - Support for block iterator for the `LDMatrix`.
 - `rank_one_update` for the `LDLinearOperator` class.
 - Unified method to map variants to genomic blocks `map_variants_to_genomic_blocks`.
+- Added `summary` method to `LDMatrix` to provide a summary of the LD matrix.
+- Added `__repr__` and `__repr_html__` methods to `LDMatrix`.
+- Added functionality to allow slicing of `LDLinearOperator` and outputting 
+subsets of the data as a numpy array directly.
+- Added implementation of the `PUMAS` procedure for sampling summary data 
+conditional on the LD matrix. Relevant functions: 
+  - `sumstats_train_test_split`
+  - `multivariate_normal_conditional_sampling`
+- Added a faster intersection implementation `intersect_multiple_arrays`.
+- Added preliminary `bedReaderGenotypeMatrix` to support using the `bed-reader`
+package as a backend (still needs more development and testing).
+- Added convenience method `setup_logger` to set up logging in the package.
+
 
 ## [0.1.4] - 2024-10-01
 

@@ -9,7 +9,7 @@
 FROM python:3.11-slim-buster
 
 LABEL authors="Shadi Zabad"
-LABEL version="0.1"
+LABEL version="0.1.5"
 LABEL description="Docker image containing all requirements to run the commandline scripts in the magenpy package"
 
 # Install system dependencies
@@ -41,3 +41,4 @@ RUN pip install --upgrade pip magenpy
 
 # Test the installation
 RUN magenpy_ld -h
+RUN magenpy_simulate -h

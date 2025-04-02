@@ -1,7 +1,9 @@
-dask<=2024.1.0  # Seen installation issues with newer versions
+dask<=2024.1.0  # Newer versions require pyarrow, which causes bloat/installation issues.
 scipy
-xarray<=2024.7.0
+#xarray # <=2024.7.0
+# bed-reader
 numpy<2
+joblib
 pandas
 pandas-plink
 psutil

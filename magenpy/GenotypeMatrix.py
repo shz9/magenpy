@@ -2,6 +2,7 @@ from typing import Union
 import tempfile
 import pandas as pd
 import numpy as np
+from .utils.system_utils import makedir
 from .SampleTable import SampleTable
 
 
@@ -62,16 +63,15 @@ class GenotypeMatrix(object):
         if snp_table is not None and 'original_index' not in self.snp_table.columns:
             self.snp_table['original_index'] = np.arange(len(self.snp_table))
 
-        from .utils.system_utils import makedir
-
-        makedir(temp_dir)
-
         temp_dir_prefix = 'gmat_'
 
         if self.chromosome is not None:
             temp_dir_prefix += f'chr{self.chromosome}_'
 
-        self.temp_dir = tempfile.TemporaryDirectory(dir=temp_dir, prefix=temp_dir_prefix)
+        self.temp_dir = temp_dir
+        self.temp_dir_prefix = temp_dir_prefix
+
+        makedir(self.temp_dir)
 
         self.bed_file = bed_file
         self._genome_build = genome_build
@@ -124,6 +124,14 @@ class GenotypeMatrix(object):
         :return: An array of sample IDs in the genotype matrix.
         """
         return self.sample_table.iid
+
+    @property
+    def sample_index(self):
+        return self.sample_table.table['original_index'].values
+
+    @property
+    def snp_index(self):
+        return self.snp_table['original_index'].values
 
     @property
     def m(self):
@@ -541,7 +549,7 @@ class GenotypeMatrix(object):
                 c: self.__class__(sample_table=self.sample_table,
                                   snp_table=chrom_tables.get_group(c),
                                   bed_file=self.bed_file,
-                                  temp_dir=self.temp_dir.name,
+                                  temp_dir=self.temp_dir,
                                   genome_build=self.genome_build,
                                   threads=self.threads)
                 for c in chrom_tables.groups
@@ -576,7 +584,7 @@ class GenotypeMatrix(object):
             group: self.__class__(sample_table=self.sample_table,
                                   snp_table=grouped_table.get_group(group).drop(columns='group'),
                                   bed_file=self.bed_file,
-                                  temp_dir=self.temp_dir.name,
+                                  temp_dir=self.temp_dir,
                                   genome_build=self.genome_build,
                                   threads=self.threads)
             for group in grouped_table.groups
@@ -587,10 +595,7 @@ class GenotypeMatrix(object):
         Clean up all temporary files and directories
         """
 
-        try:
-            self.temp_dir.cleanup()
-        except FileNotFoundError:
-            pass
+        pass
 
 
 class xarrayGenotypeMatrix(GenotypeMatrix):
@@ -651,11 +656,17 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
         """
 
         from pandas_plink import read_plink1_bin
+        import warnings
 
-        try:
-            xr_gt = read_plink1_bin(file_path + ".bed", ref="a0", verbose=False)
-        except ValueError:
-            xr_gt = read_plink1_bin(file_path, ref="a0", verbose=False)
+        # Ignore FutureWarning for now
+        with warnings.catch_warnings():
+
+            warnings.simplefilter("ignore")
+
+            try:
+                xr_gt = read_plink1_bin(file_path + ".bed", ref="a0", verbose=False)
+            except ValueError:
+                xr_gt = read_plink1_bin(file_path, ref="a0", verbose=False)
 
         # Set the sample table:
         sample_table = xr_gt.sample.coords.to_dataset().to_dataframe()
@@ -777,14 +788,18 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
 
         import dask.array as da
 
-        chunked_beta = da.from_array(beta, chunks=self.xr_mat.data.chunksize[1])
+        mat = self.xr_mat.data
+
+        chunked_beta = da.from_array(beta, chunks=mat.chunksize[1])
 
         if standardize_genotype:
             from .stats.transforms.genotype import standardize
-            pgs = da.dot(standardize(self.xr_mat).data, chunked_beta).compute()
+            mat = standardize(mat)
+            mat = da.nan_to_num(mat)
+            pgs = da.dot(mat, chunked_beta).compute()
         else:
             if skip_na:
-                pgs = da.dot(da.nan_to_num(self.xr_mat.data), chunked_beta).compute()
+                pgs = da.dot(da.nan_to_num(mat), chunked_beta).compute()
             else:
                 pgs = da.dot(self.xr_mat.fillna(self.maf).data, chunked_beta).compute()
 
@@ -845,10 +860,193 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
         split = super().split_by_variants(variant_group_dict)
 
         for g, gt in split.items():
-            gt.xr_mat = self.xr_mat.copy()
+            gt.xr_mat = self.xr_mat
             gt.filter_snps(extract_snps=gt.snps)
 
         return split
+
+
+class bedReaderGenotypeMatrix(GenotypeMatrix):
+    """
+    NOTE: Still experimental.
+    Requires more testing and fine-tuning.
+    """
+
+    def __init__(self,
+                 sample_table=None,
+                 snp_table=None,
+                 bed_file=None,
+                 temp_dir='temp',
+                 bed_reader=None,
+                 genome_build=None,
+                 threads=1):
+
+        super().__init__(sample_table=sample_table,
+                         snp_table=snp_table,
+                         temp_dir=temp_dir,
+                         bed_file=bed_file,
+                         genome_build=genome_build,
+                         threads=threads)
+
+        # The bed_reader object:
+        self.bed_reader = bed_reader
+
+    @classmethod
+    def from_file(cls, file_path, temp_dir='temp', **kwargs):
+
+        from bed_reader import open_bed
+
+        try:
+            bed_reader = open_bed(file_path)
+        except Exception as e:
+            raise e
+
+        # Set the sample table:
+        sample_table = pd.DataFrame({
+            'FID': bed_reader.fid,
+            'IID': bed_reader.iid,
+            'fatherID': bed_reader.father,
+            'motherID': bed_reader.mother,
+            'sex': bed_reader.sex,
+            'phenotype': bed_reader.pheno
+        }).astype({
+            'FID': str,
+            'IID': str,
+            'fatherID': str,
+            'motherID': str,
+            'sex': float,
+            'phenotype': float
+        })
+
+        sample_table['phenotype'] = sample_table['phenotype'].replace({-9.: np.nan})
+        sample_table = sample_table.reset_index()
+
+        # Set the snp table:
+        snp_table = pd.DataFrame({
+            'CHR': bed_reader.chromosome,
+            'SNP': bed_reader.sid,
+            'cM': bed_reader.cm_position,
+            'POS': bed_reader.bp_position,
+            'A1': bed_reader.allele_1,
+            'A2': bed_reader.allele_2
+        }).astype({
+            'CHR': int,
+            'SNP': str,
+            'cM': np.float32,
+            'POS': np.int32,
+            'A1': str,
+            'A2': str
+        })
+
+        g_mat = cls(sample_table=SampleTable(sample_table),
+                    snp_table=snp_table,
+                    temp_dir=temp_dir,
+                    bed_reader=bed_reader,
+                    **kwargs)
+
+        return g_mat
+
+    def score(self, beta, standardize_genotype=False, skip_na=True):
+        """
+        Perform linear scoring on the genotype matrix.
+        :param beta: A vector or matrix of effect sizes for each variant in the genotype matrix.
+        :param standardize_genotype: If True, standardize the genotype when computing the polygenic score.
+        :param skip_na: If True, skip missing values when computing the polygenic score.
+        """
+
+        if len(beta.shape) > 1:
+            pgs = np.zeros((self.n, beta.shape[1]))
+        else:
+            pgs = np.zeros(self.n)
+
+        if standardize_genotype:
+            from .stats.transforms.genotype import standardize
+            for (start, end), chunk in self._iter_col_chunks(return_slice=True):
+                pgs += standardize(chunk).dot(beta[start:end])
+        else:
+            for (start, end), chunk in self._iter_col_chunks(return_slice=True):
+                if skip_na:
+                    chunk_pgs = np.nan_to_num(chunk).dot(beta[start:end])
+                else:
+                    chunk_pgs = np.where(np.isnan(chunk), self.maf[start:end], chunk).dot(beta[start:end])
+
+                pgs += chunk_pgs
+
+        return pgs
+
+    def perform_gwas(self, **gwa_kwargs):
+        """
+        Perform genome-wide association testing of all variants against the phenotype.
+
+        TODO: Implement this method...
+
+        :param gwa_kwargs: Keyword arguments to pass to the GWA functions. Consult `stats.gwa.utils`
+        """
+
+        raise NotImplementedError
+
+    def compute_allele_frequency(self):
+        """
+        Compute the allele frequency of each variant or SNP in the genotype matrix.
+        """
+        self.snp_table['MAF'] = (np.concatenate([np.nansum(bed_chunk, axis=0)
+                                                 for bed_chunk in self._iter_col_chunks()]) / (2. * self.n_per_snp))
+
+    def compute_sample_size_per_snp(self):
+        """
+        Compute the sample size for each variant in the genotype matrix, accounting for
+        potential missing values.
+        """
+
+        self.snp_table['N'] = self.n - np.concatenate([np.sum(np.isnan(bed_chunk), axis=0)
+                                                       for bed_chunk in self._iter_col_chunks()])
+
+    def _iter_row_chunks(self, chunk_size='auto', return_slice=False):
+        """
+        Iterate over the genotype matrix by rows.
+
+        :param chunk_size: The size of the chunk to read from the genotype matrix.
+        :param return_slice: If True, return the slice of the genotype matrix corresponding to the chunk.
+
+        :return: A generator that yields chunks of the genotype matrix.
+        """
+        if chunk_size == 'auto':
+            matrix_size = self.estimate_memory_allocation()
+            # By default, we allocate 128MB per chunk:
+            chunk_size = int(self.n // (matrix_size // 128))
+
+        for i in range(int(np.ceil(self.n / chunk_size))):
+            start, end = int(i * chunk_size), min(int((i + 1) * chunk_size), self.n)
+            chunk = self.bed_reader.read(np.s_[self.sample_index[start:end], self.snp_index],
+                                         num_threads=self.threads)
+            if return_slice:
+                yield (start, end), chunk
+            else:
+                yield chunk
+
+    def _iter_col_chunks(self, chunk_size='auto', return_slice=False):
+        """
+        Iterate over the genotype matrix by columns.
+
+        :param chunk_size: The size of the chunk to read from the genotype matrix.
+        :param return_slice: If True, return the slice of the genotype matrix corresponding to the chunk.
+
+        :return: A generator that yields chunks of the genotype matrix.
+        """
+
+        if chunk_size == 'auto':
+            matrix_size = self.estimate_memory_allocation()
+            # By default, we allocate 128MB per chunk:
+            chunk_size = int(self.m // (matrix_size // 128))
+
+        for i in range(int(np.ceil(self.m / chunk_size))):
+            start, end = int(i * chunk_size), min(int((i + 1) * chunk_size), self.m)
+            chunk = self.bed_reader.read(np.s_[self.sample_index, self.snp_index[start:end]],
+                                         num_threads=self.threads)
+            if return_slice:
+                yield (start, end), chunk
+            else:
+                yield chunk
 
 
 class plinkBEDGenotypeMatrix(GenotypeMatrix):
@@ -929,11 +1127,17 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
         from .stats.score.utils import score_plink2
 
         # Create a temporary directory where we store intermediate results:
-        tmp_score_dir = tempfile.TemporaryDirectory(dir=self.temp_dir.name, prefix='score_')
+        tmp_score_dir = tempfile.TemporaryDirectory(dir=self.temp_dir,
+                                                    prefix=self.temp_dir_prefix + 'score_')
 
-        return score_plink2(self, beta,
-                            standardize_genotype=standardize_genotype,
-                            temp_dir=tmp_score_dir.name)
+        plink_score = score_plink2(self,
+                                   beta,
+                                   standardize_genotype=standardize_genotype,
+                                   temp_dir=tmp_score_dir.name)
+
+        tmp_score_dir.cleanup()
+
+        return plink_score
 
     def perform_gwas(self, **gwa_kwargs):
         """
@@ -947,9 +1151,14 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
         from .stats.gwa.utils import perform_gwa_plink2
 
         # Create a temporary directory where we store intermediate results:
-        tmp_gwas_dir = tempfile.TemporaryDirectory(dir=self.temp_dir.name, prefix='gwas_')
+        tmp_gwas_dir = tempfile.TemporaryDirectory(dir=self.temp_dir,
+                                                   prefix=self.temp_dir_prefix + 'gwas_')
 
-        return perform_gwa_plink2(self, temp_dir=tmp_gwas_dir.name, **gwa_kwargs)
+        plink_gwa = perform_gwa_plink2(self, temp_dir=tmp_gwas_dir.name, **gwa_kwargs)
+
+        tmp_gwas_dir.cleanup()
+
+        return plink_gwa
 
     def compute_allele_frequency(self):
         """
@@ -961,9 +1170,12 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
         from .stats.variant.utils import compute_allele_frequency_plink2
 
         # Create a temporary directory where we store intermediate results:
-        tmp_freq_dir = tempfile.TemporaryDirectory(dir=self.temp_dir.name, prefix='freq_')
+        tmp_freq_dir = tempfile.TemporaryDirectory(dir=self.temp_dir,
+                                                   prefix=self.temp_dir_prefix + 'freq_')
 
         self.snp_table['MAF'] = compute_allele_frequency_plink2(self, temp_dir=tmp_freq_dir.name)
+
+        tmp_freq_dir.cleanup()
 
     def compute_sample_size_per_snp(self):
         """
@@ -977,6 +1189,9 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
         from .stats.variant.utils import compute_sample_size_per_snp_plink2
 
         # Create a temporary directory where we store intermediate results:
-        tmp_miss_dir = tempfile.TemporaryDirectory(dir=self.temp_dir.name, prefix='miss_')
+        tmp_miss_dir = tempfile.TemporaryDirectory(dir=self.temp_dir,
+                                                   prefix=self.temp_dir_prefix + 'miss_')
 
         self.snp_table['N'] = compute_sample_size_per_snp_plink2(self, temp_dir=tmp_miss_dir.name)
+
+        tmp_miss_dir.cleanup()
