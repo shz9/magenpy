@@ -1837,7 +1837,7 @@ class LDMatrix(object):
                 if np.issubdtype(self._cached_lop.ld_data_type, np.floating) and np.issubdtype(dtype, np.floating):
                     # The user requested casting the data to different floating point precision:
                     self._cached_lop.ld_data = self._cached_lop.ld_data.astype(dtype)
-                if np.issubdtype(self._cached_lop.ld_data_type, np.integer) and np.issubdtype(dtype, np.integer):
+                elif np.issubdtype(self._cached_lop.ld_data_type, np.integer) and np.issubdtype(dtype, np.integer):
                     # The user requested casting the data to different integer format:
                     self._cached_lop.ld_data = quantize(dequantize(self._cached_lop.ld_data), int_dtype=dtype)
                 elif np.issubdtype(self._cached_lop.ld_data_type, np.floating) and np.issubdtype(dtype, np.integer):
