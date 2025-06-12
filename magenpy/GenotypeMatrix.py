@@ -658,6 +658,33 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
         from pandas_plink import read_plink1_bin
         import warnings
 
+        def convert_string_python_to_numpy(ds):
+            """
+            Convert PandasExtension string[python] coordinates to numpy arrays of
+            objects instead. This is a hack to get around issues with copying
+            xarray datasets that contain string coordinates.
+
+            See here: https://github.com/pydata/xarray/issues/9742
+            """
+
+            coord_updates = {}
+
+            for coord_name, coord in ds.coords.items():
+                if hasattr(coord, 'data') and hasattr(coord.data, 'dtype'):
+                    if str(coord.data.dtype) == 'string' or 'string[python]' in str(coord.data.dtype):
+                        try:
+                            # Convert to numpy unicode strings
+                            numpy_strings = coord.data.to_numpy(dtype=None, na_value='')
+                            # This will be a U<n> dtype where n is auto-determined
+                            coord_updates[coord_name] = (coord.dims, numpy_strings, coord.attrs)
+                        except Exception as e:
+                            print(f"Failed to convert {coord_name}: {e}")
+
+            if coord_updates:
+                return ds.assign_coords(coord_updates)
+
+            return ds
+
         # Ignore FutureWarning for now
         with warnings.catch_warnings():
 
@@ -667,6 +694,8 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
                 xr_gt = read_plink1_bin(file_path + ".bed", ref="a0", verbose=False)
             except ValueError:
                 xr_gt = read_plink1_bin(file_path, ref="a0", verbose=False)
+
+            xr_gt = convert_string_python_to_numpy(xr_gt)
 
         # Set the sample table:
         sample_table = xr_gt.sample.coords.to_dataset().to_dataframe()

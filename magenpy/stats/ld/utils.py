@@ -118,7 +118,7 @@ def combine_ld_matrices(ld_matrices, output_dir, overwrite=True, delete_original
     return LDMatrix(z)
 
 
-def clump_snps(ldm,
+def clump_snps(ldm: LDMatrix,
                statistic=None,
                rsq_threshold=.9,
                extract=True,
@@ -128,6 +128,9 @@ def clump_snps(ldm,
     on the `stat` vector (usually p-value) and the provided r-squared threshold.
     If two SNPs have an r-squared greater than the threshold,
     the SNP with the higher `stat` value is excluded.
+
+    TODO: Do more testing and come up with more efficient solutions.
+    Perhaps moving the function to cython.
 
     :param ldm: An LDMatrix object
     :param statistic: A vector of statistics (e.g. p-values) for each SNP that will determine which SNPs to discard.
@@ -139,41 +142,45 @@ def clump_snps(ldm,
     :return: A list of SNP rsIDs that are left after clumping (or discarded if `extract=False`).
     """
 
-    snps = ldm.snps
-
     if statistic is None:
         # if a statistic is not provided, then clump SNPs based on their base pair order,
         # meaning that if two SNPs are highly correlated, we keep the one with smaller base pair position.
         statistic = ldm.bp_position
     else:
-        assert len(statistic) == len(snps)
+        assert len(statistic) == ldm.n_snps
 
     if sort_key is not None:
         sort_key = lambda x: sort_key(statistic[x])
-
-    sorted_idx = sorted(range(len(ldm)), key=sort_key)
+        sorted_idx = sorted(range(len(ldm)), key=sort_key)
+    else:
+        sorted_idx = range(len(ldm))
 
     snps = ldm.snps
-    keep_snps_dict = dict(zip(snps, np.ones(len(snps), dtype=bool)))
+    keep_snps = np.ones(len(snps), dtype=bool)
+
+    symm_ld = ldm.to_csr(return_symmetric=True, dtype='float32')
 
     for idx in sorted_idx:
 
-        if not keep_snps_dict[snps[idx]]:
+        if not keep_snps[idx]:
             continue
 
-        r, indices = ldm.get_row(idx, return_indices=True)
+        r = symm_ld.getrow(idx).toarray().flatten()
         # Find the SNPs that we need to remove:
         # We remove SNPs whose squared correlation coefficient with the index SNP is
         # greater than the specified rsq_threshold:
-        snps_to_remove = snps[indices[np.where(r**2 > rsq_threshold)[0]]]
+        idx_to_remove = np.where((r**2 > rsq_threshold) & keep_snps)[0]
 
-        # Update the `keep_snps_dict` dictionary:
-        keep_snps_dict.update(dict(zip(snps_to_remove, np.zeros(len(snps_to_remove), dtype=bool))))
+        if len(idx_to_remove) > 0:
+            keep_snps[idx_to_remove] = False
+            # The variant has perfect correlation with itself,
+            # so we need to correct for that here:
+            keep_snps[idx] = True
 
     if extract:
-        return [snp for snp, cond in keep_snps_dict.items() if cond]
+        return snps[keep_snps]
     else:
-        return [snp for snp, cond in keep_snps_dict.items() if not cond]
+        return snps[~keep_snps]
 
 
 def expand_snps(seed_snps, ldm, rsq_threshold=0.9):
@@ -181,6 +188,9 @@ def expand_snps(seed_snps, ldm, rsq_threshold=0.9):
     Given an initial set of SNPs, expand the set by adding
     "neighbors" whose squared correlation with the is higher than
     a user-specified threshold.
+
+    !!! warnings
+        This code is incomplete and untested.
 
     :param seed_snps: An iterable containing initial set of SNP rsIDs.
     :param ldm: An `LDMatrix` object containing SNP-by-SNP correlations.
@@ -198,7 +208,7 @@ def expand_snps(seed_snps, ldm, rsq_threshold=0.9):
     final_set = set(seed_snps)
 
     for idx in snp_seed_idx:
-        r, indices = ldm.get_row(idx, return_indices=True)
+        r, indices = ldm.getrow(idx, return_indices=True)
         final_set = final_set.union(set(ldm_snps[indices[np.where(r**2 > rsq_threshold)[0]]]))
 
     return list(final_set)

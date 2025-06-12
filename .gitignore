@@ -43,4 +43,5 @@ pip-delete-this-directory.txt
 *.zarr
 *.npz
 *.log
+*.DS_Store
 **/temp

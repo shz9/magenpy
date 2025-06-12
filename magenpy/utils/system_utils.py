@@ -206,6 +206,10 @@ def makedir(dirs):
         dirs = [dirs]
 
     for dir_l in dirs:
+
+        if len(dir_l) < 1:
+            continue
+
         try:
             os.makedirs(dir_l)
         except OSError as e:

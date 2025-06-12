@@ -291,7 +291,8 @@ class PhenotypeSimulator(GWADataLoader):
         assert self.beta is not None
 
         # Compute the polygenic score given the simulated/provided beta:
-        pgs = self.score(self.beta)
+        # NOTE: For this formulation to work, it's important to standardize the genotype.
+        pgs = self.score(self.beta, standardize_genotype=True)
 
         # Sample the environmental/residual component:
         e = np.random.normal(loc=0., scale=np.sqrt(1. - self.h2), size=self.sample_size)
