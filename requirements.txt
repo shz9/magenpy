@@ -2,7 +2,7 @@ dask<=2024.1.0  # Newer versions require pyarrow, which causes bloat/installatio
 scipy
 #xarray # <=2024.7.0
 #bed-reader
-numpy
+numpy<2
 joblib
 pandas
 pandas-plink
