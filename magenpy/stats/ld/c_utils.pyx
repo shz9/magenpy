@@ -182,17 +182,103 @@ cpdef find_tagging_variants(int[::1] variant_indices,
                            noncomplex_numeric[::1] data,
                            noncomplex_numeric threshold):
     """
-    TODO: Implement function to find tagging variants.
+    Find variants that are in LD (in absolute value) with a set of focal variants.
+
+    The function assumes that LD is stored in upper-triangular CSR format without the diagonal,
+    with row entries contiguous around the diagonal.
+
+    :param variant_indices: Indices of focal variants to start the search from.
+    Assumed to be valid indices in `[0, n_variants)`.
+    :param indptr: Index pointer array for the upper-triangular CSR matrix.
+    :param data: Data array for the upper-triangular CSR matrix.
+    :param threshold: Absolute LD threshold.
+    :return: A boolean mask of length `n_variants` marking tagging variants.
     """
-    pass
+
+    cdef:
+        int64_t i, focal, n_variants = indptr.shape[0] - 1
+        int64_t neigh_row, row_size, data_idx
+        int32_t neigh_offset
+        int32_t[::1] leftmost_idx = get_leftmost_index(indptr)
+        char[::1] tagging = np.zeros(n_variants, dtype=np.int8)
+
+    with nogil:
+        # Tag all valid seeds first.
+        for i in range(variant_indices.shape[0]):
+            focal = variant_indices[i]
+            tagging[focal] = 1
+
+        for i in range(variant_indices.shape[0]):
+            focal = variant_indices[i]
+
+            # Backward neighbors: rows whose upper-triangular entries can reach `focal`.
+            for neigh_row in range(leftmost_idx[focal], focal):
+                if tagging[neigh_row] == 0:
+                    row_size = indptr[neigh_row + 1] - indptr[neigh_row]
+                    neigh_offset = focal - neigh_row - 1
+
+                    if neigh_offset < row_size:
+                        data_idx = indptr[neigh_row] + neigh_offset
+                        if numeric_abs(data[data_idx]) >= threshold:
+                            tagging[neigh_row] = 1
+
+            # Forward neighbors: directly stored in focal row.
+            row_size = indptr[focal + 1] - indptr[focal]
+            for neigh_offset in range(row_size):
+                neigh_row = focal + neigh_offset + 1
+                if tagging[neigh_row] == 0:
+                    data_idx = indptr[focal] + neigh_offset
+                    if numeric_abs(data[data_idx]) >= threshold:
+                        tagging[neigh_row] = 1
+
+    return np.asarray(tagging).view(bool)
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.exceptval(check=False)
+cpdef get_leftmost_index(int_dtype[::1] indptr):
+    """
+    Given the index pointer array from an upper triangular CSR matrix (without the diagonal),
+    return the index of the leftmost neighbor for each row in the equivalent symmetric matrix.
+
+    :param indptr: The index pointer array for the upper triangular CSR matrix.
+    :return: An integer array with the leftmost index for each row.
+    """
+
+    # Determine the rightmost element for every row:
+    rightmost = np.diff(indptr).astype(np.int32) + np.arange(indptr.shape[0] - 1, dtype=np.int32)
+
+    # Get unique boundaries:
+    uniq_res = np.unique(rightmost, return_index=True)
+
+    # Loop over rows to get the leftmost index:
+    cdef:
+        int32_t curr_row, shape=rightmost.shape[0]
+        int32_t[::1] leftmost = np.zeros(shape, dtype=np.int32)
+        int32_t[::1] uniq_rightmost = uniq_res[0]
+        int32_t[::1] rightmost_first_idx = uniq_res[1].astype(np.int32)
+        int32_t rightmost_idx = 0, uniq_rightmost_size = uniq_res[0].shape[0]
+
+    with nogil:
+        for curr_row in range(shape):
+
+            if curr_row > uniq_rightmost[rightmost_idx] and rightmost_idx < uniq_rightmost_size - 1:
+                rightmost_idx += 1
+
+            leftmost[curr_row] = rightmost_first_idx[rightmost_idx]
+
+    return np.asarray(leftmost)
 
 cpdef prune_ld_ut(int_dtype[::1] indptr,
                   noncomplex_numeric[::1] data,
-                  noncomplex_numeric r_threshold):
+                  noncomplex_numeric r_threshold,
+                  int[::1] variant_order=None):
     """
     Pass over the LD matrix once and prune it so that variants whose absolute correlation coefficient is above 
     or equal to a certain threshold are filtered away. If two variants are highly correlated, 
-    this function keeps the one that occurs earlier in the matrix. 
+    this function keeps the one that occurs earlier in the pruning order.
     
     This function works with LD matrices in any data type 
     (quantized to integers or floats), but it is the user's responsibility to set the appropriate 
@@ -200,31 +286,64 @@ cpdef prune_ld_ut(int_dtype[::1] indptr,
     
     !!! note 
         This function assumes that the LD matrix is in upper triangular form and doesn't include the 
-        diagonal. We will try to generalize this implementation later.
+        diagonal and that entries are contiguous around the diagonal.
     
     :param indptr: The index pointer array for the CSR matrix to be pruned.
     :param data: The data array for the CSR matrix to be pruned.
     :param r_threshold: The Pearson Correlation coefficient threshold above which to prune variants.
+    :param variant_order: Optional pruning order. If not provided, matrix order is used.
     
     :return: An boolean array of which variants are kept after pruning.
     """
 
     cdef:
         int64_t i, curr_row, curr_row_size, curr_data_idx, curr_shape=indptr.shape[0]-1
+        int64_t neigh_row, neigh_row_size, neigh_data_idx
+        int32_t neigh_offset
+        bint use_variant_order = variant_order is not None
         char[::1] keep = np.ones(curr_shape, dtype=np.int8)
+        int32_t[::1] leftmost_idx = np.zeros(curr_shape, dtype=np.int32)
+
+    if use_variant_order:
+        leftmost_idx = get_leftmost_index(indptr)
 
     with nogil:
-        for curr_row in range(curr_shape):
+        if not use_variant_order:
+            for curr_row in range(curr_shape):
 
-            if keep[curr_row] == 1:
+                if keep[curr_row] == 1:
 
-                curr_row_size = indptr[curr_row + 1] - indptr[curr_row]
+                    curr_row_size = indptr[curr_row + 1] - indptr[curr_row]
 
-                for i in range(curr_row_size):
-                    curr_data_idx = indptr[curr_row] + i
+                    for i in range(curr_row_size):
+                        curr_data_idx = indptr[curr_row] + i
 
-                    if numeric_abs(data[curr_data_idx]) >= r_threshold:
-                        keep[curr_row + i + 1] = 0
+                        if numeric_abs(data[curr_data_idx]) >= r_threshold:
+                            keep[curr_row + i + 1] = 0
+        else:
+            for i in range(curr_shape):
+                curr_row = variant_order[i]
+
+                if keep[curr_row] == 1:
+                    # Prune backward neighbors of curr_row:
+                    for neigh_row in range(leftmost_idx[curr_row], curr_row):
+                        neigh_row_size = indptr[neigh_row + 1] - indptr[neigh_row]
+                        neigh_offset = curr_row - neigh_row - 1
+
+                        if neigh_offset < neigh_row_size:
+                            neigh_data_idx = indptr[neigh_row] + neigh_offset
+
+                            if numeric_abs(data[neigh_data_idx]) >= r_threshold:
+                                keep[neigh_row] = 0
+
+                    # Prune forward neighbors of curr_row:
+                    curr_row_size = indptr[curr_row + 1] - indptr[curr_row]
+
+                    for neigh_offset in range(curr_row_size):
+                        curr_data_idx = indptr[curr_row] + neigh_offset
+
+                        if numeric_abs(data[curr_data_idx]) >= r_threshold:
+                            keep[curr_row + neigh_offset + 1] = 0
 
     return np.asarray(keep).view(bool)
 
@@ -307,28 +426,8 @@ cpdef get_symmetrized_indptr(int_dtype[::1] indptr):
 
     # Determine the rightmost element for every row:
     rightmost = np.diff(indptr).astype(np.int32) + np.arange(indptr.shape[0] - 1, dtype=np.int32)
-
-    # Get unique boundaries:
-    uniq_res = np.unique(rightmost, return_index=True)
-
-    # Loop over the remaining rows to get the leftmost index:
-    cdef:
-        int32_t curr_row, shape=rightmost.shape[0]
-        int32_t[::1] leftmost = np.zeros(shape, dtype=np.int32)
-        int32_t[::1] uniq_rightmost = uniq_res[0]
-        int32_t[::1] rightmost_first_idx = uniq_res[1].astype(np.int32)
-        int32_t rightmost_idx = 0, uniq_rightmost_size = uniq_res[0].shape[0]
-
-    with nogil:
-        for curr_row in range(shape):
-
-            if curr_row > uniq_rightmost[rightmost_idx] and rightmost_idx < uniq_rightmost_size - 1:
-                rightmost_idx += 1
-
-            leftmost[curr_row] = rightmost_first_idx[rightmost_idx]
-
-
-    leftmost = np.asarray(leftmost)
+    # Reuse helper for leftmost indices:
+    leftmost = get_leftmost_index(indptr)
 
     # Compute the new indptr:
     new_indptr = np.zeros(leftmost.shape[0] + 1, dtype=np.int64)

@@ -734,9 +734,10 @@ class SumstatsTable(object):
             FastGWASSParser, SSFParser, SaigeSSParser
         )
 
-        sumstats_format_l = sumstats_format.lower()
-
         if parser is None:
+            # Convert the format to lowercase:
+            sumstats_format_l = sumstats_format.lower()
+
             if sumstats_format_l == 'magenpy':
                 parser = SumstatsParser(None, **parse_kwargs)
             elif sumstats_format_l in ('plink', 'plink2'):

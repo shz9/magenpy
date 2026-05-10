@@ -167,7 +167,8 @@ class LDMatrix(object):
                  overwrite=False,
                  dtype='int16',
                  compressor_name='zstd',
-                 compression_level=7):
+                 compression_level=7,
+                 fill_missing_zeros=True):
         """
         Initialize an LDMatrix object from a sparse CSR matrix.
 
@@ -180,6 +181,9 @@ class LDMatrix(object):
         and integer quantized data types int8 and int16).
         :param compressor_name: The name of the compressor or compression algorithm to use with Zarr.
         :param compression_level: The compression level to use with the compressor (1-9).
+        :param fill_missing_zeros: If True, automatically fill row-wise gaps around the diagonal with explicit
+        zeros so the matrix conforms to LDMatrix's implicit contiguous-index storage format. If False,
+        raise a ValueError when non-contiguous rows are detected.
 
         :return: An `LDMatrix` object.
         """
@@ -188,14 +192,86 @@ class LDMatrix(object):
 
         dtype = np.dtype(dtype)
 
-        # Get the upper triangular part of the matrix:
-        triu_mat = triu(csr_mat, k=1, format='csr')
+        # LD matrices are square by definition.
+        if csr_mat.shape[0] != csr_mat.shape[1]:
+            raise ValueError("Input CSR matrix must be square.")
 
-        # Check that the non-zeros are contiguous around the diagonal with no gaps.
-        # If there are gaps, eliminate them or raise an error.
-        if np.diff(triu_mat.indices).max() > 1:
-            # TODO: Figure out a way to fix this automatically for the user?
-            raise ValueError("The non-zero entries of the LD matrix are not contiguous around the diagonal.")
+        # Convert to strict upper triangular CSR representation and canonicalize.
+        # Canonicalization ensures predictable row-local index ordering for contiguous checks and filling.
+        triu_mat = triu(csr_mat.tocsr(copy=False), k=1, format='csr')
+        triu_mat.sum_duplicates()
+        triu_mat.sort_indices()
+
+        # ---------------------------------------------------------------------
+        # Step 1: Detect row-wise contiguity around the diagonal.
+        #
+        # For LDMatrix storage, row i is interpreted as contiguous columns:
+        #   i+1, i+2, ..., i + row_nnz
+        # Therefore, raw CSR row indices must either already match this pattern
+        # or be expanded with explicit zeros to preserve correct indexing.
+        # ---------------------------------------------------------------------
+
+        # Row ids and non-zero counts per row.
+        row_idx = np.arange(triu_mat.shape[0], dtype=np.int64)
+        row_nnz = np.diff(triu_mat.indptr).astype(np.int64, copy=False)
+        non_empty_rows = row_nnz > 0
+
+        # For each row, identify the rightmost stored column.
+        # Empty rows are assigned row_idx, yielding expected length = 0.
+        row_max_col = row_idx.copy()
+        if np.any(non_empty_rows):
+            row_end_ptr = triu_mat.indptr[1:][non_empty_rows]
+            row_max_col[non_empty_rows] = triu_mat.indices[row_end_ptr - 1]
+
+        # Expected contiguous row length if row starts at i+1 and ends at row_max_col.
+        expected_row_nnz = row_max_col - row_idx
+
+        # Non-empty rows must start exactly at i+1 for diagonal-contiguous storage.
+        row_start_ok = np.ones(triu_mat.shape[0], dtype=bool)
+        if np.any(non_empty_rows):
+            row_start_ptr = triu_mat.indptr[:-1][non_empty_rows]
+            row_start_ok[non_empty_rows] = triu_mat.indices[row_start_ptr] == (row_idx[non_empty_rows] + 1)
+
+        contiguous_rows = (row_nnz == expected_row_nnz) & row_start_ok
+
+        # ---------------------------------------------------------------------
+        # Step 2: If contiguity fails, either raise or repair by zero-filling.
+        # ---------------------------------------------------------------------
+        if np.any(~contiguous_rows):
+            bad_rows = np.flatnonzero(~contiguous_rows)
+
+            if not fill_missing_zeros:
+                preview = ", ".join(map(str, bad_rows[:5]))
+                if bad_rows.size > 5:
+                    preview += ", ..."
+                raise ValueError(
+                    "The non-zero entries of the LD matrix are not contiguous around the diagonal "
+                    f"(rows: {preview}). Set `fill_missing_zeros=True` to auto-fill gaps with zeros."
+                )
+
+            # Build repaired CSR payload where each row i spans columns i+1..row_max_col[i].
+            # Missing entries are represented explicitly as zeros in `data`.
+            repaired_indptr = np.empty(triu_mat.shape[0] + 1, dtype=np.int64)
+            repaired_indptr[0] = 0
+            np.cumsum(expected_row_nnz, out=repaired_indptr[1:])
+
+            repaired_data = np.zeros(repaired_indptr[-1], dtype=triu_mat.data.dtype)
+
+            # Populate observed values at their repaired contiguous offsets.
+            # Using row-wise iteration avoids constructing a large repeated row-id array.
+            for i in np.flatnonzero(non_empty_rows):
+                old_start, old_end = triu_mat.indptr[i], triu_mat.indptr[i + 1]
+                if old_start == old_end:
+                    continue
+
+                repaired_pos = repaired_indptr[i] + (triu_mat.indices[old_start:old_end] - (i + 1))
+                repaired_data[repaired_pos] = triu_mat.data[old_start:old_end]
+
+            triu_data = repaired_data
+            triu_indptr = repaired_indptr
+        else:
+            triu_data = triu_mat.data
+            triu_indptr = triu_mat.indptr
 
         # Create hierarchical storage with zarr groups:
         store = zarr.DirectoryStore(store_path)
@@ -207,12 +283,12 @@ class LDMatrix(object):
         # First sub-hierarchy stores the information for the sparse LD matrix:
         mat = z.create_group('matrix')
         if np.issubdtype(dtype, np.integer):
-            mat.array('data', quantize(triu_mat.data, int_dtype=dtype), dtype=dtype, compressor=compressor)
+            mat.array('data', quantize(triu_data, int_dtype=dtype), dtype=dtype, compressor=compressor)
         else:
-            mat.array('data', triu_mat.data.astype(dtype), dtype=dtype, compressor=compressor_name)
+            mat.array('data', triu_data.astype(dtype), dtype=dtype, compressor=compressor)
 
         # Store the index pointer:
-        mat.array('indptr', triu_mat.indptr, dtype=np.int64, compressor=compressor)
+        mat.array('indptr', triu_indptr, dtype=np.int64, compressor=compressor)
 
         return cls(z)
 
@@ -1031,29 +1107,73 @@ class LDMatrix(object):
                       return_symmetric=self.is_symmetric,
                       dtype=self.dtype)
 
-    def prune(self, threshold):
+    def prune(self, threshold, variant_order=None, return_value='mask'):
         """
         Perform LD pruning to remove variants that are in high LD with other variants.
         If two variants are in high LD, this function keeps the variant that occurs
-        earlier in the matrix. This behavior will be updated in the future to allow
-        for arbitrary ordering of variants.
+        earlier in the pruning order.
 
         !!! note
             Experimental for now. Needs further testing & improvement.
 
         :param threshold: The absolute value of the Pearson correlation coefficient above which to prune variants. A
         positive floating point number between 0. and 1.
-        :return: A boolean array indicating whether a variant is kept after pruning.
+        :param variant_order: Optional pruning order (array of variant indices). If provided, variants
+        are visited in this order and each kept focal variant prunes all correlated neighbors.
+        :param return_value: One of `mask`, `index`, or `snps`.
+        :return: Pruned variants in the requested format.
         """
 
         from .stats.ld.c_utils import prune_ld_ut
 
+        assert return_value in ('mask', 'index', 'snps')
         assert 0. < threshold <= 1.
 
         if np.issubdtype(self.dtype, np.integer):
             threshold = quantize(np.array([threshold]), int_dtype=self.dtype)[0]
 
-        return prune_ld_ut(self.indptr[:], self.data[:], threshold)
+        if variant_order is None:
+            keep_mask = prune_ld_ut(self.indptr[:], self.data[:], threshold)
+        else:
+            keep_mask = prune_ld_ut(self.indptr[:], self.data[:], threshold,
+                                    np.asarray(variant_order, dtype=np.int32))
+
+        if return_value == 'mask':
+            return keep_mask
+        elif return_value == 'index':
+            return np.where(keep_mask)[0]
+        else:
+            return self.snps[keep_mask]
+
+    def find_tagging_variants(self, variant_indices, threshold, return_value='index'):
+        """
+        Find variants in LD with a set of focal variants.
+
+        :param variant_indices: Indices of focal variants.
+        :param threshold: Absolute Pearson correlation threshold above which variants are tagged.
+        :param return_value: One of `mask`, `index`, or `snps`.
+        :return: Tagging variants in the requested format.
+        """
+
+        assert return_value in ('mask', 'index', 'snps')
+        assert 0. < threshold <= 1.
+
+        from .stats.ld.c_utils import find_tagging_variants
+
+        if np.issubdtype(self.dtype, np.integer):
+            threshold = quantize(np.array([threshold]), int_dtype=self.dtype)[0]
+
+        tagging_mask = find_tagging_variants(np.asarray(variant_indices, dtype=np.int32),
+                                             self.indptr[:],
+                                             self.data[:],
+                                             threshold)
+
+        if return_value == 'mask':
+            return tagging_mask
+        elif return_value == 'index':
+            return np.where(tagging_mask)[0]
+        else:
+            return self.snps[tagging_mask]
 
     def to_snp_table(self, col_subset=None, use_original_index=False):
         """
@@ -1360,7 +1480,9 @@ class LDMatrix(object):
         store_attrs = self.list_store_attributes()
 
         def threshold_lambda_min(eigs):
-            return np.abs(np.minimum(eigs['min'] + min_max_ratio*eigs['max'], 0.)) / (1. + min_max_ratio)
+            eig_min = np.asarray(eigs['min'], dtype=np.float64)
+            eig_max = np.asarray(eigs['max'], dtype=np.float64)
+            return np.abs(np.minimum(eig_min + min_max_ratio*eig_max, 0.)) / (1. + min_max_ratio)
 
         lambda_min = 0.
 
@@ -1419,6 +1541,8 @@ class LDMatrix(object):
                 elif aggregate == 'min_block':
                     lambda_min = np.min(block_eigs['min'])
 
+        if aggregate == 'min':
+            return float(np.min(np.asarray(lambda_min)))
         return lambda_min
 
     def estimate_uncompressed_size(self, dtype=None):

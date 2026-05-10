@@ -2,6 +2,7 @@ import numpy as np
 import magenpy as mgp
 import shutil
 import pytest
+from scipy.sparse import csr_matrix
 
 
 def _basic_ld_checks(gdl: mgp.GWADataLoader):
@@ -214,3 +215,92 @@ def test_ld_linear_operator(block_ld: mgp.LDMatrix):
         # Check that the block contains all ones along the diagonal:
         assert np.allclose(np.diag(numpy_block), 1.)
 
+
+def test_from_csr_accepts_empty_rows_when_contiguous(tmp_path):
+    """
+    Regression test for row-boundary handling in `from_csr`.
+
+    Row 1 is empty, but rows 0 and 2 are each locally contiguous around their
+    diagonals (0->1 and 2->3 respectively). This should be accepted.
+    """
+
+    dense = np.zeros((4, 4), dtype=np.float32)
+    dense[0, 1] = 0.5
+    dense[2, 3] = 0.25
+
+    csr = csr_matrix(dense)
+
+    ld = mgp.LDMatrix.from_csr(
+        csr,
+        store_path=str(tmp_path / "ld_contiguous_with_empty_rows.zarr"),
+        overwrite=True,
+        dtype='float32',
+        fill_missing_zeros=False
+    )
+
+    out = ld.to_csr().toarray()
+
+    assert np.allclose(out, dense)
+
+
+def test_from_csr_fills_non_contiguous_rows_with_zeros(tmp_path):
+    """
+    If rows have diagonal gaps, `from_csr(..., fill_missing_zeros=True)` should
+    insert explicit zeros so LDMatrix's implicit contiguous index model remains valid.
+    """
+
+    dense = np.zeros((6, 6), dtype=np.float32)
+
+    # Row 0 has gaps at columns 1 and 3.
+    dense[0, 2] = 0.20
+    dense[0, 4] = 0.40
+
+    # Row 2 has a gap at column 4.
+    dense[2, 3] = 0.30
+    dense[2, 5] = 0.50
+
+    # Row 3 starts at col 5 (missing col 4).
+    dense[3, 5] = 0.60
+
+    csr = csr_matrix(dense)
+
+    ld = mgp.LDMatrix.from_csr(
+        csr,
+        store_path=str(tmp_path / "ld_non_contiguous_auto_fix.zarr"),
+        overwrite=True,
+        dtype='float32',
+        fill_missing_zeros=True
+    )
+
+    # Rows after repair:
+    # row0 -> cols [1, 2, 3, 4]
+    # row1 -> []
+    # row2 -> cols [3, 4, 5]
+    # row3 -> cols [4, 5]
+    # row4 -> []
+    # row5 -> []
+    assert np.array_equal(ld.indptr[:], np.array([0, 4, 4, 7, 9, 9, 9], dtype=np.int64))
+
+    # Numeric matrix should match input values (gaps are explicitly stored as zero entries).
+    assert np.allclose(ld.to_csr().toarray(), dense)
+
+
+def test_from_csr_strict_mode_raises_on_non_contiguous_rows(tmp_path):
+    """
+    In strict mode (`fill_missing_zeros=False`), non-contiguous rows should raise.
+    """
+
+    dense = np.zeros((4, 4), dtype=np.float32)
+    dense[0, 2] = 0.2  # Missing col 1 for row 0.
+    dense[0, 3] = 0.3
+
+    csr = csr_matrix(dense)
+
+    with pytest.raises(ValueError, match="not contiguous around the diagonal"):
+        mgp.LDMatrix.from_csr(
+            csr,
+            store_path=str(tmp_path / "ld_non_contiguous_strict.zarr"),
+            overwrite=True,
+            dtype='float32',
+            fill_missing_zeros=False
+        )

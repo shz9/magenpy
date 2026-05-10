@@ -82,7 +82,7 @@ def manhattan(input_data: Union[GWADataLoader, SumstatsTable, pd.DataFrame],
         if isinstance(highlight_snps, list):
             highlight_snps = np.array(highlight_snps)
 
-        highlight_snps = {c: np.in1d(p['SNP'], highlight_snps) for c, p in input_data.items()}
+        highlight_snps = {c: np.isin(p['SNP'], highlight_snps) for c, p in input_data.items()}
 
     # -------------------------------------------------------
     # Add custom scatter plot arguments (if not provided)
@@ -206,4 +206,3 @@ def qq_plot(input_data: Union[GWADataLoader, SumstatsTable],
         plt.show()
     else:
         raise NotImplementedError(f"No QQ plot can be generated for the statistic: {statistic}")
-
