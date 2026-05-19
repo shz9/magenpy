@@ -5,7 +5,7 @@ requires = [
     "wheel",
     "cython",
     "extension-helpers",
-    "oldest-supported-numpy",
+    "numpy>=2,<3",
     "pkgconfig"
 ]
 build-backend = "setuptools.build_meta"
