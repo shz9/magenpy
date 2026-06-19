@@ -62,11 +62,16 @@ class SumstatsParser(object):
 
         df = pd.read_csv(file_name, **self.read_csv_kwargs)
 
-        if drop_na:
-            df = df.dropna()
-
         if self.col_name_converter is not None:
             df.rename(columns=self.col_name_converter, inplace=True)
+
+        magenpy_cols = {'CHR', 'SNP', 'POS', 'A1', 'A2', 'REF', 'ALT', 'ALT1',
+                      'MAF', 'N', 'BETA', 'SE', 'Z', 'PVAL', 'MAC'}
+        cols_to_keep = [c for c in df.columns if c in magenpy_cols]
+        df = df[cols_to_keep]
+
+        if drop_na:
+            df = df.dropna()
 
         try:
             df['POS'] = df['POS'].astype(np.int32)
