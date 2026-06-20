@@ -65,13 +65,13 @@ class SumstatsParser(object):
         if self.col_name_converter is not None:
             df.rename(columns=self.col_name_converter, inplace=True)
 
-        magenpy_cols = {'CHR', 'SNP', 'POS', 'A1', 'A2', 'REF', 'ALT', 'ALT1',
-                      'MAF', 'N', 'BETA', 'SE', 'Z', 'PVAL', 'MAC'}
-        cols_to_keep = [c for c in df.columns if c in magenpy_cols]
-        df = df[cols_to_keep]
-
         if drop_na:
-            df = df.dropna()
+            subset = (
+                [c for c in self.col_name_converter.values() if c in df.columns]
+                if self.col_name_converter is not None
+                else None
+            )
+            df = df.dropna(subset=subset)
 
         try:
             df['POS'] = df['POS'].astype(np.int32)
