@@ -75,7 +75,7 @@ parser.add_argument(
     dest="backend",
     type=str,
     default="magenpy",
-    choices={"magenpy", "xarray", "plink"},
+    choices={"magenpy", "bed-reader", "xarray", "plink"},
     help="The backend software used for the computation.",
 )
 parser.add_argument(

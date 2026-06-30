@@ -609,6 +609,12 @@ class GWADataLoader(object):
                 from .utils.system_utils import glob_s3_path
 
                 ld_store_files = glob_s3_path(ld_store_paths)
+            elif "hf://" in ld_store_paths:
+                from .utils.system_utils import glob_hf_path
+
+                ld_store_files = glob_hf_path(ld_store_paths)
+            elif ".zip" in ld_store_paths:
+                ld_store_files = get_filenames(ld_store_paths, extension=".zip")
             else:
                 ld_store_files = get_filenames(ld_store_paths, extension=".zgroup")
         else:
@@ -652,6 +658,7 @@ class GWADataLoader(object):
         compressor_name="zstd",
         compression_level=7,
         compute_spectral_properties=False,
+        store_type=None,
         **ld_kwargs,
     ):
         """
@@ -670,6 +677,7 @@ class GWADataLoader(object):
         :param compressor_name: The name of the compression algorithm to use for the LD matrix.
         :param compression_level: The compression level to use for the entries of the LD matrix (1-9).
         :param compute_spectral_properties: If True, compute the spectral properties of the LD matrix.
+        :param store_type: Optional Zarr store type. One of None, 'directory', or 'zip'.
         :param ld_kwargs: keyword arguments for the various LD estimators. Consult
         the implementations of `WindowedLD`, `ShrinkageLD`, and `BlockLD` for details.
         """
@@ -687,6 +695,7 @@ class GWADataLoader(object):
                 compressor_name=compressor_name,
                 compression_level=compression_level,
                 compute_spectral_properties=compute_spectral_properties,
+                store_type=store_type,
                 **ld_kwargs,
             )
             for c, g in tqdm(

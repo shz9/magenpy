@@ -76,6 +76,17 @@ class SampleLD(object):
 
         return self.ld_boundaries
 
+    def _finish_ld_matrix(self, ld_mat, store_type=None):
+        if not ld_mat.validate_ld_matrix():
+            return None
+
+        if store_type == 'zip':
+            path = LDMatrix._zarr_store_path(ld_mat.store)
+            ld_mat.store.close()
+            return LDMatrix.from_path(path)
+
+        return ld_mat
+
     def compute_plink_window_thresholds(self, ld_boundaries=None):
         """
         Computes the LD window thresholds to pass to plink1.9 for computing LD matrices.
@@ -138,14 +149,15 @@ class SampleLD(object):
 
         return threshold_dict
 
-    def compute(self,
-                output_dir,
-                overwrite=True,
-                delete_original=True,
-                dtype='int16',
-                compressor_name='zstd',
-                compression_level=7,
-                compute_spectral_properties=False) -> LDMatrix:
+    def _compute_ld_matrix(self,
+                           output_dir,
+                           overwrite=True,
+                           delete_original=True,
+                           dtype='int16',
+                           compressor_name='zstd',
+                           compression_level=7,
+                           compute_spectral_properties=False,
+                           store_type=None) -> LDMatrix:
         """
         A utility method to compute the LD matrix and store in Zarr array format.
         The computes the LD matrix and stores it in Zarr array format, set its attributes,
@@ -160,6 +172,7 @@ class SampleLD(object):
         :param compression_level: The compression level to use for the LD matrix (1-9).
         :param compute_spectral_properties: If True, compute and store information about the eigenvalues of
         the LD matrix.
+        :param store_type: Optional Zarr store type. One of None, 'directory', or 'zip'.
 
         :return: An instance of `LDMatrix` containing the computed LD matrix.
 
@@ -184,7 +197,8 @@ class SampleLD(object):
                                        delete_original=delete_original,
                                        dtype=dtype,
                                        compressor_name=compressor_name,
-                                       compression_level=compression_level)
+                                       compression_level=compression_level,
+                                       store_type=store_type)
         elif isinstance(self.genotype_matrix, plinkBEDGenotypeMatrix):
 
             # Compute the window size thresholds to pass to plink 1.9:
@@ -199,7 +213,8 @@ class SampleLD(object):
                                          overwrite=overwrite,
                                          dtype=dtype,
                                          compressor_name=compressor_name,
-                                         compression_level=compression_level)
+                                         compression_level=compression_level,
+                                         store_type=store_type)
         elif isinstance(self.genotype_matrix, MagenpyGenotypeMatrix):
             ld_mat = compute_ld_magenpy(self.genotype_matrix,
                                         ld_boundaries,
@@ -207,7 +222,8 @@ class SampleLD(object):
                                         overwrite=overwrite,
                                         dtype=dtype,
                                         compressor_name=compressor_name,
-                                        compression_level=compression_level)
+                                        compression_level=compression_level,
+                                        store_type=store_type)
         elif isinstance(self.genotype_matrix, bedReaderGenotypeMatrix):
             ld_mat = compute_ld_bed_reader(self.genotype_matrix,
                                            ld_boundaries,
@@ -215,7 +231,8 @@ class SampleLD(object):
                                            overwrite=overwrite,
                                            dtype=dtype,
                                            compressor_name=compressor_name,
-                                           compression_level=compression_level)
+                                           compression_level=compression_level,
+                                           store_type=store_type)
         else:
             raise NotImplementedError
 
@@ -248,9 +265,28 @@ class SampleLD(object):
                 'Extremal': extreme_eigs
             })
 
-        if ld_mat.validate_ld_matrix():
-            temp_dir.cleanup()
-            return ld_mat
+        temp_dir.cleanup()
+        return ld_mat
+
+    def compute(self,
+                output_dir,
+                overwrite=True,
+                delete_original=True,
+                dtype='int16',
+                compressor_name='zstd',
+                compression_level=7,
+                compute_spectral_properties=False,
+                store_type=None) -> LDMatrix:
+        ld_mat = self._compute_ld_matrix(output_dir,
+                                         overwrite=overwrite,
+                                         delete_original=delete_original,
+                                         compute_spectral_properties=compute_spectral_properties,
+                                         dtype=dtype,
+                                         compressor_name=compressor_name,
+                                         compression_level=compression_level,
+                                         store_type=store_type)
+
+        return self._finish_ld_matrix(ld_mat, store_type)
 
 
 class WindowedLD(SampleLD):
@@ -364,7 +400,8 @@ class WindowedLD(SampleLD):
                 dtype='int16',
                 compressor_name='zstd',
                 compression_level=7,
-                compute_spectral_properties=False) -> LDMatrix:
+                compute_spectral_properties=False,
+                store_type=None) -> LDMatrix:
         """
 
         Compute the windowed LD matrix and store in Zarr array format.
@@ -377,17 +414,19 @@ class WindowedLD(SampleLD):
         :param compression_level: The compression level to use for the LD matrix (1-9).
         :param compute_spectral_properties: If True, compute and store information about the eigenvalues of
         the LD matrix.
+        :param store_type: Optional Zarr store type. One of None, 'directory', or 'zip'.
 
         :return: An instance of `LDMatrix` encapsulating the computed LD matrix, its attributes, and metadata.
         """
 
-        ld_mat = super().compute(output_dir,
-                                 overwrite=overwrite,
-                                 delete_original=delete_original,
-                                 compute_spectral_properties=compute_spectral_properties,
-                                 dtype=dtype,
-                                 compressor_name=compressor_name,
-                                 compression_level=compression_level)
+        ld_mat = self._compute_ld_matrix(output_dir,
+                                         overwrite=overwrite,
+                                         delete_original=delete_original,
+                                         compute_spectral_properties=compute_spectral_properties,
+                                         dtype=dtype,
+                                         compressor_name=compressor_name,
+                                         compression_level=compression_level,
+                                         store_type=store_type)
 
         ld_mat.set_store_attr('LD estimator', 'windowed')
 
@@ -453,7 +492,7 @@ class WindowedLD(SampleLD):
             # Reset the mask:
             ld_mat.reset_mask()
 
-        return ld_mat
+        return self._finish_ld_matrix(ld_mat, store_type)
 
 
 class ShrinkageLD(SampleLD):
@@ -533,7 +572,8 @@ class ShrinkageLD(SampleLD):
                 compressor_name='zstd',
                 compression_level=7,
                 compute_spectral_properties=False,
-                chunk_size=1000) -> LDMatrix:
+                chunk_size=1000,
+                store_type=None) -> LDMatrix:
         """
 
         !!! note
@@ -552,6 +592,7 @@ class ShrinkageLD(SampleLD):
         the LD matrix.
         :param chunk_size: An optional parameter that sets the maximum number of rows processed simultaneously.
         The smaller the `chunk_size`, the less memory requirements needed for the shrinkage step.
+        :param store_type: Optional Zarr store type. One of None, 'directory', or 'zip'.
 
         :return: An instance of `LDMatrix` encapsulating the computed LD matrix, its attributes, and metadata.
 
@@ -563,13 +604,14 @@ class ShrinkageLD(SampleLD):
         else:
             threshold = self.threshold
 
-        ld_mat = super().compute(output_dir,
-                                 overwrite=overwrite,
-                                 delete_original=delete_original,
-                                 compute_spectral_properties=False,  # Compute after shrinkage if requested
-                                 dtype=dtype,
-                                 compressor_name=compressor_name,
-                                 compression_level=compression_level)
+        ld_mat = self._compute_ld_matrix(output_dir,
+                                         overwrite=overwrite,
+                                         delete_original=delete_original,
+                                         compute_spectral_properties=False,  # Compute after shrinkage if requested
+                                         dtype=dtype,
+                                         compressor_name=compressor_name,
+                                         compression_level=compression_level,
+                                         store_type=store_type)
 
         from .utils import shrink_ld_matrix
 
@@ -606,7 +648,7 @@ class ShrinkageLD(SampleLD):
 
             ld_mat.set_store_attr('Spectral properties', spectral_prop)
 
-        return ld_mat
+        return self._finish_ld_matrix(ld_mat, store_type)
 
 
 class BlockLD(SampleLD):
@@ -699,7 +741,8 @@ class BlockLD(SampleLD):
                 dtype='int16',
                 compressor_name='zstd',
                 compression_level=7,
-                compute_spectral_properties=False) -> LDMatrix:
+                compute_spectral_properties=False,
+                store_type=None) -> LDMatrix:
         """
 
         Compute the block-based LD matrix and store in Zarr array format.
@@ -712,6 +755,7 @@ class BlockLD(SampleLD):
         :param dtype: The data type for the entries of the LD matrix.
         :param compressor_name: The name of the compressor to use for the LD matrix.
         :param compression_level: The compression level to use for the LD matrix (1-9).
+        :param store_type: Optional Zarr store type. One of None, 'directory', or 'zip'.
 
         :return: An instance of `LDMatrix` encapsulating the computed LD matrix, its attributes, and metadata.
         """
@@ -754,12 +798,16 @@ class BlockLD(SampleLD):
         # Combine the LD matrices for the individual blocks into a single LD matrix:
         from .utils import combine_ld_matrices
 
-        output_dir = osp.join(output_dir, f'chr_{self.genotype_matrix.chromosome}/')
+        if store_type == 'zip':
+            output_dir = osp.join(output_dir, f'chr_{self.genotype_matrix.chromosome}.zip')
+        else:
+            output_dir = osp.join(output_dir, f'chr_{self.genotype_matrix.chromosome}/')
 
         ld_mat = combine_ld_matrices(ld_mats,
                                      output_dir,
                                      overwrite=overwrite,
-                                     delete_original=delete_original)
+                                     delete_original=delete_original,
+                                     store_type=store_type)
 
         # Populate the attributes of the LDMatrix object:
         ld_mat.set_store_attr('LD estimator', 'block')
@@ -790,6 +838,5 @@ class BlockLD(SampleLD):
 
             ld_mat.set_store_attr('Spectral properties', spectral_prop)
 
-        if ld_mat.validate_ld_matrix():
-            temp_dir.cleanup()
-            return ld_mat
+        temp_dir.cleanup()
+        return self._finish_ld_matrix(ld_mat, store_type)

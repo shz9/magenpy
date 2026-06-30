@@ -232,6 +232,19 @@ def glob_s3_path(path):
     return s3.glob(path)
 
 
+def glob_hf_path(path):
+    """
+    Get the list of files/folders in the provided Hugging Face path. This works with wildcards.
+    """
+
+    from huggingface_hub import HfFileSystem
+
+    hf_prefix = "hf://"
+    path = path.replace(hf_prefix, "", 1)
+
+    return [hf_prefix + f for f in HfFileSystem().glob(path)]
+
+
 def get_filenames(path, extension=None):
     """
     Obtain valid and full path names given the provided `path` or prefix and extensions.

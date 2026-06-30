@@ -84,14 +84,47 @@ class LDMatrix(object):
         # To support iteration over the LD matrix:
         self.index: int = 0
 
+    @staticmethod
+    def _zarr_store(path, mode="r", store_type=None):
+        if store_type is None:
+            store_type = "zip" if str(path).lower().endswith(".zip") else "directory"
+
+        if store_type == "zip":
+            return zarr.storage.ZipStore(path, mode=mode)
+        elif store_type == "directory":
+            return zarr.storage.DirectoryStore(path)
+        else:
+            raise ValueError("store_type must be one of: None, 'directory', 'zip'.")
+
+    @staticmethod
+    def _zarr_store_type(store):
+        if isinstance(store, zarr.storage.ZipStore):
+            return "zip"
+        for attr in ("store", "_store"):
+            nested_store = getattr(store, attr, None)
+            if nested_store is not None:
+                return LDMatrix._zarr_store_type(nested_store)
+        return "directory"
+
+    @staticmethod
+    def _zarr_store_path(store):
+        if hasattr(store, "path"):
+            return store.path
+        for attr in ("store", "_store"):
+            nested_store = getattr(store, attr, None)
+            if nested_store is not None:
+                return LDMatrix._zarr_store_path(nested_store)
+        raise TypeError("Could not infer path for LDMatrix store.")
+
     @classmethod
-    def from_path(cls, ld_store_path, cache_size=None):
+    def from_path(cls, ld_store_path, cache_size=None, store_type=None):
         """
         Initialize an `LDMatrix` object from a pre-computed Zarr group store. This is a genetic method
         that can work with both cloud-based stores (e.g. s3 storage) or local filesystems.
 
         :param ld_store_path: The path to the Zarr array store.
         :param cache_size: The size of the cache for the Zarr store (in bytes). Default is `None` (no caching).
+        :param store_type: Optional local store type. One of None, 'directory', or 'zip'.
 
         !!! seealso "See Also"
             * [from_directory][magenpy.LDMatrix.LDMatrix.from_directory]
@@ -100,8 +133,14 @@ class LDMatrix(object):
         :return: An `LDMatrix` object.
         """
 
-        if "s3://" in ld_store_path:
+        ld_store_path = str(ld_store_path)
+
+        if "hf://" in ld_store_path:
+            return cls.from_hf(ld_store_path, cache_size)
+        elif "s3://" in ld_store_path:
             return cls.from_s3(ld_store_path, cache_size)
+        elif store_type == "zip" or str(ld_store_path).lower().endswith(".zip"):
+            return cls.from_zip(ld_store_path, cache_size)
         else:
             return cls.from_directory(ld_store_path, cache_size)
 
@@ -135,6 +174,37 @@ class LDMatrix(object):
         return cls(ld_group)
 
     @classmethod
+    def from_hf(cls, hf_path, cache_size=None):
+        """
+        Initialize an `LDMatrix` object from a Zarr store hosted on Hugging Face.
+        """
+
+        import fsspec
+
+        mapper_path = "zip::" + hf_path if hf_path.lower().endswith(".zip") else hf_path
+        store = fsspec.get_mapper(mapper_path)
+        if cache_size is not None:
+            store = zarr.LRUStoreCache(store, max_size=cache_size)
+
+        zarr_path = osp.splitext(osp.basename(hf_path))[0]
+        ld_group = zarr.open_group(store, mode="r", path=zarr_path)
+
+        return cls(ld_group)
+
+    @classmethod
+    def from_zip(cls, zip_path, cache_size=None):
+        """
+        Initialize an `LDMatrix` object from a local Zarr ZipStore.
+        """
+
+        zip_store = cls._zarr_store(zip_path, mode="r", store_type="zip")
+        if cache_size is not None:
+            zip_store = zarr.LRUStoreCache(zip_store, max_size=cache_size)
+        ld_group = zarr.open_group(zip_store, mode="r")
+
+        return cls(ld_group)
+
+    @classmethod
     def from_directory(cls, dir_path, cache_size=None):
         """
         Initialize an `LDMatrix` object from a Zarr array store.
@@ -150,7 +220,7 @@ class LDMatrix(object):
 
         for level in range(2):
             try:
-                dir_store = zarr.storage.DirectoryStore(dir_path)
+                dir_store = cls._zarr_store(dir_path, store_type="directory")
                 if cache_size is not None:
                     dir_store = zarr.LRUStoreCache(dir_store, max_size=cache_size)
                 ld_group = zarr.open_group(dir_store, mode="r")
@@ -171,6 +241,7 @@ class LDMatrix(object):
         compressor_name="zstd",
         compression_level=7,
         fill_missing_zeros=True,
+        store_type=None,
     ):
         """
         Initialize an LDMatrix object from a sparse CSR matrix.
@@ -187,6 +258,7 @@ class LDMatrix(object):
         :param fill_missing_zeros: If True, automatically fill row-wise gaps around the diagonal with explicit
         zeros so the matrix conforms to LDMatrix's implicit contiguous-index storage format. If False,
         raise a ValueError when non-contiguous rows are detected.
+        :param store_type: Optional store type. One of None, 'directory', or 'zip'.
 
         :return: An `LDMatrix` object.
         """
@@ -281,7 +353,9 @@ class LDMatrix(object):
             triu_indptr = triu_mat.indptr
 
         # Create hierarchical storage with zarr groups:
-        store = zarr.DirectoryStore(store_path)
+        store = cls._zarr_store(
+            store_path, mode="w" if overwrite else "a", store_type=store_type
+        )
         z = zarr.group(store=store, overwrite=overwrite)
 
         # Create a compressor object:
@@ -318,6 +392,7 @@ class LDMatrix(object):
         dtype="int16",
         compressor_name="zstd",
         compression_level=7,
+        store_type=None,
     ):
         """
         Construct a Zarr LD matrix using LD tables generated by plink1.9.
@@ -337,6 +412,7 @@ class LDMatrix(object):
         and integer quantized data types int8 and int16).
         :param compressor_name: The name of the compressor or compression algorithm to use with Zarr.
         :param compression_level: The compression level to use with the compressor (1-9).
+        :param store_type: Optional store type. One of None, 'directory', or 'zip'.
 
         :return: An `LDMatrix` object.
         """
@@ -344,7 +420,9 @@ class LDMatrix(object):
         dtype = np.dtype(dtype)
 
         # Create hierarchical storage with zarr groups:
-        store = zarr.DirectoryStore(store_path)
+        store = cls._zarr_store(
+            store_path, mode="w" if overwrite else "a", store_type=store_type
+        )
         z = zarr.group(store=store, overwrite=overwrite)
 
         # Create a compressor object:
@@ -448,6 +526,7 @@ class LDMatrix(object):
         dtype="int16",
         compressor_name="zstd",
         compression_level=7,
+        store_type=None,
     ):
         """
         Initialize a new LD matrix object using a Zarr array object. This method is
@@ -466,6 +545,7 @@ class LDMatrix(object):
            and integer quantized data types int8 and int16).
         :param compressor_name: The name of the compressor or compression algorithm to use with Zarr.
         :param compression_level: The compression level to use with the compressor (1-9).
+        :param store_type: Optional store type. One of None, 'directory', or 'zip'.
 
         :return: An `LDMatrix` object.
         """
@@ -481,7 +561,9 @@ class LDMatrix(object):
                 raise FileNotFoundError
 
         # Create hierarchical storage with zarr groups:
-        store = zarr.DirectoryStore(store_path)
+        store = cls._zarr_store(
+            store_path, mode="w" if overwrite else "a", store_type=store_type
+        )
         z = zarr.group(store=store, overwrite=overwrite)
 
         # Create a compressor object:
@@ -554,6 +636,7 @@ class LDMatrix(object):
         dtype="int16",
         compressor_name="zstd",
         compression_level=7,
+        store_type=None,
     ):
         """
         Initialize a new LD matrix object using a Zarr array object
@@ -572,6 +655,7 @@ class LDMatrix(object):
         and integer quantized data types int8 and int16).
         :param compressor_name: The name of the compressor or compression algorithm to use with Zarr.
         :param compression_level: The compression level to use with the compressor (1-9).
+        :param store_type: Optional store type. One of None, 'directory', or 'zip'.
 
         :return: An `LDMatrix` object.
         """
@@ -590,7 +674,9 @@ class LDMatrix(object):
         chunk_size = ragged_zarr.chunks[0]
 
         # Create hierarchical storage with zarr groups:
-        store = zarr.DirectoryStore(store_path)
+        store = cls._zarr_store(
+            store_path, mode="w" if overwrite else "a", store_type=store_type
+        )
         z = zarr.group(store=store, overwrite=overwrite)
 
         # Create a compressor object:
@@ -2456,7 +2542,8 @@ class LDMatrix(object):
 
     def __getstate__(self):
         return (
-            self.store.path,
+            self._zarr_store_path(self.store),
+            self._zarr_store_type(self.store),
             self.in_memory,
             self.is_symmetric,
             self._mask,
@@ -2465,9 +2552,9 @@ class LDMatrix(object):
 
     def __setstate__(self, state):
 
-        path, in_mem, is_symmetric, mask, dtype = state
+        path, store_type, in_mem, is_symmetric, mask, dtype = state
 
-        self._zg = zarr.open_group(path, mode="r")
+        self._zg = self.from_path(path, store_type=store_type).zarr_group
         self._cached_lop = None
         self.index = 0
         self._mask = None

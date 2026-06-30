@@ -10,6 +10,11 @@ import zarr
 from ...LDMatrix import LDMatrix
 
 
+def ld_store_path(output_dir, chromosome, store_type=None):
+    suffix = ".zip" if store_type == "zip" else ""
+    return osp.join(output_dir, 'chr_' + str(chromosome) + suffix)
+
+
 def move_ld_store(z_arr, target_path, overwrite=True):
     """
     Move an LD store from its current path to the `target_path`
@@ -42,7 +47,7 @@ def delete_ld_store(ld_mat):
         print(e)
 
 
-def combine_ld_matrices(ld_matrices, output_dir, overwrite=True, delete_original=False):
+def combine_ld_matrices(ld_matrices, output_dir, overwrite=True, delete_original=False, store_type=None):
     """
     Combine the Zarr arrays underlying multiple `LDMatrix` objects into
     a single store, which will reside in `output_dir`. This function combines
@@ -71,7 +76,7 @@ def combine_ld_matrices(ld_matrices, output_dir, overwrite=True, delete_original
     metadata = list(ld_matrices[0].zarr_group['metadata'].keys())
 
     # Create hierarchical storage with zarr groups:
-    store = zarr.DirectoryStore(output_dir)
+    store = LDMatrix._zarr_store(output_dir, mode="w" if overwrite else "a", store_type=store_type)
     z = zarr.group(store=store, overwrite=overwrite)
 
     # Create sub-hierarchy to store the data of the sparse LD matrix:
@@ -529,7 +534,8 @@ def compute_ld_plink1p9(genotype_matrix,
                         overwrite=True,
                         dtype='int16',
                         compressor_name='zstd',
-                        compression_level=7):
+                        compression_level=7,
+                        store_type=None):
 
     """
     Compute LD matrices using plink 1.9.
@@ -610,7 +616,7 @@ def compute_ld_plink1p9(genotype_matrix,
     plink1.execute(cmd)
 
     # Convert from PLINK LD files to Zarr:
-    fin_ld_store = osp.join(output_dir, 'chr_' + str(genotype_matrix.chromosome))
+    fin_ld_store = ld_store_path(output_dir, genotype_matrix.chromosome, store_type=store_type)
 
     # Compute the pandas chunk_size
     # The goal of this is to process chunks of the LD table without overwhelming memory resources:
@@ -631,7 +637,8 @@ def compute_ld_plink1p9(genotype_matrix,
                                      overwrite=overwrite,
                                      dtype=dtype,
                                      compressor_name=compressor_name,
-                                     compression_level=compression_level)
+                                     compression_level=compression_level,
+                                     store_type=store_type)
 
 
 def compute_ld_magenpy(genotype_matrix,
@@ -642,7 +649,8 @@ def compute_ld_magenpy(genotype_matrix,
                        overwrite=True,
                        dtype='int16',
                        compressor_name='zstd',
-                       compression_level=7):
+                       compression_level=7,
+                       store_type=None):
 
     """
     Compute LD directly from a PLINK BED file using magenpy's native C++ BED
@@ -684,7 +692,7 @@ def compute_ld_magenpy(genotype_matrix,
         for_selected_snps=False
     )
 
-    fin_ld_store = osp.join(output_dir, 'chr_' + str(genotype_matrix.chromosome))
+    fin_ld_store = ld_store_path(output_dir, genotype_matrix.chromosome, store_type=store_type)
 
     row_indices = np.arange(m, dtype=np.int64)
     indptr_counts = np.maximum(
@@ -694,7 +702,7 @@ def compute_ld_magenpy(genotype_matrix,
     indptr = np.insert(np.cumsum(indptr_counts, dtype=np.int64), 0, 0)
     total_len = int(indptr[-1])
 
-    store = zarr.DirectoryStore(fin_ld_store)
+    store = LDMatrix._zarr_store(fin_ld_store, mode="w" if overwrite else "a", store_type=store_type)
     z = zarr.group(store=store, overwrite=overwrite)
     compressor = zarr.Blosc(cname=compressor_name, clevel=compression_level)
     mat = z.create_group('matrix')
@@ -730,7 +738,8 @@ def compute_ld_bed_reader(genotype_matrix,
                           overwrite=True,
                           dtype='int16',
                           compressor_name='zstd',
-                          compression_level=7):
+                          compression_level=7,
+                          store_type=None):
 
     """
     Compute LD from a PLINK BED file using the bed-reader backend, and store
@@ -789,9 +798,9 @@ def compute_ld_bed_reader(genotype_matrix,
     indptr = np.insert(np.cumsum(indptr_counts, dtype=np.int64), 0, 0)
     total_len = int(indptr[-1])
 
-    fin_ld_store = osp.join(output_dir, 'chr_' + str(genotype_matrix.chromosome))
+    fin_ld_store = ld_store_path(output_dir, genotype_matrix.chromosome, store_type=store_type)
 
-    store = zarr.DirectoryStore(fin_ld_store)
+    store = LDMatrix._zarr_store(fin_ld_store, mode="w" if overwrite else "a", store_type=store_type)
     z = zarr.group(store=store, overwrite=overwrite)
     compressor = zarr.Blosc(cname=compressor_name, clevel=compression_level)
     mat = z.create_group('matrix')
@@ -852,7 +861,8 @@ def compute_ld_xarray(genotype_matrix,
                       delete_original=True,
                       dtype='int16',
                       compressor_name='zstd',
-                      compression_level=7):
+                      compression_level=7,
+                      store_type=None):
 
     """
     Compute the Linkage Disequilibrium matrix or snp-by-snp
@@ -916,7 +926,7 @@ def compute_ld_xarray(genotype_matrix,
         ld_mat = (da.dot(g_mat.T, g_mat) / genotype_matrix.sample_size).astype(dot_dtype)
         ld_mat.to_zarr(temp_dir, overwrite=overwrite)
 
-    fin_ld_store = osp.join(output_dir, 'chr_' + str(genotype_matrix.chromosome))
+    fin_ld_store = ld_store_path(output_dir, genotype_matrix.chromosome, store_type=store_type)
 
     # Load the dense matrix and transform it to a sparse matrix using utilities implemented in the
     # `LDMatrix` class:
@@ -927,4 +937,5 @@ def compute_ld_xarray(genotype_matrix,
                                            delete_original=delete_original,
                                            dtype=dtype,
                                            compressor_name=compressor_name,
-                                           compression_level=compression_level)
+                                           compression_level=compression_level,
+                                           store_type=store_type)
