@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y \
 
 # Download and setup plink2:
 RUN mkdir -p /software && \
-    wget https://s3.amazonaws.com/plink2-assets/alpha5/plink2_linux_avx2_20240105.zip -O /software/plink2.zip && \
+    wget https://s3.amazonaws.com/plink2-assets/alpha5/plink2_linux_x86_64_20240105.zip -O /software/plink2.zip && \
     unzip /software/plink2.zip -d /software && \
     rm /software/plink2.zip
 

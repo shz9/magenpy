@@ -634,6 +634,95 @@ def compute_ld_plink1p9(genotype_matrix,
                                      compression_level=compression_level)
 
 
+def compute_ld_magenpy(genotype_matrix,
+                       ld_boundaries,
+                       output_dir,
+                       allele_frequencies=None,
+                       impute_missing=True,
+                       overwrite=True,
+                       dtype='int16',
+                       compressor_name='zstd',
+                       compression_level=7):
+
+    """
+    Compute LD directly from a PLINK BED file using magenpy's native C++ BED
+    kernel, and store the result as an upper-triangular sparse LDMatrix.
+
+    :param genotype_matrix: A MagenpyGenotypeMatrix object.
+    :param ld_boundaries: A 2xM matrix of LD boundaries for every variant.
+    :param output_dir: The output directory for the final LD matrix file.
+    :param allele_frequencies: Optional BED-indexed allele frequency vector.
+        If None, frequencies are taken from `genotype_matrix.maf`, which computes
+        and caches them if needed.
+    :param impute_missing: If True, missing genotypes are imputed as `2 * MAF`.
+    :param overwrite: If True, overwrite the output LD store.
+    :param dtype: Storage dtype for the LDMatrix. Native LD values are computed
+        as float32 by default and quantized/cast to this dtype when written. If
+        storage dtype is float64, LD values are computed as float64.
+    :param compressor_name: The name of the compressor to use for the Zarr arrays.
+    :param compression_level: The compression level to use with the compressor.
+    :return: An LDMatrix object.
+    """
+
+    from ...GenotypeMatrix import MagenpyGenotypeMatrix
+    from ...utils.model_utils import quantize
+    from ...utils.system_utils import makedir
+    from .c_utils import compute_ut_ld_from_bed
+
+    assert isinstance(genotype_matrix, MagenpyGenotypeMatrix)
+
+    makedir(output_dir)
+    genotype_matrix._validate_cpp_indices()
+
+    m = genotype_matrix.n_snps
+    dtype = np.dtype(dtype)
+    snp_indices = np.ascontiguousarray(genotype_matrix.snp_index, dtype=np.int32)
+    sample_indices = np.ascontiguousarray(genotype_matrix.sample_index, dtype=np.int32)
+    ld_boundaries_end = np.ascontiguousarray(ld_boundaries[1, :], dtype=np.int32)
+    allele_frequencies = genotype_matrix._resolve_allele_frequencies(
+        allele_frequencies=allele_frequencies,
+        for_selected_snps=False
+    )
+
+    fin_ld_store = osp.join(output_dir, 'chr_' + str(genotype_matrix.chromosome))
+
+    row_indices = np.arange(m, dtype=np.int64)
+    indptr_counts = np.maximum(
+        ld_boundaries_end.astype(np.int64) - (row_indices + 1),
+        0
+    ).astype(np.int64)
+    indptr = np.insert(np.cumsum(indptr_counts, dtype=np.int64), 0, 0)
+    total_len = int(indptr[-1])
+
+    store = zarr.DirectoryStore(fin_ld_store)
+    z = zarr.group(store=store, overwrite=overwrite)
+    compressor = zarr.Blosc(cname=compressor_name, clevel=compression_level)
+    mat = z.create_group('matrix')
+    mat.empty('data', shape=total_len, dtype=dtype, compressor=compressor)
+    mat.array('indptr', indptr, dtype=np.int64, compressor=compressor)
+
+    compute_dtype = np.float64 if dtype == np.dtype(np.float64) else np.float32
+    ld_values = compute_ut_ld_from_bed(
+        genotype_matrix.bed_filename,
+        snp_indices,
+        ld_boundaries_end,
+        indptr,
+        sample_indices,
+        genotype_matrix.total_samples,
+        allele_frequencies,
+        impute_missing=impute_missing,
+        threads=genotype_matrix.threads,
+        dtype=compute_dtype
+    )
+
+    if np.issubdtype(dtype, np.integer):
+        mat['data'][:] = quantize(ld_values, int_dtype=dtype)
+    else:
+        mat['data'][:] = ld_values.astype(dtype, copy=False)
+
+    return LDMatrix(z)
+
+
 def compute_ld_xarray(genotype_matrix,
                       ld_boundaries,
                       output_dir,

@@ -1,15 +1,23 @@
-from setuptools import setup, Extension, find_packages
+import os
+import warnings
+
+import numpy as np
+import pkgconfig
 from extension_helpers import add_openmp_flags_if_available
 from extension_helpers._openmp_helpers import check_openmp_support
-import pkgconfig
-import numpy as np
-import warnings
-import os
+from setuptools import Extension, find_packages, setup
 
 try:
     from Cython.Build import cythonize
 except ImportError:
     cythonize = None
+
+ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
+version_ns = {}
+with open(os.path.join(ROOT_DIR, "magenpy", "_version.py"), encoding="utf-8") as fp:
+    exec(fp.read(), version_ns)
+
+PACKAGE_VERSION = version_ns["__version__"]
 
 # ------------------------------------------------------
 # Find and set BLAS-related flags and paths:
@@ -45,7 +53,7 @@ def find_blas_libraries():
     conda_path = os.getenv("CONDA_PREFIX")
 
     if conda_path is not None:
-        conda_pkgconfig_path = os.path.join(conda_path, 'lib/pkgconfig')
+        conda_pkgconfig_path = os.path.join(conda_path, "lib/pkgconfig")
         if os.path.isdir(conda_pkgconfig_path):
             current_pkg_config_path += ":" + conda_pkgconfig_path
 
@@ -56,8 +64,7 @@ def find_blas_libraries():
     # those that have "blas" in the name.
     # NOTE: This step may not work on some systems...
     try:
-        blas_packages = [pkg for pkg in pkgconfig.list_all()
-                         if "blas" in pkg]
+        blas_packages = [pkg for pkg in pkgconfig.list_all() if "blas" in pkg]
     except Exception as e:
         print(e)
         blas_packages = []
@@ -65,10 +72,14 @@ def find_blas_libraries():
     # First check: Make sure that compiler flags are defined and a
     # valid cblas.h header file exists in the include directory:
     if len(blas_packages) >= 1:
-
-        blas_packages = [pkg for pkg in blas_packages
-                         if pkgconfig.cflags(pkg) and
-                         os.path.isfile(os.path.join(pkgconfig.variables(pkg)['includedir'], 'cblas.h'))]
+        blas_packages = [
+            pkg
+            for pkg in blas_packages
+            if pkgconfig.cflags(pkg)
+            and os.path.isfile(
+                os.path.join(pkgconfig.variables(pkg)["includedir"], "cblas.h")
+            )
+        ]
 
     # If there remains more than one library after the previous
     # search and filtering steps, then apply some heuristics
@@ -81,7 +92,7 @@ def find_blas_libraries():
         # we use it to link to the same library as numpy:
         try:
             for pkg in blas_packages:
-                if pkg in np.__config__.get_info('blas_opt')['libraries']:
+                if pkg in np.__config__.get_info("blas_opt")["libraries"]:
                     blas_packages = [pkg]
                     break
         except (KeyError, AttributeError):
@@ -100,12 +111,14 @@ def find_blas_libraries():
         idx_to_remove = set()
 
         for pkg1 in blas_packages:
-            if pkg1 != 'blas':
+            if pkg1 != "blas":
                 for i, pkg2 in enumerate(blas_packages):
                     if pkg1 != pkg2 and pkg1 in pkg2:
                         idx_to_remove.add(i)
 
-        blas_packages = [pkg for i, pkg in enumerate(blas_packages) if i not in idx_to_remove]
+        blas_packages = [
+            pkg for i, pkg in enumerate(blas_packages) if i not in idx_to_remove
+        ]
 
     # After applying all the heuristics, out of all the remaining libraries,
     # select the first one in the list. Not the greatest solution, maybe
@@ -120,22 +133,25 @@ def find_blas_libraries():
 
     if final_blas_pkg is not None:
         blas_info = pkgconfig.parse(final_blas_pkg)
-        blas_info['define_macros'] = [('HAVE_CBLAS', None)]
+        blas_info["define_macros"] = [("HAVE_CBLAS", None)]
     else:
         blas_info = {
-            'include_dirs': [],
-            'library_dirs': [],
-            'libraries': [],
-            'define_macros': [],
+            "include_dirs": [],
+            "library_dirs": [],
+            "libraries": [],
+            "define_macros": [],
         }
-        warnings.warn("""
+        warnings.warn(
+            """
             ********************* WARNING *********************
-            BLAS library header files not found on your system. 
-            This may slow down some computations. If you are 
-            using conda, we recommend installing BLAS libraries 
+            BLAS library header files not found on your system.
+            This may slow down some computations. If you are
+            using conda, we recommend installing BLAS libraries
             beforehand.
             ********************* WARNING *********************
-        """, stacklevel=2)
+        """,
+            stacklevel=2,
+        )
 
     return blas_info
 
@@ -169,31 +185,49 @@ def no_cythonize(extensions, **_ignore):
 
 
 extensions = [
-    Extension("magenpy.stats.ld.c_utils",
-              sources=["magenpy/stats/ld/c_utils.pyx"],
-              language="c++",
-              libraries=blas_flags['libraries'],
-              include_dirs=[np.get_include()] + blas_flags['include_dirs'],
-              library_dirs=blas_flags['library_dirs'],
-              define_macros=[("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")] + blas_flags['define_macros'],
-              extra_compile_args=["-O3", "-std=c++17"]
-              ),
-    # Not ready yet:
-    # Extension("magenpy.stats.score.score_cpp",
-    #          sources=["magenpy/stats/score/score_cpp.pyx"],
-    #          include_dirs=[np.get_include()],
-    #          language='c++'
-    #          )
+    Extension(
+        "magenpy.stats.ld.c_utils",
+        sources=["magenpy/stats/ld/c_utils.pyx"],
+        language="c++",
+        libraries=blas_flags["libraries"],
+        include_dirs=[np.get_include()] + blas_flags["include_dirs"],
+        library_dirs=blas_flags["library_dirs"],
+        define_macros=[("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")]
+        + blas_flags["define_macros"],
+        extra_compile_args=["-O3", "-std=c++17"],
+    ),
+    Extension(
+        "magenpy.stats.score.score_cpp",
+        sources=["magenpy/stats/score/score_cpp.pyx"],
+        include_dirs=[np.get_include()],
+        language="c++",
+        extra_compile_args=["-O3", "-std=c++17"],
+    ),
+    Extension(
+        "magenpy.stats.variant.variant_cpp",
+        sources=["magenpy/stats/variant/variant_cpp.pyx"],
+        include_dirs=[np.get_include()],
+        language="c++",
+        extra_compile_args=["-O3", "-std=c++17"],
+    ),
 ]
+
+for extension in extensions:
+    if extension.name in {
+        "magenpy.stats.ld.c_utils",
+        "magenpy.stats.score.score_cpp",
+        "magenpy.stats.variant.variant_cpp",
+    }:
+        add_openmp_flags_if_available(extension)
 
 if cythonize is not None:
     compiler_directives = {
         "language_level": 3,
         "embedsignature": True,
-        'boundscheck': False,
-        'wraparound': False,
-        'nonecheck': False,
-        'cdivision': True
+        "boundscheck": False,
+        "wraparound": False,
+        "nonecheck": False,
+        "cdivision": True,
     }
     extensions = cythonize(extensions, compiler_directives=compiler_directives)
 else:
@@ -221,37 +255,43 @@ with open("requirements-docs.txt") as fp:
 
 setup(
     name="magenpy",
-    version="0.1.6",
+    version=PACKAGE_VERSION,
     author="Shadi Zabad",
-    author_email="shadi.zabad@mail.mcgill.ca",
+    author_email="shadi.zabad@stats.ox.ac.uk",
     description="Modeling and Analysis of Statistical Genetics data in python",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/shz9/magenpy",
     classifiers=[
-        'Programming Language :: Python',
-        'Intended Audience :: Developers',
-        'Intended Audience :: Science/Research',
-        'Topic :: Software Development :: Libraries :: Python Modules',
-        'Topic :: Scientific/Engineering',
-        'Operating System :: OS Independent',
-        'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.10',
-        'Programming Language :: Python :: 3.11',
-        'Programming Language :: Python :: 3.12',
-        'Programming Language :: Python :: 3.13',
-        'Programming Language :: Python :: 3.14'
+        "Programming Language :: Python",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Science/Research",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Topic :: Scientific/Engineering",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
     ],
-    package_dir={'': '.'},
+    package_dir={"": "."},
     packages=find_packages(),
     python_requires=">=3.10",
-    package_data={'magenpy': ['data/*.bed', 'data/*.bim', 'data/*.fam',
-                              'data/ukb_height_chr22.fastGWA.gz',
-                              'data/lrld_hg19_GRCh37.txt',
-                              'config/*.ini']},
-    scripts=['bin/magenpy_ld', 'bin/magenpy_simulate'],
+    package_data={
+        "magenpy": [
+            "data/*.bed",
+            "data/*.bim",
+            "data/*.fam",
+            "data/ukb_height_chr22.fastGWA.gz",
+            "data/lrld_hg19_GRCh37.txt",
+            "config/*.ini",
+        ]
+    },
+    scripts=["bin/magenpy_ld", "bin/magenpy_simulate"],
     install_requires=install_requires,
-    extras_require={'opt': opt_requires, 'test': test_requires, 'docs': docs_requires},
+    extras_require={"opt": opt_requires, "test": test_requires, "docs": docs_requires},
     ext_modules=extensions,
-    zip_safe=False
+    zip_safe=False,
 )

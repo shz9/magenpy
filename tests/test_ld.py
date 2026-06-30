@@ -1,8 +1,10 @@
-import numpy as np
-import magenpy as mgp
 import shutil
+
+import numpy as np
 import pytest
 from scipy.sparse import csr_matrix
+
+import magenpy as mgp
 
 
 def _basic_ld_checks(gdl: mgp.GWADataLoader):
@@ -28,14 +30,13 @@ def _basic_ld_checks(gdl: mgp.GWADataLoader):
     return True
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def gdl_object():
     """
     Initialize a GWADataLoader using data pre-packaged with magenpy.
     Make this data loader available to all tests.
     """
-    gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(),
-                            backend='xarray')
+    gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(), backend="magenpy")
 
     # Extract a smaller subset of variants for testing:
     np.random.seed(0)
@@ -50,13 +51,13 @@ def gdl_object():
     shutil.rmtree(gdl.output_dir)
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def sample_ld(gdl_object: mgp.GWADataLoader):
     """
     Test the LD computation functionality according to the Sample estimator
     """
 
-    gdl_object.compute_ld('sample', gdl_object.output_dir)
+    gdl_object.compute_ld("sample", gdl_object.output_dir)
     gdl_object.harmonize_data()
 
     _basic_ld_checks(gdl_object)
@@ -64,18 +65,20 @@ def sample_ld(gdl_object: mgp.GWADataLoader):
     yield gdl_object.ld[22]
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def windowed_ld(gdl_object: mgp.GWADataLoader):
     """
     Test the LD computation functionality according to the Windowed estimator
     """
 
-    gdl_object.compute_ld('windowed',
-                          gdl_object.output_dir,
-                          compute_spectral_properties=True,
-                          window_size=500,
-                          kb_window_size=100,
-                          cm_window_size=3.)
+    gdl_object.compute_ld(
+        "windowed",
+        gdl_object.output_dir,
+        compute_spectral_properties=True,
+        window_size=500,
+        kb_window_size=100,
+        cm_window_size=3.0,
+    )
     gdl_object.harmonize_data()
 
     _basic_ld_checks(gdl_object)
@@ -83,16 +86,18 @@ def windowed_ld(gdl_object: mgp.GWADataLoader):
     yield gdl_object.ld[22]
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def shrinkage_ld(gdl_object: mgp.GWADataLoader):
     """
     Test the LD computation functionality according to the Shrinkage estimator
     """
 
-    gdl_object.compute_ld('shrinkage',
-                          gdl_object.output_dir,
-                          genetic_map_ne=11400,
-                          genetic_map_sample_size=183)
+    gdl_object.compute_ld(
+        "shrinkage",
+        gdl_object.output_dir,
+        genetic_map_ne=11400,
+        genetic_map_sample_size=183,
+    )
     gdl_object.harmonize_data()
 
     _basic_ld_checks(gdl_object)
@@ -100,15 +105,17 @@ def shrinkage_ld(gdl_object: mgp.GWADataLoader):
     yield gdl_object.ld[22]
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def block_ld(gdl_object: mgp.GWADataLoader):
     """
     Test the LD computation functionality according to the Block estimator
     """
 
-    ld_block_url = ("https://bitbucket.org/nygcresearch/ldetect-data/raw/"
-                    "ac125e47bf7ff3e90be31f278a7b6a61daaba0dc/EUR/fourier_ls-all.bed")
-    gdl_object.compute_ld('block', gdl_object.output_dir, ld_blocks_file=ld_block_url)
+    ld_block_url = (
+        "https://bitbucket.org/nygcresearch/ldetect-data/raw/"
+        "ac125e47bf7ff3e90be31f278a7b6a61daaba0dc/EUR/fourier_ls-all.bed"
+    )
+    gdl_object.compute_ld("block", gdl_object.output_dir, ld_blocks_file=ld_block_url)
     gdl_object.harmonize_data()
 
     _basic_ld_checks(gdl_object)
@@ -191,7 +198,6 @@ def test_ld_linear_operator(block_ld: mgp.LDMatrix):
     boundaries = [(0, 100), (150, 250), (lop.shape[0] - 100, lop.shape[0])]
 
     for start, end in boundaries:
-
         # Extract a numpy block from the linear operator directly:
         numpy_block = lop.to_numpy(block_start=start, block_end=end)
 
@@ -213,7 +219,7 @@ def test_ld_linear_operator(block_ld: mgp.LDMatrix):
         assert np.allclose(numpy_block, numpy_block.T)
 
         # Check that the block contains all ones along the diagonal:
-        assert np.allclose(np.diag(numpy_block), 1.)
+        assert np.allclose(np.diag(numpy_block), 1.0)
 
 
 def test_from_csr_accepts_empty_rows_when_contiguous(tmp_path):
@@ -234,8 +240,8 @@ def test_from_csr_accepts_empty_rows_when_contiguous(tmp_path):
         csr,
         store_path=str(tmp_path / "ld_contiguous_with_empty_rows.zarr"),
         overwrite=True,
-        dtype='float32',
-        fill_missing_zeros=False
+        dtype="float32",
+        fill_missing_zeros=False,
     )
 
     out = ld.to_csr().toarray()
@@ -268,8 +274,8 @@ def test_from_csr_fills_non_contiguous_rows_with_zeros(tmp_path):
         csr,
         store_path=str(tmp_path / "ld_non_contiguous_auto_fix.zarr"),
         overwrite=True,
-        dtype='float32',
-        fill_missing_zeros=True
+        dtype="float32",
+        fill_missing_zeros=True,
     )
 
     # Rows after repair:
@@ -301,6 +307,6 @@ def test_from_csr_strict_mode_raises_on_non_contiguous_rows(tmp_path):
             csr,
             store_path=str(tmp_path / "ld_non_contiguous_strict.zarr"),
             overwrite=True,
-            dtype='float32',
-            fill_missing_zeros=False
+            dtype="float32",
+            fill_missing_zeros=False,
         )

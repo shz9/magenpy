@@ -1,19 +1,23 @@
-import numpy as np
-import magenpy as mgp
 import shutil
+
+import numpy as np
 import pytest
 
+import magenpy as mgp
 
-@pytest.fixture(scope='module')
+
+@pytest.fixture(scope="module")
 def gdl_object():
     """
     Initialize a GWADataLoader using data pre-packaged with magenpy.
     Make this data loader available to all tests.
     """
-    gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(),
-                            sumstats_files=mgp.ukb_height_sumstats_path(),
-                            sumstats_format='fastgwa',
-                            backend='xarray')
+    gdl = mgp.GWADataLoader(
+        mgp.tgp_eur_data_path(),
+        sumstats_files=mgp.ukb_height_sumstats_path(),
+        sumstats_format="fastgwa",
+        backend="magenpy",
+    )
 
     yield gdl
 
@@ -31,7 +35,9 @@ def test_basic_properties(gdl_object):
     # Check basic shapes parameters:
     assert gdl_object is not None
     assert len(gdl_object.sample_table) == gdl_object.n == 378  # Sample size
-    assert gdl_object.m == len(gdl_object.sumstats_table[22]) == 15935  # Number of variants
+    assert (
+        gdl_object.m == len(gdl_object.sumstats_table[22]) == 15935
+    )  # Number of variants
     assert gdl_object.shapes == {22: 15935}  # Number of variants per chromosome
     assert gdl_object.chromosomes == [22]  # List of chromosomes
     assert gdl_object.n_annotations is None  # Number of annotations
@@ -41,12 +47,20 @@ def test_basic_properties(gdl_object):
     assert gdl_object.genotype is not None
     assert gdl_object.sumstats_table is not None
 
-    assert gdl_object.genotype[22].n_snps == gdl_object.n_snps == gdl_object.sumstats_table[22].n_snps
+    assert (
+        gdl_object.genotype[22].n_snps
+        == gdl_object.n_snps
+        == gdl_object.sumstats_table[22].n_snps
+    )
     assert gdl_object.genotype[22].n == gdl_object.n
     # Check that the variant IDs are harmonized:
-    assert np.array_equal(gdl_object.genotype[22].snps, gdl_object.sumstats_table[22].snps)
+    assert np.array_equal(
+        gdl_object.genotype[22].snps, gdl_object.sumstats_table[22].snps
+    )
     # Check that the variant positions are harmonized:
-    assert np.array_equal(gdl_object.genotype[22].bp_pos, gdl_object.sumstats_table[22].bp_pos)
+    assert np.array_equal(
+        gdl_object.genotype[22].bp_pos, gdl_object.sumstats_table[22].bp_pos
+    )
     # Check that the alternative alleles are harmonized:
     assert np.array_equal(gdl_object.genotype[22].a1, gdl_object.sumstats_table[22].a1)
 

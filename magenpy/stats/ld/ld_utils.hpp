@@ -3,189 +3,102 @@
 
 #include <cmath>
 #include <algorithm>
+#include <cstdint>
+#include <fstream>
+#include <limits>
 #include <stdio.h>
+#include <stdexcept>
+#include <string>
 #include <vector>
 #include <iostream>
 #include <type_traits>
 
-// Check for and include `cblas`:
-#ifdef HAVE_CBLAS
-    #include <cblas.h>
-#endif
+#include "../../utils/linear_algebra_utils.hpp"
+#include "../../utils/plink_bed_utils.hpp"
 
-// Check for and include `omp`:
-#ifdef _OPENMP
-    #include <omp.h>
-#endif
+template<typename T>
+typename std::enable_if<std::is_floating_point<T>::value, void>::type
+decode_standardized_ld_bed_row(const unsigned char* bed_row,
+                               const std::vector<SelectedSampleByte>& sample_groups,
+                               int num_samples,
+                               T allele_frequency,
+                               bool impute_missing,
+                               const PlinkDosageLookup& lookup,
+                               T* values,
+                               uint8_t* observed) {
 
-
-/* ----------------------------- */
-// Helper system-related functions to check for BLAS and OpenMP support
-
-bool omp_supported() {
-    /* Check if OpenMP is supported by examining compiler flags. */
-    #ifdef _OPENMP
-        return true;
-    #else
-        return false;
-    #endif
-}
-
-bool blas_supported() {
-    /* Check if BLAS is supported by examining compiler flags. */
-    #ifdef HAVE_CBLAS
-        return true;
-    #else
-        return false;
-    #endif
-}
-
-/* ------------------------------ */
-// Dot product functions
-
-// Define a function pointer for the dot product functions `dot` and `blas_dot`:
-template <typename T, typename U>
-using dot_func_pt = typename std::enable_if<std::is_floating_point<T>::value && std::is_arithmetic<U>::value, T>::type (*)(T*, U*, int);
-
-/* * * * * */
-
-template <typename T, typename U>
-typename std::enable_if<std::is_floating_point<T>::value && std::is_arithmetic<U>::value, T>::type
-dot(T* x, U* y, int size) {
-    /* Perform dot product between two vectors x and y, each of length `size`
-
-    :param x: Pointer to the first element of the first vector
-    :param y: Pointer to the first element of the second vector
-    :param size: Length of the vectors
-
-    */
-
-    T s = 0.;
-
-    #ifdef _OPENMP
-        #ifndef _WIN32
-            #pragma omp simd
-        #endif
-    #endif
-    for (int i = 0; i < size; ++i) {
-        s += x[i]*static_cast<T>(y[i]);
+    if (!std::isfinite(static_cast<double>(allele_frequency)) ||
+        allele_frequency < T(0) || allele_frequency > T(1)) {
+        throw std::out_of_range("Allele frequencies must be in [0, 1].");
     }
-    return s;
-}
 
-/* * * * * */
+    const T imputed_dosage = static_cast<T>(2) * allele_frequency;
+    T sum = T(0);
+    int count = 0;
 
-template <typename T, typename U>
-typename std::enable_if<std::is_floating_point<T>::value && std::is_arithmetic<U>::value, T>::type
-blas_dot(T* x, U* y, int size) {
-    /*
-        Use BLAS (if available) to perform dot product
-        between two vectors x and y, each of length `size`.
+    std::fill(values, values + num_samples, T(0));
+    if (observed != nullptr) {
+        std::fill(observed, observed + num_samples, static_cast<uint8_t>(0));
+    }
 
-        :param x: Pointer to the first element of the first vector
-        :param y: Pointer to the first element of the second vector
-        :param size: Length of the vectors
-    */
+    for (const SelectedSampleByte& group : sample_groups) {
+        const unsigned char byte = bed_row[group.byte_index];
 
-    #ifdef HAVE_CBLAS
-        int incx = 1;
-        int incy = 1;
+        for (int slot = 0; slot < 4; ++slot) {
+            const int output_index = group.output_index[slot];
+            if (output_index < 0) {
+                continue;
+            }
 
-        if constexpr (std::is_same<T, float>::value) {
-            if constexpr (std::is_same<U, float>::value) {
-                return cblas_sdot(size, x, incx, y, incy);
-            } else {
-                // Handles the case where y is any data type that is not a float:
-                std::vector<float> y_float(size);
-                std::transform(y, y + size, y_float.begin(),  [](U val) { return static_cast<float>(val);});
-                return cblas_sdot(size, x, incx, y_float.data(), incy);
+            const int8_t dosage = lookup.dosage[byte][slot];
+
+            if (dosage >= 0) {
+                values[output_index] = static_cast<T>(dosage);
+                sum += values[output_index];
+                ++count;
+                if (observed != nullptr) {
+                    observed[output_index] = 1;
+                }
+            }
+            else if (impute_missing) {
+                values[output_index] = imputed_dosage;
+                sum += values[output_index];
+                ++count;
+                if (observed != nullptr) {
+                    observed[output_index] = 1;
+                }
             }
         }
-        else if constexpr (std::is_same<T, double>::value) {
-            if constexpr (std::is_same<U, double>::value) {
-                return cblas_ddot(size, x, incx, y, incy);
-            } else {
-                // Handles the case where y is any data type that is not a double:
-                std::vector<double> y_double(size);
-                std::transform(y, y + size, y_double.begin(),  [](U val) { return static_cast<double>(val);});
-                return cblas_ddot(size, x, incx, y_double.data(), incy);
-            }
+    }
+
+    if (count == 0) {
+        return;
+    }
+
+    const T mean = sum / static_cast<T>(count);
+    T sum_squares = T(0);
+
+    for (int sample_pos = 0; sample_pos < num_samples; ++sample_pos) {
+        if (impute_missing || observed[sample_pos]) {
+            const T centered = values[sample_pos] - mean;
+            values[sample_pos] = centered;
+            sum_squares += centered * centered;
         }
-    #else
-        return dot(x, y, size);
-    #endif
-}
+    }
 
-/* * * * * */
+    if (sum_squares <= T(0)) {
+        std::fill(values, values + num_samples, T(0));
+        return;
+    }
 
-// Define a function pointer for the axpy functions `axpy` and `blas_axpy`:
-template <typename T, typename U>
-using axpy_func_pt = typename std::enable_if<std::is_floating_point<T>::value && std::is_arithmetic<U>::value, void>::type (*)(T*, U*, T, int);
+    const T inverse_sd = static_cast<T>(
+        std::sqrt(static_cast<double>(count) / static_cast<double>(sum_squares))
+    );
 
-/* * * * * */
-
-template <typename T, typename U>
-typename std::enable_if<std::is_floating_point<T>::value && std::is_arithmetic<U>::value, void>::type
-axpy(T* x, U* y, T alpha, int size) {
-    /*
-        Perform axpy operation on two vectors x and y, each of length `size`.
-       axpy is a standard linear algebra operation that performs
-       element-wise addition and multiplication:
-       x := x + a*y.
-    */
-
-    #ifdef _OPENMP
-        #ifndef _WIN32
-            #pragma omp simd
-        #endif
-    #endif
-    for (int i = 0; i < size; ++i) {
-        x[i] += static_cast<T>(y[i]) * alpha;
+    for (int sample_pos = 0; sample_pos < num_samples; ++sample_pos) {
+        values[sample_pos] *= inverse_sd;
     }
 }
-
-/* * * * * */
-
-template <typename T, typename U>
-typename std::enable_if<std::is_floating_point<T>::value && std::is_arithmetic<U>::value, void>::type
-blas_axpy(T *y, U *x, T alpha, int size) {
-    /*
-        Use BLAS (if available) to perform axpy operation on two vectors x and y,
-        each of length `size`.
-       axpy is a standard linear algebra operation that performs
-       element-wise addition and multiplication:
-       x := x + a*y.
-    */
-
-    #ifdef HAVE_CBLAS
-        int incx = 1;
-        int incy = 1;
-
-        if constexpr (std::is_same<T, float>::value) {
-            if constexpr (std::is_same<U, float>::value) {
-                cblas_saxpy(size, alpha, x, incx, y, incy);
-            } else {
-                // Handles the case where x is any data type that is not a float:
-                std::vector<float> x_float(size);
-                std::transform(x, x + size, x_float.begin(),  [](U val) { return static_cast<float>(val);});
-                cblas_saxpy(size, alpha, x_float.data(), incx, y, incy);
-            }
-        }
-        else if constexpr (std::is_same<T, double>::value) {
-            if constexpr (std::is_same<U, double>::value) {
-                cblas_daxpy(size, alpha, x, incx, y, incy);
-            } else {
-                // Handles the case where x is any data type that is not a float:
-                std::vector<double> x_double(size);
-                std::transform(x, x + size, x_double.begin(),  [](U val) { return static_cast<double>(val);});
-                cblas_daxpy(size, alpha, x_double.data(), incx, y, incy);
-            }
-        }
-    #else
-        axpy(y, x, alpha, size);
-    #endif
-}
-
 
 template <typename T, typename U, typename I>
 typename std::enable_if<std::is_floating_point<T>::value && std::is_arithmetic<U>::value && std::is_integral<I>::value, void>::type
@@ -328,6 +241,353 @@ ld_rank_one_update(int c_size,
         for (int i = 0; i < ld_end - ld_start; ++i) {
             col_idx = ld_left_bound[j] + i; // The column index of the entry in the full matrix
             out[ld_start + i] = ld_data[ld_start + i]*dq_scale + alpha*vec[j]*vec[col_idx];
+        }
+    }
+}
+
+
+template<typename T>
+typename std::enable_if<std::is_floating_point<T>::value, void>::type
+compute_ld_from_bed(std::string bed_filename,
+                    const int* ref_snp_indices,
+                    const int* alt_snp_indices,
+                    int num_pairs,
+                    const int* sample_indices,
+                    int total_samples,
+                    int num_samples,
+                    const T* allele_frequencies,
+                    bool impute_missing,
+                    T* ld_data,
+                    int threads) {
+    /*
+        Compute LD directly from a SNP-major PLINK BED file for paired variant
+        indices.
+
+        Each output entry corresponds to one pair:
+            ld_data[pair_idx] = corr(ref_snp_indices[pair_idx], alt_snp_indices[pair_idx])
+
+        Allele frequencies are expected to be indexed by BED variant index, so
+        the frequency for SNP `snp_index` is `allele_frequencies[snp_index]`.
+        If missing genotypes are imputed, the imputed dosage is `2p`.
+        Genotypes are then centered and scaled by their empirical mean and
+        standard deviation over the selected samples.
+
+        If `impute_missing` is true, missing dosages are mean-imputed and
+        therefore contribute zero after standardization. Otherwise, missing
+        genotypes are excluded from each pair's denominator.
+    */
+
+    if (total_samples <= 0) {
+        throw std::invalid_argument("Total BED sample count must be positive.");
+    }
+    if (num_pairs < 0 || num_samples < 0) {
+        throw std::invalid_argument("Invalid LD calculation dimensions.");
+    }
+    if ((num_pairs > 0 && ref_snp_indices == nullptr) ||
+        (num_pairs > 0 && alt_snp_indices == nullptr) ||
+        (num_samples > 0 && sample_indices == nullptr) ||
+        allele_frequencies == nullptr ||
+        (num_pairs > 0 && ld_data == nullptr)) {
+        throw std::invalid_argument("Null pointer passed to compute_ld_from_bed.");
+    }
+
+    if (num_pairs == 0) {
+        return;
+    }
+
+    validate_plink_bed_file(bed_filename);
+
+    const std::vector<SelectedSampleByte> sample_groups =
+        group_selected_samples_by_byte(sample_indices, total_samples, num_samples);
+
+    if (num_samples == 0) {
+        std::fill(ld_data, ld_data + num_pairs, T(0));
+        return;
+    }
+
+    const std::streamoff variant_stride = plink_bed_variant_stride(total_samples);
+    const size_t stride = static_cast<size_t>(variant_stride);
+    const int num_threads = threads > 0 ? threads : 1;
+    const PlinkDosageLookup lookup;
+
+    for (int pair_idx = 0; pair_idx < num_pairs; ++pair_idx) {
+        const int ref_snp_index = ref_snp_indices[pair_idx];
+        const int alt_snp_index = alt_snp_indices[pair_idx];
+
+        if (ref_snp_index < 0 || alt_snp_index < 0) {
+            throw std::out_of_range("Reference SNP index must be non-negative.");
+        }
+
+        const T ref_allele_frequency = allele_frequencies[ref_snp_index];
+        const T alt_allele_frequency = allele_frequencies[alt_snp_index];
+        if (!std::isfinite(static_cast<double>(ref_allele_frequency)) ||
+            !std::isfinite(static_cast<double>(alt_allele_frequency)) ||
+            ref_allele_frequency < T(0) || ref_allele_frequency > T(1) ||
+            alt_allele_frequency < T(0) || alt_allele_frequency > T(1)) {
+            throw std::out_of_range("Allele frequencies must be in [0, 1].");
+        }
+    }
+
+    #ifdef _OPENMP
+        #pragma omp parallel num_threads(num_threads)
+        {
+    #endif
+            std::ifstream bed_file(bed_filename, std::ios::binary);
+            if (!bed_file.is_open()) {
+                throw std::runtime_error("Error opening BED file.");
+            }
+
+            std::vector<unsigned char> ref_row(stride);
+            std::vector<unsigned char> alt_row(stride);
+            std::vector<T> ref_values(static_cast<size_t>(num_samples));
+            std::vector<T> alt_values(static_cast<size_t>(num_samples));
+            std::vector<uint8_t> ref_observed;
+            std::vector<uint8_t> alt_observed;
+            if (!impute_missing) {
+                ref_observed.resize(static_cast<size_t>(num_samples));
+                alt_observed.resize(static_cast<size_t>(num_samples));
+            }
+
+            #ifdef _OPENMP
+                #pragma omp for schedule(static)
+            #endif
+            for (int pair_idx = 0; pair_idx < num_pairs; ++pair_idx) {
+                const int ref_snp_index = ref_snp_indices[pair_idx];
+                const int alt_snp_index = alt_snp_indices[pair_idx];
+
+                read_plink_bed_row(bed_file, ref_snp_index, variant_stride, ref_row.data());
+                read_plink_bed_row(bed_file, alt_snp_index, variant_stride, alt_row.data());
+
+                uint8_t* ref_observed_ptr = impute_missing ? nullptr : ref_observed.data();
+                uint8_t* alt_observed_ptr = impute_missing ? nullptr : alt_observed.data();
+
+                decode_standardized_ld_bed_row(ref_row.data(),
+                                               sample_groups,
+                                               num_samples,
+                                               allele_frequencies[ref_snp_index],
+                                               impute_missing,
+                                               lookup,
+                                               ref_values.data(),
+                                               ref_observed_ptr);
+
+                decode_standardized_ld_bed_row(alt_row.data(),
+                                               sample_groups,
+                                               num_samples,
+                                               allele_frequencies[alt_snp_index],
+                                               impute_missing,
+                                               lookup,
+                                               alt_values.data(),
+                                               alt_observed_ptr);
+
+                T cross_product = blas_dot(ref_values.data(),
+                                           alt_values.data(),
+                                           num_samples);
+
+                int denominator = num_samples;
+                if (!impute_missing) {
+                    denominator = 0;
+                    for (int sample_pos = 0; sample_pos < num_samples; ++sample_pos) {
+                        if (ref_observed[sample_pos] && alt_observed[sample_pos]) {
+                            ++denominator;
+                        }
+                    }
+                }
+
+                ld_data[pair_idx] = denominator > 0 ?
+                    cross_product / static_cast<T>(denominator) : T(0);
+            }
+    #ifdef _OPENMP
+        }
+    #endif
+}
+
+
+template<typename T>
+typename std::enable_if<std::is_floating_point<T>::value, void>::type
+compute_ut_ld_from_bed(std::string bed_filename,
+                       const int* snp_indices,
+                       const int* ld_boundaries_end,
+                       const int64_t* ld_indptr,
+                       int num_snps,
+                       const int* sample_indices,
+                       int total_samples,
+                       int num_samples,
+                       const T* allele_frequencies,
+                       bool impute_missing,
+                       T* ld_data,
+                       int threads) {
+    /*
+        Compute the flat data array for an upper-triangular LD matrix directly
+        from a SNP-major PLINK BED file.
+
+        For each selected row `j`, this computes LD with selected columns
+        `[j + 1, ld_boundaries_end[j])`. Output entries are stored in CSR order:
+
+            ld_data[ld_indptr[j] + k] = corr(snp_indices[j], snp_indices[j + 1 + k])
+
+        Allele frequencies are indexed by original BED variant index.
+    */
+
+    if (total_samples <= 0) {
+        throw std::invalid_argument("Total BED sample count must be positive.");
+    }
+    if (num_snps < 0 || num_samples < 0) {
+        throw std::invalid_argument("Invalid LD calculation dimensions.");
+    }
+    if ((num_snps > 0 && snp_indices == nullptr) ||
+        (num_snps > 0 && ld_boundaries_end == nullptr) ||
+        (num_snps > 0 && ld_indptr == nullptr) ||
+        (num_samples > 0 && sample_indices == nullptr) ||
+        allele_frequencies == nullptr ||
+        (num_snps > 0 && ld_indptr[num_snps] > 0 && ld_data == nullptr)) {
+        throw std::invalid_argument("Null pointer passed to compute_ut_ld_from_bed.");
+    }
+
+    if (num_snps == 0) {
+        return;
+    }
+
+    if (ld_indptr[0] != 0) {
+        throw std::invalid_argument("LD indptr must start at zero.");
+    }
+
+    for (int j = 0; j < num_snps; ++j) {
+        const int snp_index = snp_indices[j];
+        const int row_start = j + 1;
+        const int row_end = ld_boundaries_end[j];
+        const int row_len = std::max(row_end - row_start, 0);
+        const int64_t stored_row_len = ld_indptr[j + 1] - ld_indptr[j];
+
+        if (snp_index < 0) {
+            throw std::out_of_range("SNP index must be non-negative.");
+        }
+        if (row_end < 0 || row_end > num_snps) {
+            throw std::out_of_range("LD boundary end is outside the selected SNP range.");
+        }
+        if (ld_indptr[j + 1] < ld_indptr[j] ||
+            stored_row_len != static_cast<int64_t>(row_len)) {
+            throw std::invalid_argument("LD indptr is inconsistent with LD boundaries.");
+        }
+
+        const T allele_frequency = allele_frequencies[snp_index];
+        if (!std::isfinite(static_cast<double>(allele_frequency)) ||
+            allele_frequency < T(0) || allele_frequency > T(1)) {
+            throw std::out_of_range("Allele frequencies must be in [0, 1].");
+        }
+
+    }
+
+    validate_plink_bed_file(bed_filename);
+
+    const std::vector<SelectedSampleByte> sample_groups =
+        group_selected_samples_by_byte(sample_indices, total_samples, num_samples);
+
+    if (num_samples == 0) {
+        std::fill(ld_data, ld_data + ld_indptr[num_snps], T(0));
+        return;
+    }
+
+    const std::streamoff variant_stride = plink_bed_variant_stride(total_samples);
+    const size_t stride = static_cast<size_t>(variant_stride);
+    const int num_threads = threads > 0 ? threads : 1;
+    const PlinkDosageLookup lookup;
+
+    const size_t values_per_variant = static_cast<size_t>(num_samples);
+    const size_t num_selected_variants = static_cast<size_t>(num_snps);
+    if (values_per_variant > 0 &&
+        num_selected_variants > std::numeric_limits<size_t>::max() / values_per_variant) {
+        throw std::length_error("Selected genotype matrix is too large to allocate.");
+    }
+
+    const size_t genotype_values_size = num_selected_variants * values_per_variant;
+    std::vector<T> genotype_values(genotype_values_size);
+    std::vector<uint8_t> observed_values;
+    if (!impute_missing) {
+        observed_values.resize(genotype_values_size);
+    }
+
+    #ifdef _OPENMP
+        #pragma omp parallel num_threads(num_threads)
+        {
+    #endif
+            std::ifstream bed_file(bed_filename, std::ios::binary);
+            if (!bed_file.is_open()) {
+                throw std::runtime_error("Error opening BED file.");
+            }
+
+            std::vector<unsigned char> bed_row(stride);
+
+            #ifdef _OPENMP
+                #pragma omp for schedule(static)
+            #endif
+            for (int j = 0; j < num_snps; ++j) {
+                const int snp_index = snp_indices[j];
+                T* genotype_row = genotype_values.data() +
+                    static_cast<size_t>(j) * values_per_variant;
+                uint8_t* observed_row = impute_missing ? nullptr :
+                    observed_values.data() + static_cast<size_t>(j) * values_per_variant;
+
+                read_plink_bed_row(bed_file, snp_index, variant_stride, bed_row.data());
+                decode_standardized_ld_bed_row(bed_row.data(),
+                                               sample_groups,
+                                               num_samples,
+                                               allele_frequencies[snp_index],
+                                               impute_missing,
+                                               lookup,
+                                               genotype_row,
+                                               observed_row);
+            }
+    #ifdef _OPENMP
+        }
+    #endif
+
+    #ifdef _OPENMP
+        #pragma omp parallel for schedule(static) num_threads(num_threads)
+    #endif
+    for (int j = 0; j < num_snps; ++j) {
+        const int row_start = j + 1;
+        const int row_end = ld_boundaries_end[j];
+
+        if (row_end <= row_start) {
+            continue;
+        }
+
+        const T* ref_values = genotype_values.data() +
+            static_cast<size_t>(j) * values_per_variant;
+        const uint8_t* ref_observed = impute_missing ? nullptr :
+            observed_values.data() + static_cast<size_t>(j) * values_per_variant;
+
+        for (int alt_pos = row_start; alt_pos < row_end; ++alt_pos) {
+            const int64_t data_idx = ld_indptr[j] + (alt_pos - row_start);
+            const T* alt_values = genotype_values.data() +
+                static_cast<size_t>(alt_pos) * values_per_variant;
+
+            T cross_product = T(0);
+            int denominator = num_samples;
+
+            if (impute_missing) {
+                cross_product = dot(ref_values, alt_values, num_samples);
+            }
+            else {
+                denominator = 0;
+                const uint8_t* alt_observed = observed_values.data() +
+                    static_cast<size_t>(alt_pos) * values_per_variant;
+
+                #ifdef _OPENMP
+                    #ifndef _WIN32
+                        #pragma omp simd reduction(+:cross_product, denominator)
+                    #endif
+                #endif
+                for (int sample_pos = 0; sample_pos < num_samples; ++sample_pos) {
+                    cross_product += ref_values[sample_pos] * alt_values[sample_pos];
+                    if (ref_observed[sample_pos] && alt_observed[sample_pos]) {
+                        ++denominator;
+                    }
+                }
+            }
+
+            ld_data[data_idx] = denominator > 0 ?
+                cross_product / static_cast<T>(denominator) : T(0);
         }
     }
 }

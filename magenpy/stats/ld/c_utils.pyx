@@ -11,6 +11,8 @@
 
 from libc.math cimport exp
 from libc.stdint cimport int64_t, int32_t
+from libcpp.string cimport string
+from libcpp cimport bool as cpp_bool
 from cython cimport floating
 cimport cython
 import numpy as np
@@ -63,6 +65,31 @@ cdef extern from "ld_utils.hpp" nogil:
                    T alpha,
                    T dq_scale,
                    int threads) noexcept nogil
+
+    void cpp_compute_ld_from_bed "compute_ld_from_bed"[T](string bed_filename,
+                    const int* ref_snp_indices,
+                    const int* alt_snp_indices,
+                    int num_pairs,
+                    const int* sample_indices,
+                    int total_samples,
+                    int num_samples,
+                    const T* allele_frequencies,
+                    cpp_bool impute_missing,
+                    T* ld_data,
+                    int threads) except + nogil
+
+    void cpp_compute_ut_ld_from_bed "compute_ut_ld_from_bed"[T](string bed_filename,
+                    const int* snp_indices,
+                    const int* ld_boundaries_end,
+                    const int64_t* ld_indptr,
+                    int num_snps,
+                    const int* sample_indices,
+                    int total_samples,
+                    int num_samples,
+                    const T* allele_frequencies,
+                    cpp_bool impute_missing,
+                    T* ld_data,
+                    int threads) except + nogil
 
 
 cpdef ld_dot(int[::1] ld_left_bound,
@@ -133,6 +160,245 @@ cpdef rank_one_update(int[::1] ld_left_bound,
         dq_scale,
         threads
     )
+
+
+cpdef compute_ld_from_bed(bed_filename,
+                          const int[::1] ref_snp_indices,
+                          const int[::1] alt_snp_indices,
+                          const int[::1] sample_indices,
+                          int total_samples,
+                          allele_frequencies,
+                          bint impute_missing=False,
+                          int threads=1,
+                          dtype=np.float32):
+    """
+    Compute LD directly from a PLINK BED file.
+
+    `ref_snp_indices[i]` and `alt_snp_indices[i]` define one pair. The returned
+    array has length `len(ref_snp_indices)`, with entries stored as correlations
+    between standardized dosages. The `allele_frequencies` array is indexed by
+    original BED variant index.
+    """
+
+    cdef:
+        string c_bed_filename
+        const int* ref_ptr = NULL
+        const int* alt_ptr = NULL
+        const int* sample_ptr = NULL
+        const float* allele_frequency_float_ptr = NULL
+        const double* allele_frequency_double_ptr = NULL
+        float* ld_float_ptr = NULL
+        double* ld_double_ptr = NULL
+        const float[::1] allele_frequency_float_view
+        const double[::1] allele_frequency_double_view
+        float[::1] ld_float
+        double[::1] ld_double
+        int num_pairs
+        int num_samples
+        cpp_bool c_impute_missing
+
+    if total_samples <= 0:
+        raise ValueError("total_samples must be positive.")
+
+    if ref_snp_indices.shape[0] != alt_snp_indices.shape[0]:
+        raise ValueError("ref_snp_indices and alt_snp_indices must have the same length.")
+
+    if ref_snp_indices.shape[0] > 2147483647:
+        raise ValueError("Too many SNP pairs for the C++ LD backend.")
+    if sample_indices.shape[0] > 2147483647:
+        raise ValueError("Too many selected samples for the C++ LD backend.")
+
+    num_pairs = <int> ref_snp_indices.shape[0]
+    num_samples = <int> sample_indices.shape[0]
+    c_impute_missing = <cpp_bool> impute_missing
+
+    if num_pairs > 0:
+        ref_ptr = &ref_snp_indices[0]
+        alt_ptr = &alt_snp_indices[0]
+    if num_samples > 0:
+        sample_ptr = &sample_indices[0]
+
+    c_bed_filename = bed_filename.encode()
+    dtype = np.dtype(dtype)
+
+    if dtype == np.dtype(np.float32):
+        allele_frequencies = np.ascontiguousarray(allele_frequencies, dtype=np.float32)
+        allele_frequency_float_view = allele_frequencies
+        if allele_frequency_float_view.shape[0] == 0:
+            raise ValueError("allele_frequencies must not be empty.")
+        allele_frequency_float_ptr = &allele_frequency_float_view[0]
+
+        ld_float = np.zeros(num_pairs, dtype=np.float32)
+        if num_pairs > 0:
+            ld_float_ptr = &ld_float[0]
+
+        cpp_compute_ld_from_bed[float](c_bed_filename,
+                                       ref_ptr,
+                                       alt_ptr,
+                                       num_pairs,
+                                       sample_ptr,
+                                       total_samples,
+                                       num_samples,
+                                       allele_frequency_float_ptr,
+                                       c_impute_missing,
+                                       ld_float_ptr,
+                                       threads)
+
+        return np.asarray(ld_float)
+
+    elif dtype == np.dtype(np.float64):
+        allele_frequencies = np.ascontiguousarray(allele_frequencies, dtype=np.float64)
+        allele_frequency_double_view = allele_frequencies
+        if allele_frequency_double_view.shape[0] == 0:
+            raise ValueError("allele_frequencies must not be empty.")
+        allele_frequency_double_ptr = &allele_frequency_double_view[0]
+
+        ld_double = np.zeros(num_pairs, dtype=np.float64)
+        if num_pairs > 0:
+            ld_double_ptr = &ld_double[0]
+
+        cpp_compute_ld_from_bed[double](c_bed_filename,
+                                        ref_ptr,
+                                        alt_ptr,
+                                        num_pairs,
+                                        sample_ptr,
+                                        total_samples,
+                                        num_samples,
+                                        allele_frequency_double_ptr,
+                                        c_impute_missing,
+                                        ld_double_ptr,
+                                        threads)
+
+        return np.asarray(ld_double)
+
+    else:
+        raise ValueError("dtype must be float32 or float64.")
+
+
+cpdef compute_ut_ld_from_bed(bed_filename,
+                             const int[::1] snp_indices,
+                             const int[::1] ld_boundaries_end,
+                             const int64_t[::1] ld_indptr,
+                             const int[::1] sample_indices,
+                             int total_samples,
+                             allele_frequencies,
+                             bint impute_missing=True,
+                             int threads=1,
+                             dtype=np.float32):
+    """
+    Compute the flat data array for an upper-triangular LD matrix directly from
+    a PLINK BED file.
+
+    For selected SNP row `j`, this computes columns
+    `j + 1 : ld_boundaries_end[j]` and stores them at
+    `ld_indptr[j] : ld_indptr[j + 1]`.
+    """
+
+    cdef:
+        string c_bed_filename
+        const int* snp_ptr = NULL
+        const int* boundary_end_ptr = NULL
+        const int64_t* indptr_ptr = NULL
+        const int* sample_ptr = NULL
+        const float* allele_frequency_float_ptr = NULL
+        const double* allele_frequency_double_ptr = NULL
+        float* ld_float_ptr = NULL
+        double* ld_double_ptr = NULL
+        const float[::1] allele_frequency_float_view
+        const double[::1] allele_frequency_double_view
+        float[::1] ld_float
+        double[::1] ld_double
+        int num_snps
+        int num_samples
+        int64_t num_values
+        cpp_bool c_impute_missing
+
+    if total_samples <= 0:
+        raise ValueError("total_samples must be positive.")
+
+    if snp_indices.shape[0] != ld_boundaries_end.shape[0]:
+        raise ValueError("snp_indices and ld_boundaries_end must have the same length.")
+
+    if ld_indptr.shape[0] != snp_indices.shape[0] + 1:
+        raise ValueError("ld_indptr must have length len(snp_indices) + 1.")
+
+    if snp_indices.shape[0] > 2147483647:
+        raise ValueError("Too many SNPs for the C++ LD backend.")
+    if sample_indices.shape[0] > 2147483647:
+        raise ValueError("Too many selected samples for the C++ LD backend.")
+
+    num_snps = <int> snp_indices.shape[0]
+    num_samples = <int> sample_indices.shape[0]
+    num_values = ld_indptr[num_snps]
+    c_impute_missing = <cpp_bool> impute_missing
+
+    if num_values < 0:
+        raise ValueError("ld_indptr must be non-negative.")
+
+    if num_snps > 0:
+        snp_ptr = &snp_indices[0]
+        boundary_end_ptr = &ld_boundaries_end[0]
+        indptr_ptr = &ld_indptr[0]
+    if num_samples > 0:
+        sample_ptr = &sample_indices[0]
+
+    c_bed_filename = bed_filename.encode()
+    dtype = np.dtype(dtype)
+
+    if dtype == np.dtype(np.float32):
+        allele_frequencies = np.ascontiguousarray(allele_frequencies, dtype=np.float32)
+        allele_frequency_float_view = allele_frequencies
+        if allele_frequency_float_view.shape[0] == 0:
+            raise ValueError("allele_frequencies must not be empty.")
+        allele_frequency_float_ptr = &allele_frequency_float_view[0]
+
+        ld_float = np.zeros(num_values, dtype=np.float32)
+        if num_values > 0:
+            ld_float_ptr = &ld_float[0]
+
+        cpp_compute_ut_ld_from_bed[float](c_bed_filename,
+                                          snp_ptr,
+                                          boundary_end_ptr,
+                                          indptr_ptr,
+                                          num_snps,
+                                          sample_ptr,
+                                          total_samples,
+                                          num_samples,
+                                          allele_frequency_float_ptr,
+                                          c_impute_missing,
+                                          ld_float_ptr,
+                                          threads)
+
+        return np.asarray(ld_float)
+
+    elif dtype == np.dtype(np.float64):
+        allele_frequencies = np.ascontiguousarray(allele_frequencies, dtype=np.float64)
+        allele_frequency_double_view = allele_frequencies
+        if allele_frequency_double_view.shape[0] == 0:
+            raise ValueError("allele_frequencies must not be empty.")
+        allele_frequency_double_ptr = &allele_frequency_double_view[0]
+
+        ld_double = np.zeros(num_values, dtype=np.float64)
+        if num_values > 0:
+            ld_double_ptr = &ld_double[0]
+
+        cpp_compute_ut_ld_from_bed[double](c_bed_filename,
+                                           snp_ptr,
+                                           boundary_end_ptr,
+                                           indptr_ptr,
+                                           num_snps,
+                                           sample_ptr,
+                                           total_samples,
+                                           num_samples,
+                                           allele_frequency_double_ptr,
+                                           c_impute_missing,
+                                           ld_double_ptr,
+                                           threads)
+
+        return np.asarray(ld_double)
+
+    else:
+        raise ValueError("dtype must be float32 or float64.")
 
 # -------------------------------------------------------------------------
 # Utilities for manipulating/interacting with generic numeric types:
@@ -276,23 +542,23 @@ cpdef prune_ld_ut(int_dtype[::1] indptr,
                   noncomplex_numeric r_threshold,
                   int[::1] variant_order=None):
     """
-    Pass over the LD matrix once and prune it so that variants whose absolute correlation coefficient is above 
-    or equal to a certain threshold are filtered away. If two variants are highly correlated, 
+    Pass over the LD matrix once and prune it so that variants whose absolute correlation coefficient is above
+    or equal to a certain threshold are filtered away. If two variants are highly correlated,
     this function keeps the one that occurs earlier in the pruning order.
-    
-    This function works with LD matrices in any data type 
-    (quantized to integers or floats), but it is the user's responsibility to set the appropriate 
+
+    This function works with LD matrices in any data type
+    (quantized to integers or floats), but it is the user's responsibility to set the appropriate
     threshold for the data type used.
-    
-    !!! note 
-        This function assumes that the LD matrix is in upper triangular form and doesn't include the 
+
+    !!! note
+        This function assumes that the LD matrix is in upper triangular form and doesn't include the
         diagonal and that entries are contiguous around the diagonal.
-    
+
     :param indptr: The index pointer array for the CSR matrix to be pruned.
     :param data: The data array for the CSR matrix to be pruned.
     :param r_threshold: The Pearson Correlation coefficient threshold above which to prune variants.
     :param variant_order: Optional pruning order. If not provided, matrix order is used.
-    
+
     :return: An boolean array of which variants are kept after pruning.
     """
 
@@ -355,15 +621,15 @@ cpdef prune_ld_ut(int_dtype[::1] indptr,
 cpdef get_symmetrized_indptr_with_mask(int_dtype[::1] indptr,
                                        cnp.ndarray[cnp.npy_bool, ndim=1] mask):
     """
-    Given an index pointer array from an upper triangular CSR matrix, this function 
-    computes the equivalent indptr for the symmetric matrix and returns also the 
-    column index of the leftmost element for each row. This is a utility function 
-    mainly used to help symmetrize upper triangular and block-diagonal CSR matrices with minimal 
+    Given an index pointer array from an upper triangular CSR matrix, this function
+    computes the equivalent indptr for the symmetric matrix and returns also the
+    column index of the leftmost element for each row. This is a utility function
+    mainly used to help symmetrize upper triangular and block-diagonal CSR matrices with minimal
     memory overhead. The function also supports filtering the matrix by using a boolean mask.
-    
+
     :param indptr: The index pointer array for the CSR matrix to be symmetrized.
     :param mask: A boolean mask indicating which elements (rows) of the matrix to keep.
-    
+
     :return: A tuple with the new indptr array and the leftmost column index for each row.
     """
 
@@ -413,10 +679,10 @@ cpdef get_symmetrized_indptr_with_mask(int_dtype[::1] indptr,
 @cython.exceptval(check=False)
 cpdef get_symmetrized_indptr(int_dtype[::1] indptr):
     """
-    Given an index pointer array from an upper triangular CSR matrix, this function 
-    computes the equivalent indptr for the symmetric matrix and returns also the 
-    column index of the leftmost element for each row. This is a utility function 
-    mainly used to help symmetrize upper triangular and block-diagonal CSR matrices with minimal 
+    Given an index pointer array from an upper triangular CSR matrix, this function
+    computes the equivalent indptr for the symmetric matrix and returns also the
+    column index of the leftmost element for each row. This is a utility function
+    mainly used to help symmetrize upper triangular and block-diagonal CSR matrices with minimal
     memory overhead.
 
     :param indptr: The index pointer array for the CSR matrix to be symmetrized.
@@ -446,22 +712,22 @@ cpdef symmetrize_ut_csr_matrix_with_mask(int_dtype[::1] indptr,
                                          cnp.ndarray[cnp.npy_bool, ndim=1] mask,
                                          noncomplex_numeric diag_fill_value):
     """
-    Given an upper triangular CSR matrix, this function symmetrizes it by adding the 
+    Given an upper triangular CSR matrix, this function symmetrizes it by adding the
     transpose of the upper triangular matrix to itself. This function assumes the following:
-    
-        1. The non-zero elements are contiguous along the diagonal of each row (starting from 
+
+        1. The non-zero elements are contiguous along the diagonal of each row (starting from
         the diagonal + 1).
         2. The diagonal elements aren't present in the upper triangular matrix.
-        
+
     The function also supports filtering the matrix by using a boolean mask.
-    
+
     :param indptr: The index pointer array for the CSR matrix to be symmetrized.
     :param data: The data array for the CSR matrix to be symmetrized.
     :param mask: A boolean mask indicating which elements (rows) of the matrix to keep.
     :param diag_fill_value: The value to fill the diagonal with (equivalent to 1 for the various data types).
-    
+
     :return: A tuple with the new data array, the new indptr array, and the leftmost column index for each row.
-    
+
     """
 
     new_idx = get_symmetrized_indptr_with_mask(indptr, mask)
@@ -514,10 +780,10 @@ cpdef symmetrize_ut_csr_matrix(int_dtype[::1] indptr,
                                 noncomplex_numeric[::1] data,
                                 noncomplex_numeric diag_fill_value):
     """
-    Given an upper triangular CSR matrix, this function symmetrizes it by adding the 
+    Given an upper triangular CSR matrix, this function symmetrizes it by adding the
     transpose of the upper triangular matrix to itself. This function assumes the following:
 
-        1. The non-zero elements are contiguous along the diagonal of each row (starting from 
+        1. The non-zero elements are contiguous along the diagonal of each row (starting from
         the diagonal + 1).
         2. The diagonal elements aren't present in the upper triangular matrix.
 
@@ -571,13 +837,13 @@ cpdef filter_ut_csr_matrix_inplace(int_dtype[::1] indptr,
                                   char[::1] bool_mask,
                                   int new_size):
     """
-    Given an upper triangular CSR matrix represented by the data and indptr arrays, this function filters 
+    Given an upper triangular CSR matrix represented by the data and indptr arrays, this function filters
     its entries with a boolean mask.
 
-        1. The non-zero elements are contiguous along the diagonal of each row (starting from 
+        1. The non-zero elements are contiguous along the diagonal of each row (starting from
         the diagonal + 1).
         2. The diagonal elements aren't present in the upper triangular matrix.
-        
+
     !!! warning
         This function modifies the input data array inplace.
 
@@ -633,20 +899,20 @@ cpdef extract_block_from_ld_data(int[::1] ld_left_bound,
                                  int block_end,
                                  floating dq_scale):
     """
-    Given LD data in the form of a CSR matrix represented by LDLinearOperator arrays, this function extracts 
+    Given LD data in the form of a CSR matrix represented by LDLinearOperator arrays, this function extracts
     a block from the matrix. The block is defined by the start and end indices of the rows to be included.
     This implementation assumes that the non-zero elements are contiguous along the diagonal of each row.
-    
-    The function returns a symmetric numpy matrix of size 
+
+    The function returns a symmetric numpy matrix of size
     (block_end - block_start) x (block_end - block_start) containing the data from this block.
-    
+
     :param ld_left_bound: The leftmost column index for each row in the matrix.
     :param indptr: The index pointer array for the CSR matrix to be filtered.
     :param data: The data array for the CSR matrix to be filtered.
     :param block_start: The start index of the block to be extracted.
     :param block_end: The end index of the block to be extracted.
     :param dq_scale: The scaling factor to apply to dequantize the data.
-    
+
     :return: A symmetric numpy matrix containing the data from the block.
     """
 
@@ -704,7 +970,7 @@ cpdef slice_ld_data(int[::1] ld_left_bound,
     A general method to slice LD data as represented in LDLinearOperator format, primarily
     the leftmost column index, the index pointer array, and the data array. The function
     take these input arrays and returns equivalent arrays with the sliced data.
-    
+
     :param ld_left_bound: The leftmost column index for each row in the matrix.
     :param indptr: The index pointer array for the CSR matrix to be filtered.
     :param data: The data array for the CSR matrix to be filtered.
@@ -712,8 +978,8 @@ cpdef slice_ld_data(int[::1] ld_left_bound,
     :param row_end: The end index of the rows to be included.
     :param col_start: The start index of the columns to be included.
     :param col_end: The end index of the columns to be included.
-    
-    :return: A tuple with the sliced leftmost column index, 
+
+    :return: A tuple with the sliced leftmost column index,
     the sliced index pointer array, and the sliced data array.
     """
 
@@ -760,9 +1026,9 @@ cpdef slice_ld_data(int[::1] ld_left_bound,
 @cython.exceptval(check=False)
 cpdef expand_ranges(int_dtype[::1] start, int_dtype[::1] end, int64_t output_size):
     """
-    Given a set of start and end indices, expand them into one long vector that contains 
+    Given a set of start and end indices, expand them into one long vector that contains
     the indices between all start and end positions.
-    
+
     :param start: A vector with the start indices.
     :param end: A vector with the end indices.
     :param output_size: The size of the output vector (equivalent to the sum of the lengths
@@ -791,11 +1057,14 @@ cpdef expand_ranges(int_dtype[::1] start, int_dtype[::1] end, int64_t output_siz
 @cython.nonecheck(False)
 @cython.cdivision(True)
 @cython.exceptval(check=False)
-cpdef find_ld_block_boundaries(int_dtype[:] pos, int[:, :] block_boundaries):
+cpdef find_ld_block_boundaries(
+    const int_dtype[:] pos,
+    int[:, :] block_boundaries
+):
     """
-    Find the LD boundaries for the blockwise estimator of LD, i.e., the 
+    Find the LD boundaries for the blockwise estimator of LD, i.e., the
     indices of the leftmost and rightmost neighbors for each SNP.
-    
+
     :param pos: A vector with the position of each genetic variant.
     :param block_boundaries: A matrix with the boundaries of each LD block.
     """
@@ -833,16 +1102,19 @@ cpdef find_ld_block_boundaries(int_dtype[:] pos, int[:, :] block_boundaries):
 @cython.nonecheck(False)
 @cython.cdivision(True)
 @cython.exceptval(check=False)
-cpdef find_windowed_ld_boundaries(floating[::1] pos, double max_dist):
+cpdef find_windowed_ld_boundaries(
+    const floating[::1] pos,
+    double max_dist
+):
     """
-    Find the LD boundaries for the windowed estimator of LD, i.e., the 
+    Find the LD boundaries for the windowed estimator of LD, i.e., the
     indices of the leftmost and rightmost neighbors for each SNP.
-    
+
     .. note::
-        To match plink's behavior, the bounds here are inclusive, i.e., 
-        if the distance between two SNPs is exactly equal to the maximum distance, 
+        To match plink's behavior, the bounds here are inclusive, i.e.,
+        if the distance between two SNPs is exactly equal to the maximum distance,
         they are considered neighbors.
-    
+
     :param pos: A vector with the position of each genetic variant.
     :param max_dist: The maximum distance between SNPs to consider them neighbors.
     """
@@ -872,13 +1144,13 @@ cpdef find_windowed_ld_boundaries(floating[::1] pos, double max_dist):
 @cython.nonecheck(False)
 @cython.cdivision(True)
 @cython.exceptval(check=False)
-cpdef find_shrinkage_ld_boundaries(floating[::1] cm_pos,
+cpdef find_shrinkage_ld_boundaries(const floating[::1] cm_pos,
                                   double genmap_ne,
                                   int genmap_sample_size,
                                   double cutoff):
     """
     Find the LD boundaries for the shrinkage estimator of Wen and Stephens (2010).
-    
+
     :param cm_pos: A vector with the position of each genetic variant in centi Morgan.
     :param genmap_ne: The effective population size for the genetic map sample.
     :param genmap_sample_size: The sample size used to estimate the genetic map.

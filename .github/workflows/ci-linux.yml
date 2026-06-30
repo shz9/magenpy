@@ -26,6 +26,16 @@ jobs:
           conda create --name "magenpy_ci" -c conda-forge -c anaconda 
           python=${{matrix.python-version}} pip wheel compilers openblas -y
 
+      - name: Install PLINK
+        run: |
+          mkdir -p "$RUNNER_TEMP/plink"
+          wget -q https://s3.amazonaws.com/plink2-assets/alpha5/plink2_linux_x86_64_20240105.zip -O "$RUNNER_TEMP/plink/plink2.zip"
+          python -m zipfile -e "$RUNNER_TEMP/plink/plink2.zip" "$RUNNER_TEMP/plink"
+          wget -q https://s3.amazonaws.com/plink1-assets/plink_linux_x86_64_20231211.zip -O "$RUNNER_TEMP/plink/plink.zip"
+          python -m zipfile -e "$RUNNER_TEMP/plink/plink.zip" "$RUNNER_TEMP/plink"
+          chmod +x "$RUNNER_TEMP/plink/plink" "$RUNNER_TEMP/plink/plink2"
+          echo "$RUNNER_TEMP/plink" >> "$GITHUB_PATH"
+
       - name: Install magenpy
         shell: "bash -l {0}"
         run: |

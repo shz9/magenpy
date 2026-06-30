@@ -345,3 +345,101 @@ def perform_gwa_xarray(genotype_matrix,
     _, _ = ss_table.z_score, ss_table.pval
 
     return ss_table
+
+
+def perform_gwa_magenpy(genotype_matrix,
+                        temp_dir=None,
+                        standardize_genotype=False,
+                        **phenotype_transform_kwargs):
+    """
+    Perform genome-wide association testing using the native magenpy BED
+    backend. This implementation streams genotypes from the BED file and
+    computes per-SNP sufficient statistics in C++, without materializing the
+    full genotype matrix in memory.
+
+    This function only implements GWA testing for continuous phenotypes. For
+    binary/case-control phenotypes, use a PLINK backend or another GWAS tool
+    that supports logistic regression.
+
+    :param genotype_matrix: A MagenpyGenotypeMatrix object.
+    :param temp_dir: Accepted for interface compatibility with PLINK-backed
+        GWAS helpers. The native backend does not write intermediate files.
+    :param standardize_genotype: If True, genotype columns are standardized
+        before association testing.
+    :param phenotype_transform_kwargs: Keyword arguments passed to
+        `chained_transform`.
+
+    :return: A SumstatsTable object containing the summary statistics from the
+        association tests.
+    """
+
+    from ...GenotypeMatrix import MagenpyGenotypeMatrix
+    from ..variant.variant_cpp import compute_gwa_linear_stats
+
+    assert isinstance(genotype_matrix, MagenpyGenotypeMatrix)
+    genotype_matrix._validate_cpp_indices()
+
+    if genotype_matrix.sample_table.phenotype_likelihood is None:
+        warnings.warn("The phenotype likelihood is not specified! "
+                      "Assuming that the phenotype is continuous...")
+    elif genotype_matrix.sample_table.phenotype_likelihood == 'binomial':
+        raise ValueError("The magenpy backend currently does not support performing association "
+                         "testing on binary (case-control) phenotypes! Try setting the backend to `plink` or "
+                         "use external software (e.g. GCTA or REGENIE) for performing GWAS.")
+
+    sumstats_table = genotype_matrix.get_snp_table(
+        ['CHR', 'SNP', 'POS', 'A1', 'A2']
+    )
+
+    phenotype, mask = chained_transform(genotype_matrix.sample_table,
+                                        **phenotype_transform_kwargs)
+    phenotype = np.ascontiguousarray(phenotype, dtype=np.float64)
+    centered_phenotype = np.ascontiguousarray(phenotype - phenotype.mean(),
+                                             dtype=np.float64)
+    sample_indices = np.ascontiguousarray(genotype_matrix.sample_index[mask],
+                                          dtype=np.int32)
+
+    maf, n_per_snp, x_dot_y, sum_x_sq = compute_gwa_linear_stats(
+        genotype_matrix.bed_filename,
+        np.ascontiguousarray(genotype_matrix.snp_index, dtype=np.int32),
+        sample_indices,
+        genotype_matrix.total_samples,
+        centered_phenotype,
+        standardize_genotype=standardize_genotype,
+        threads=genotype_matrix.threads
+    )
+
+    slope = np.divide(
+        x_dot_y,
+        sum_x_sq,
+        out=np.full(genotype_matrix.n_snps, np.nan, dtype=np.float64),
+        where=sum_x_sq > 0
+    )
+
+    y_centered_sum_sq = np.dot(centered_phenotype, centered_phenotype)
+    residual_sum_sq = y_centered_sum_sq - slope*x_dot_y
+    residual_sum_sq = np.maximum(residual_sum_sq, 0.)
+
+    s2 = np.divide(
+        residual_sum_sq,
+        n_per_snp - 2,
+        out=np.full(genotype_matrix.n_snps, np.nan, dtype=np.float64),
+        where=n_per_snp > 2
+    )
+
+    se = np.sqrt(np.divide(
+        s2,
+        sum_x_sq,
+        out=np.full(genotype_matrix.n_snps, np.nan, dtype=np.float64),
+        where=sum_x_sq > 0
+    ))
+
+    sumstats_table['MAF'] = maf
+    sumstats_table['N'] = n_per_snp
+    sumstats_table['BETA'] = slope
+    sumstats_table['SE'] = se
+
+    ss_table = SumstatsTable(sumstats_table)
+    _, _ = ss_table.z_score, ss_table.pval
+
+    return ss_table

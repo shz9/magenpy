@@ -1,4 +1,4 @@
-.PHONY: build build-inplace test test-inplace dist redist install install-from-source clean uninstall publish-test publish
+.PHONY: build build-inplace test test-inplace test-plink-docker dist redist install install-from-source clean uninstall publish-test publish
 
 build:
 	python3 setup.py build
@@ -11,6 +11,9 @@ test-inplace:
 
 test:
 	python -m pytest
+
+test-plink-docker:
+	bash tests/run_plink_backend_docker.sh
 
 dist:
 	python setup.py sdist bdist_wheel

@@ -1,267 +1,189 @@
 #ifndef SCORE_H
 #define SCORE_H
 
-#include <iostream>
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <vector>
 
-// Check for and include `cblas`:
-#ifdef HAVE_CBLAS
-    #include <cblas.h>
-#endif
-
-// Check for and include `omp`:
-#ifdef _OPENMP
-    #include <omp.h>
-#endif
-
-/* ----------------------------- */
-bool omp_supported() {
-    #ifdef _OPENMP
-        return true;
-    #else
-        return false;
-    #endif
-}
-
-bool blas_supported() {
-    #ifdef HAVE_CBLAS
-        return true;
-    #else
-        return false;
-    #endif
-}
-
-template<typename T>
-void axpy(T* x, T* y, T a, int size) {
-    for (int i = 0; i < size; ++i) {
-        x[i] += y[i] * a;
-    }
-}
-
-template<typename T>
-void blas_axpy(T *y, T *x, T alpha, int size) {
-
-    #ifdef HAVE_CBLAS
-        int incx = 1;
-        int incy = 1;
-
-        if constexpr (std::is_same<T, float>::value) {
-            cblas_saxpy(size, alpha, x, incx, y, incy);
-        }
-        else {
-            cblas_daxpy(size, alpha, x, incx, y, incy);
-        }
-    #else
-        axpy(y, x, alpha, size);
-    #endif
-}
-
+#include "../../utils/linear_algebra_utils.hpp"
+#include "../../utils/plink_bed_utils.hpp"
 
 template<typename T>
 void calculate_scores(std::string bed_filename,
-                      T* effect_sizes,
-                      int* snp_indices,
-                      int* sample_indices,
+                      const T* effect_sizes,
+                      const int* snp_indices,
+                      const int* sample_indices,
+                      int total_samples,
                       int num_samples,
                       int num_snps,
                       int num_scores,
                       T* scores,
-                      int threads) {
+                      int threads,
+                      const T* allele_frequencies = nullptr,
+                      bool standardize_genotype = false,
+                      bool impute_missing = false) {
 
-    // ----------------------------------------------------
-    // Check if file is a valid PLINK BED file
-    std::ifstream initial_file(bed_filename, std::ios::binary);
-    if (!initial_file.is_open()) {
+    if (total_samples <= 0) {
+        throw std::invalid_argument("Total BED sample count must be positive.");
+    }
+    if (num_samples < 0 || num_snps < 0 || num_scores <= 0) {
+        throw std::invalid_argument("Invalid score calculation dimensions.");
+    }
+    if (effect_sizes == nullptr || snp_indices == nullptr ||
+        sample_indices == nullptr || scores == nullptr) {
+        throw std::invalid_argument("Null pointer passed to calculate_scores.");
+    }
+    if ((standardize_genotype || impute_missing) && allele_frequencies == nullptr) {
+        throw std::invalid_argument("Allele frequencies are required for standardization or missing-value imputation.");
+    }
+
+    validate_plink_bed_file(bed_filename);
+
+    for (int snp_pos = 0; snp_pos < num_snps; ++snp_pos) {
+        if (snp_indices[snp_pos] < 0) {
+            throw std::out_of_range("SNP index must be non-negative.");
+        }
+        if (allele_frequencies != nullptr &&
+            (allele_frequencies[snp_pos] < T(0) || allele_frequencies[snp_pos] > T(1))) {
+            throw std::out_of_range("Allele frequencies must be in [0, 1].");
+        }
+    }
+
+    const std::vector<SelectedSampleByte> sample_groups =
+        group_selected_samples_by_byte(sample_indices, total_samples, num_samples);
+
+    if (num_samples == 0 || num_snps == 0) {
+        return;
+    }
+
+    const PlinkDosageLookup lookup;
+    const std::streamoff variant_stride = plink_bed_variant_stride(total_samples);
+    const size_t stride = static_cast<size_t>(variant_stride);
+    const int num_threads = threads > 0 ? threads : 1;
+    constexpr size_t target_block_bytes = 32u * 1024u * 1024u;
+    const int snps_per_block = std::max<int>(
+        1,
+        static_cast<int>(std::min<size_t>(
+            static_cast<size_t>(std::numeric_limits<int>::max()),
+            std::max<size_t>(1, target_block_bytes / std::max<size_t>(1, stride))
+        ))
+    );
+
+    std::vector<unsigned char> bed_block;
+    bed_block.resize(static_cast<size_t>(snps_per_block) * stride);
+
+    std::ifstream bed_file(bed_filename, std::ios::binary);
+    if (!bed_file.is_open()) {
         throw std::runtime_error("Error opening BED file.");
     }
-    char magic_number[3];
-    initial_file.read(magic_number, 3);
-    if (magic_number[0] != '\x6C' || magic_number[1] != '\x1B' || magic_number[2] != '\x01') {
-        throw std::runtime_error("Invalid PLINK BED file.");
-    }
-    initial_file.close();
-    // ----------------------------------------------------
 
-    T* local_scores = scores;
-    bool use_local_scores = false;
+    const int num_sample_groups = static_cast<int>(sample_groups.size());
+    const bool use_frequency_adjustment = standardize_genotype || impute_missing;
 
-    #ifdef _OPENMP
-        #pragma omp parallel num_threads(threads)
-    #endif
-    {
-        #ifdef _OPENMP
-            if (omp_get_num_threads() > 1) {
-                local_scores = new T[num_samples * num_scores];
-                use_local_scores = true;
-            }
-        #endif
+    for (int block_start = 0; block_start < num_snps; block_start += snps_per_block) {
+        const int block_snps = std::min(snps_per_block, num_snps - block_start);
 
-        //Open a separate file stream for each thread
-        std::ifstream bed_file(bed_filename, std::ios::binary);
+        for (int block_pos = 0; block_pos < block_snps; ++block_pos) {
+            read_plink_bed_row(bed_file,
+                               snp_indices[block_start + block_pos],
+                               variant_stride,
+                               bed_block.data() + static_cast<size_t>(block_pos) * stride);
+        }
 
         #ifdef _OPENMP
-            #pragma omp for schedule(runtime)
+            #pragma omp parallel for schedule(static) num_threads(num_threads)
         #endif
-        for (size_t i = 0; i < num_snps; ++i) {
+        for (int group_pos = 0; group_pos < num_sample_groups; ++group_pos) {
+            const SelectedSampleByte& group = sample_groups[group_pos];
 
-            int snp_index = snp_indices[i];
+            for (int block_pos = 0; block_pos < block_snps; ++block_pos) {
+                const unsigned char byte =
+                    bed_block[static_cast<size_t>(block_pos) * stride + group.byte_index];
 
-            bed_file.seekg(3 + snp_index * ((num_samples + 3) / 4), std::ios::beg);
-            size_t j = 0;
-            size_t sample_counter = 0;
+                const uint8_t selected_nonzero_mask =
+                    lookup.nonzero_mask[byte] & group.selected_mask;
 
-            while (sample_counter < num_samples) {
-                unsigned char buffer;
-                bed_file.read(reinterpret_cast<char*>(&buffer), 1);
+                if (!use_frequency_adjustment && selected_nonzero_mask == 0) {
+                    continue;
+                }
 
-                for (int b = 0; b < 4 && sample_counter < num_samples; ++b, ++j) {
+                const T* snp_effects =
+                    effect_sizes + static_cast<size_t>(block_start + block_pos) * num_scores;
+                const T allele_frequency = use_frequency_adjustment ?
+                    allele_frequencies[block_start + block_pos] : T(0);
+                const T mean_dosage = static_cast<T>(2) * allele_frequency;
+                const T variance = mean_dosage * (static_cast<T>(1) - allele_frequency);
+                const T inverse_sd = standardize_genotype && variance > T(0) ?
+                    static_cast<T>(1) / static_cast<T>(std::sqrt(static_cast<double>(variance))) :
+                    T(0);
 
-                    int sample_index = sample_indices[sample_counter];
+                const int output0 = group.output_index[0];
+                const int output1 = group.output_index[1];
+                const int output2 = group.output_index[2];
+                const int output3 = group.output_index[3];
 
-                    if (j == sample_index) {
-                        int genotype = (buffer >> (b * 2)) & 0x3;
-                        if (genotype != 1) { // Ignore missing genotypes
+                const int8_t dosage0 = lookup.dosage[byte][0];
+                const int8_t dosage1 = lookup.dosage[byte][1];
+                const int8_t dosage2 = lookup.dosage[byte][2];
+                const int8_t dosage3 = lookup.dosage[byte][3];
 
-                            T decoded_genotype = static_cast<T>(genotype);
+                T value0 = T(0);
+                T value1 = T(0);
+                T value2 = T(0);
+                T value3 = T(0);
 
-                            if (genotype > 0) {
-                                decoded_genotype = abs(genotype - 3);
-                            }
-                            else {
-                                decoded_genotype += 2;
-                            }
+                if (standardize_genotype) {
+                    value0 = dosage0 >= 0 ? (static_cast<T>(dosage0) - mean_dosage) * inverse_sd : T(0);
+                    value1 = dosage1 >= 0 ? (static_cast<T>(dosage1) - mean_dosage) * inverse_sd : T(0);
+                    value2 = dosage2 >= 0 ? (static_cast<T>(dosage2) - mean_dosage) * inverse_sd : T(0);
+                    value3 = dosage3 >= 0 ? (static_cast<T>(dosage3) - mean_dosage) * inverse_sd : T(0);
+                }
+                else if (impute_missing) {
+                    value0 = dosage0 >= 0 ? static_cast<T>(dosage0) : mean_dosage;
+                    value1 = dosage1 >= 0 ? static_cast<T>(dosage1) : mean_dosage;
+                    value2 = dosage2 >= 0 ? static_cast<T>(dosage2) : mean_dosage;
+                    value3 = dosage3 >= 0 ? static_cast<T>(dosage3) : mean_dosage;
+                }
+                else {
+                    value0 = dosage0 > 0 ? static_cast<T>(dosage0) : T(0);
+                    value1 = dosage1 > 0 ? static_cast<T>(dosage1) : T(0);
+                    value2 = dosage2 > 0 ? static_cast<T>(dosage2) : T(0);
+                    value3 = dosage3 > 0 ? static_cast<T>(dosage3) : T(0);
+                }
 
-                            blas_axpy(local_scores + sample_index * num_scores,
-                                      effect_sizes + snp_index * num_scores,
-                                      decoded_genotype,
-                                      num_scores);
-                        }
-                        sample_counter++;
+                T* scores0 = output0 >= 0 && value0 != T(0) ?
+                             scores + static_cast<size_t>(output0) * num_scores : nullptr;
+                T* scores1 = output1 >= 0 && value1 != T(0) ?
+                             scores + static_cast<size_t>(output1) * num_scores : nullptr;
+                T* scores2 = output2 >= 0 && value2 != T(0) ?
+                             scores + static_cast<size_t>(output2) * num_scores : nullptr;
+                T* scores3 = output3 >= 0 && value3 != T(0) ?
+                             scores + static_cast<size_t>(output3) * num_scores : nullptr;
+
+                for (int score_idx = 0; score_idx < num_scores; ++score_idx) {
+                    const T effect = snp_effects[score_idx];
+
+                    if (scores0 != nullptr) {
+                        scores0[score_idx] += value0 * effect;
+                    }
+                    if (scores1 != nullptr) {
+                        scores1[score_idx] += value1 * effect;
+                    }
+                    if (scores2 != nullptr) {
+                        scores2[score_idx] += value2 * effect;
+                    }
+                    if (scores3 != nullptr) {
+                        scores3[score_idx] += value3 * effect;
                     }
                 }
             }
         }
-
-        // Close the file stream for each thread
-        bed_file.close();
-
-        /* If multiple threads are used, add the local scores to the global scores
-           in a critical section. */
-        #ifdef _OPENMP
-            if (use_local_scores) {
-                #pragma omp critical
-                {
-                    for (size_t i = 0; i < num_samples; ++i) {
-                        for (size_t j = 0; j < num_scores; ++j) {
-                            scores[i * num_scores + j] += local_scores[i * num_scores + j];
-                        }
-                    }
-                }
-                delete [] local_scores;
-            }
-        #endif
     }
 
 }
-
-/*
-
-Explore producer-consumer style implementation for reading the bed file.
-
-#include <queue>
-#include <mutex>
-#include <condition_variable>
-
-template<typename T>
-class ThreadSafeQueue {
-private:
-    std::queue<T*> queue_;
-    std::queue<int> index_queue_;
-    std::mutex mutex_;
-    std::condition_variable cond_;
-
-public:
-    void push(T* value, int index)
-        std::lock_guard<std::mutex> lock(mutex_);
-        queue_.push(std::move(value));
-        index_queue_.push(index);
-        cond_.notify_one();
-    }
-
-    T* pop() {
-        std::unique_lock<std::mutex> lock(mutex_);
-        cond_.wait(lock, [this]{ return !queue_.empty(); });
-        T* value = std::move(queue_.front());
-        queue_.pop();
-        return value;
-    }
-
-    int pop_index() {
-        std::unique_lock<std::mutex> lock(mutex_);
-        cond_.wait(lock, [this]{ return !index_queue_.empty(); });
-        int value = index_queue_.front();
-        index_queue_.pop();
-        return value;
-    }
-
-};
-
-void reader(ThreadSafeQueue<T>& queue, const std::string& bed_filename, int num_samples, int num_snps) {
-    std::ifstream bed_file(bed_filename, std::ios::binary);
-    for (size_t i = 0; i < num_snps; ++i) {
-        T* snp_entries = new T[num_samples];
-        bed_file.seekg(3 + i * ((num_samples + 3) / 4), std::ios::beg);
-        size_t j = 0;
-        size_t sample_counter = 0;
-        while (sample_counter < num_samples) {
-            unsigned char buffer;
-            bed_file.read(reinterpret_cast<char*>(&buffer), 1);
-            for (int b = 0; b < 4 && sample_counter < num_samples; ++b, ++j) {
-                int genotype = (buffer >> (b * 2)) & 0x3;
-                if (genotype != 1) { // Ignore missing genotypes
-                    snp_entries[sample_counter] = static_cast<T>(genotype);
-                    sample_counter++;
-                }
-            }
-        }
-        queue.push(snp_entries, i);
-    }
-    bed_file.close();
-}
-
-void reader(ThreadSafeQueue<std::vector<int>>& queue, const std::vector<int>& snp_indices) {
-    for (int snp_index : snp_indices) {
-        std::vector<int> snp_entries = // read SNP entries for snp_index
-        queue.push(std::move(snp_entries));
-    }
-}
-
-void worker(ThreadSafeQueue<std::vector<int>>& queue, int num_samples, int num_snps, int num_scores, T* effect_sizes, T* scores) {
-    while (num_snps > 0) {
-
-        std::vector<T> snp_entries = queue.pop();
-        int snp_index = queue.pop_index();
-
-        for (size_t i = 0; i < num_samples; ++i) {
-            for (size_t j = 0; j < num_scores; ++j) {
-                scores[i * num_scores + j] += snp_entries[i] * effect_sizes[snp_index * num_scores + j];
-            }
-        }
-
-        num_snps--;
-    }
-}
-
-ThreadSafeQueue<std::vector<int>> queue;
-
-std::thread reader_thread(reader, std::ref(queue), snp_indices);
-std::thread worker_thread(worker, std::ref(queue));
-
-reader_thread.join();
-worker_thread.join();
-
-*/
 
 #endif // SCORE_H

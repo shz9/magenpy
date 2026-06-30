@@ -1,23 +1,22 @@
-
-from typing import Union, Dict
-
 import copy
-import pandas as pd
-import numpy as np
-from tqdm import tqdm
-
-from .GenotypeMatrix import *
-from .SampleTable import SampleTable
-from .SumstatsTable import SumstatsTable
-from .AnnotationMatrix import AnnotationMatrix
-from .LDMatrix import LDMatrix
-
-from .utils.compute_utils import iterable, intersect_multiple_arrays
-from .utils.system_utils import makedir, get_filenames
-from .utils.model_utils import match_chromosomes
 
 # Set up the logger:
 import logging
+from typing import Dict, Union
+
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
+
+from .AnnotationMatrix import AnnotationMatrix
+from .GenotypeMatrix import *
+from .LDMatrix import LDMatrix
+from .SampleTable import SampleTable
+from .SumstatsTable import SumstatsTable
+from .utils.compute_utils import intersect_multiple_arrays, iterable
+from .utils.model_utils import match_chromosomes
+from .utils.system_utils import get_filenames, makedir
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,32 +40,34 @@ class GWADataLoader(object):
     :ivar ld: A dictionary of `LDMatrix` objects, where the key is the chromosome number.
     :ivar sumstats_table: A dictionary of `SumstatsTable` objects, where the key is the chromosome number.
     :ivar annotation: A dictionary of `AnnotationMatrix` objects, where the key is the chromosome number.
-    :ivar backend: The backend software used for the computation. Currently, supports `xarray` and `plink`.
+    :ivar backend: The backend software used for the computation. Currently, supports `magenpy`, `xarray` and `plink`.
     :ivar temp_dir: The temporary directory where we store intermediate files (if necessary).
     :ivar output_dir: The output directory where we store the results of the computation.
     """
 
-    def __init__(self,
-                 bed_files=None,
-                 phenotype_file=None,
-                 covariates_file=None,
-                 keep_samples=None,
-                 keep_file=None,
-                 extract_snps=None,
-                 extract_file=None,
-                 min_maf=None,
-                 min_mac=None,
-                 drop_duplicated=True,
-                 phenotype_likelihood='gaussian',
-                 sumstats_files=None,
-                 sumstats_format='magenpy',
-                 ld_store_files=None,
-                 annotation_files=None,
-                 annotation_format='magenpy',
-                 backend='xarray',
-                 temp_dir='temp',
-                 output_dir='output',
-                 threads=1):
+    def __init__(
+        self,
+        bed_files=None,
+        phenotype_file=None,
+        covariates_file=None,
+        keep_samples=None,
+        keep_file=None,
+        extract_snps=None,
+        extract_file=None,
+        min_maf=None,
+        min_mac=None,
+        drop_duplicated=True,
+        phenotype_likelihood="gaussian",
+        sumstats_files=None,
+        sumstats_format="magenpy",
+        ld_store_files=None,
+        annotation_files=None,
+        annotation_format="magenpy",
+        backend="magenpy",
+        temp_dir="temp",
+        output_dir="output",
+        threads=1,
+    ):
         """
         Initialize the `GWADataLoader` object with the data sources required for
         downstream statistical genetics analyses.
@@ -103,8 +104,8 @@ class GWADataLoader(object):
 
         # ------- Sanity checks -------
 
-        assert backend in ('xarray', 'plink', 'bed-reader')
-        assert phenotype_likelihood in ('gaussian', 'binomial')
+        assert backend in ("xarray", "plink", "bed-reader", "magenpy")
+        assert phenotype_likelihood in ("gaussian", "binomial")
 
         # ------- General options -------
 
@@ -130,18 +131,16 @@ class GWADataLoader(object):
 
         # ------- Read data files -------
 
-        self.read_genotypes(bed_files,
-                            min_maf=min_maf,
-                            min_mac=min_mac,
-                            drop_duplicated=drop_duplicated)
+        self.read_genotypes(
+            bed_files, min_maf=min_maf, min_mac=min_mac, drop_duplicated=drop_duplicated
+        )
         self.read_phenotype(phenotype_file)
         self.read_covariates(covariates_file)
         self.read_ld(ld_store_files)
-        self.read_annotations(annotation_files,
-                              annot_format=annotation_format)
-        self.read_summary_statistics(sumstats_files,
-                                     sumstats_format,
-                                     drop_duplicated=drop_duplicated)
+        self.read_annotations(annotation_files, annot_format=annotation_format)
+        self.read_summary_statistics(
+            sumstats_files, sumstats_format, drop_duplicated=drop_duplicated
+        )
 
         # ------- Filter samples or SNPs -------
 
@@ -229,7 +228,7 @@ class GWADataLoader(object):
         return self.m
 
     @property
-    def shapes(self):
+    def shapes(self) -> Dict[int, int | None]:
         """
         :return: A dictionary where the key is the chromosome number and the value is
         the number of variants on that chromosome.
@@ -278,10 +277,10 @@ class GWADataLoader(object):
 
         if extract_snps is None:
             from .parsers.misc_parsers import read_snp_filter_file
+
             extract_snps = read_snp_filter_file(extract_file)
 
         for c in chroms:
-
             # Filter the genotype matrix:
             if self.genotype is not None and c in self.genotype:
                 self.genotype[c].filter_snps(extract_snps=extract_snps)
@@ -325,10 +324,9 @@ class GWADataLoader(object):
         self.sample_table.filter_samples(keep_samples=keep_samples, keep_file=keep_file)
         self.sync_sample_tables()
 
-    def read_annotations(self, annot_path,
-                         annot_format='magenpy',
-                         parser=None,
-                         **parse_kwargs):
+    def read_annotations(
+        self, annot_path, annot_format="magenpy", parser=None, **parse_kwargs
+    ):
         """
         Read the annotation matrix from file. Annotations are a set of features associated
         with each SNP and are generally represented in table format.
@@ -348,7 +346,7 @@ class GWADataLoader(object):
 
         # Find all the relevant files in the path passed by the user:
         if not iterable(annot_path):
-            annot_files = get_filenames(annot_path, extension='.annot')
+            annot_files = get_filenames(annot_path, extension=".annot")
         else:
             annot_files = annot_path
 
@@ -360,24 +358,28 @@ class GWADataLoader(object):
 
         self.annotation = {}
 
-        for annot_file in tqdm(annot_files,
-                               total=len(annot_files),
-                               desc="Reading annotation files"):
-            annot_mat = AnnotationMatrix.from_file(annot_file,
-                                                   annot_format=annot_format,
-                                                   annot_parser=parser,
-                                                   **parse_kwargs)
+        for annot_file in tqdm(
+            annot_files, total=len(annot_files), desc="Reading annotation files"
+        ):
+            annot_mat = AnnotationMatrix.from_file(
+                annot_file,
+                annot_format=annot_format,
+                annot_parser=parser,
+                **parse_kwargs,
+            )
             self.annotation[annot_mat.chromosome] = annot_mat
 
-    def read_genotypes(self,
-                       bed_paths,
-                       keep_samples=None,
-                       keep_file=None,
-                       extract_snps=None,
-                       extract_file=None,
-                       min_maf=None,
-                       min_mac=1,
-                       drop_duplicated=True):
+    def read_genotypes(
+        self,
+        bed_paths,
+        keep_samples=None,
+        keep_file=None,
+        extract_snps=None,
+        extract_file=None,
+        min_maf=None,
+        min_mac=1,
+        drop_duplicated=True,
+    ):
         """
         Read the genotype matrix and/or associated metadata from plink's BED file format.
         Consult the documentation for `GenotypeMatrix` for more details.
@@ -398,7 +400,7 @@ class GWADataLoader(object):
 
         # Find all the relevant files in the path passed by the user:
         if not iterable(bed_paths):
-            bed_files = get_filenames(bed_paths, extension='.bed')
+            bed_files = get_filenames(bed_paths, extension=".bed")
         else:
             bed_files = bed_paths
 
@@ -407,9 +409,11 @@ class GWADataLoader(object):
             return
 
         # Depending on the backend, select the `GenotypeMatrix` class:
-        if self.backend == 'xarray':
+        if self.backend == "magenpy":
+            gmat_class = MagenpyGenotypeMatrix
+        elif self.backend == "xarray":
             gmat_class = xarrayGenotypeMatrix
-        elif self.backend == 'bed-reader':
+        elif self.backend == "bed-reader":
             gmat_class = bedReaderGenotypeMatrix
         else:
             gmat_class = plinkBEDGenotypeMatrix
@@ -418,17 +422,18 @@ class GWADataLoader(object):
 
         self.genotype = {}
 
-        for bfile in tqdm(bed_files,
-                          total=len(bed_files),
-                          desc="Reading genotype metadata"):
+        for bfile in tqdm(
+            bed_files, total=len(bed_files), desc="Reading genotype metadata"
+        ):
             # Read BED file and update the genotypes dictionary:
-            self.genotype.update(gmat_class.from_file(bfile,
-                                                      temp_dir=self.temp_dir,
-                                                      threads=self.threads).split_by_chromosome())
+            self.genotype.update(
+                gmat_class.from_file(
+                    bfile, temp_dir=self.temp_dir, threads=self.threads
+                ).split_by_chromosome()
+            )
 
         # After reading the genotype matrices, apply some standard filters:
         for i, (c, g) in enumerate(self.genotype.items()):
-
             # Filter the genotype matrix to keep certain subsample:
             if keep_samples or keep_file:
                 g.filter_samples(keep_samples=keep_samples, keep_file=keep_file)
@@ -465,7 +470,9 @@ class GWADataLoader(object):
 
         assert self.sample_table is not None
 
-        self.sample_table.read_phenotype_file(phenotype_file, drop_na=drop_na, **read_csv_kwargs)
+        self.sample_table.read_phenotype_file(
+            phenotype_file, drop_na=drop_na, **read_csv_kwargs
+        )
         self.sync_sample_tables()
 
     def set_phenotype(self, new_phenotype, phenotype_likelihood=None):
@@ -475,8 +482,10 @@ class GWADataLoader(object):
         :param phenotype_likelihood: The phenotype likelihood (e.g. `binomial`, `gaussian`). Optional.
         """
 
-        self.sample_table.set_phenotype(new_phenotype,
-                                        phenotype_likelihood=phenotype_likelihood or self.phenotype_likelihood)
+        self.sample_table.set_phenotype(
+            new_phenotype,
+            phenotype_likelihood=phenotype_likelihood or self.phenotype_likelihood,
+        )
         self.sync_sample_tables()
 
     def read_covariates(self, covariates_file, **read_csv_kwargs):
@@ -498,12 +507,14 @@ class GWADataLoader(object):
         self.sample_table.read_covariates_file(covariates_file, **read_csv_kwargs)
         self.sync_sample_tables()
 
-    def read_summary_statistics(self,
-                                sumstats_path,
-                                sumstats_format='magenpy',
-                                parser=None,
-                                drop_duplicated=True,
-                                **parse_kwargs):
+    def read_summary_statistics(
+        self,
+        sumstats_path,
+        sumstats_format="magenpy",
+        parser=None,
+        drop_duplicated=True,
+        **parse_kwargs,
+    ):
         """
         Read GWAS summary statistics file(s) and parse them to `SumstatsTable` objects.
 
@@ -525,32 +536,33 @@ class GWADataLoader(object):
             sumstats_files = get_filenames(sumstats_path)
 
             from .utils.system_utils import valid_url
+
             if len(sumstats_files) < 1 and valid_url(sumstats_path):
                 sumstats_files = [sumstats_path]
         else:
             sumstats_files = sumstats_path
 
         if len(sumstats_files) < 1:
-            logger.warning(f"No summary statistics files were found at: {sumstats_path}")
+            logger.warning(
+                f"No summary statistics files were found at: {sumstats_path}"
+            )
             return
 
         logger.info("> Reading summary statistics...")
 
         self.sumstats_table = {}
 
-        for f in tqdm(sumstats_files,
-                      total=len(sumstats_files),
-                      desc="Reading summary statistics"):
-
-            ss_tab = SumstatsTable.from_file(f,
-                                             sumstats_format=sumstats_format,
-                                             parser=parser,
-                                             **parse_kwargs)
+        for f in tqdm(
+            sumstats_files, total=len(sumstats_files), desc="Reading summary statistics"
+        ):
+            ss_tab = SumstatsTable.from_file(
+                f, sumstats_format=sumstats_format, parser=parser, **parse_kwargs
+            )
 
             if drop_duplicated:
                 ss_tab.drop_duplicates()
 
-            if 'CHR' in ss_tab.table.columns:
+            if "CHR" in ss_tab.table.columns:
                 self.sumstats_table.update(ss_tab.split_by_chromosome())
             else:
                 if self.genotype is not None:
@@ -558,21 +570,28 @@ class GWADataLoader(object):
                 elif self.ld is not None:
                     ref_table = {c: ld.snps for c, ld in self.ld.items()}
                 else:
-                    raise ValueError("Cannot index summary statistics tables without chromosome information!")
+                    raise ValueError(
+                        "Cannot index summary statistics tables without chromosome information!"
+                    )
 
-                self.sumstats_table.update(ss_tab.split_by_chromosome(snps_per_chrom=ref_table))
+                self.sumstats_table.update(
+                    ss_tab.split_by_chromosome(snps_per_chrom=ref_table)
+                )
 
         # If SNP information is not present in the sumstats tables, try to impute it
         # using other reference tables:
 
-        missing_snp = any('SNP' not in ss.table.columns for ss in self.sumstats_table.values())
+        missing_snp = any(
+            "SNP" not in ss.table.columns for ss in self.sumstats_table.values()
+        )
 
         if missing_snp and (self.genotype is not None or self.ld is not None):
-
-            ref_table = self.to_snp_table(col_subset=['CHR', 'POS', 'SNP'], per_chromosome=True)
+            ref_table = self.to_snp_table(
+                col_subset=["CHR", "POS", "SNP"], per_chromosome=True
+            )
 
             for c, ss in self.sumstats_table.items():
-                if 'SNP' not in ss.table.columns and c in ref_table:
+                if "SNP" not in ss.table.columns and c in ref_table:
                     ss.infer_snp_id(ref_table[c], allow_na=True)
 
     def read_ld(self, ld_store_paths):
@@ -586,11 +605,12 @@ class GWADataLoader(object):
             return
 
         if not iterable(ld_store_paths):
-            if 's3://' in ld_store_paths:
+            if "s3://" in ld_store_paths:
                 from .utils.system_utils import glob_s3_path
+
                 ld_store_files = glob_s3_path(ld_store_paths)
             else:
-                ld_store_files = get_filenames(ld_store_paths, extension='.zgroup')
+                ld_store_files = get_filenames(ld_store_paths, extension=".zgroup")
         else:
             ld_store_files = ld_store_paths
 
@@ -602,9 +622,9 @@ class GWADataLoader(object):
 
         self.ld = {}
 
-        for f in tqdm(ld_store_files,
-                      total=len(ld_store_files),
-                      desc="Reading LD metadata"):
+        for f in tqdm(
+            ld_store_files, total=len(ld_store_files), desc="Reading LD metadata"
+        ):
             z = LDMatrix.from_path(f)
             self.ld[z.chromosome] = z
 
@@ -624,14 +644,16 @@ class GWADataLoader(object):
             for ld in self.ld.values():
                 ld.release()
 
-    def compute_ld(self,
-                   estimator,
-                   output_dir,
-                   dtype='int16',
-                   compressor_name='zstd',
-                   compression_level=7,
-                   compute_spectral_properties=False,
-                   **ld_kwargs):
+    def compute_ld(
+        self,
+        estimator,
+        output_dir,
+        dtype="int16",
+        compressor_name="zstd",
+        compression_level=7,
+        compute_spectral_properties=False,
+        **ld_kwargs,
+    ):
         """
         Compute the Linkage-Disequilibrium (LD) matrix or SNP-by-SNP Pearson
         correlation matrix between genetic variants. This function only considers correlations
@@ -658,16 +680,20 @@ class GWADataLoader(object):
         logger.info("> Computing LD matrix...")
 
         self.ld = {
-            c: g.compute_ld(estimator,
-                            output_dir,
-                            dtype=dtype,
-                            compressor_name=compressor_name,
-                            compression_level=compression_level,
-                            compute_spectral_properties=compute_spectral_properties,
-                            **ld_kwargs)
-            for c, g in tqdm(sorted(self.genotype.items(), key=lambda x: x[0]),
-                             total=len(self.genotype),
-                             desc='Computing LD matrices')
+            c: g.compute_ld(
+                estimator,
+                output_dir,
+                dtype=dtype,
+                compressor_name=compressor_name,
+                compression_level=compression_level,
+                compute_spectral_properties=compute_spectral_properties,
+                **ld_kwargs,
+            )
+            for c, g in tqdm(
+                sorted(self.genotype.items(), key=lambda x: x[0]),
+                total=len(self.genotype),
+                desc="Computing LD matrices",
+            )
         }
 
     def get_ld_matrices(self):
@@ -703,14 +729,13 @@ class GWADataLoader(object):
             return
 
         # Get the chromosomes information from all the data sources:
-        chromosomes = list(set.union(*[set(ds.keys()) for ds in initialized_data_sources]))
+        chromosomes = list(
+            set.union(*[set(ds.keys()) for ds in initialized_data_sources])
+        )
 
         logger.info("> Harmonizing data...")
 
-        for c in tqdm(chromosomes,
-                      total=len(chromosomes),
-                      desc='Harmonizing data'):
-
+        for c in tqdm(chromosomes, total=len(chromosomes), desc="Harmonizing data"):
             # Which initialized data sources have information for chromosome `c`
             miss_chroms = [c not in ds for ds in initialized_data_sources]
 
@@ -718,16 +743,19 @@ class GWADataLoader(object):
                 # If the chromosome data only exists for some data sources but not others, remove the chromosome
                 # from all data source.
                 # Is this the best way to handle the missingness? Should we just post a warning?
-                logger.debug(f"Chromosome {c} is missing in some data sources. "
-                             f"Removing it from all data sources.")
+                logger.debug(
+                    f"Chromosome {c} is missing in some data sources. "
+                    f"Removing it from all data sources."
+                )
                 for ds in initialized_data_sources:
                     if c in ds:
                         del ds[c]
 
             else:
-
                 # Find the set of SNPs that are shared across all data sources (exclude missing values):
-                common_snps = intersect_multiple_arrays([ds[c].snps for ds in initialized_data_sources])
+                common_snps = intersect_multiple_arrays(
+                    [ds[c].snps for ds in initialized_data_sources]
+                )
 
                 # If necessary, filter the data sources to only have the common SNPs:
                 for ds in initialized_data_sources:
@@ -737,17 +765,18 @@ class GWADataLoader(object):
                 # Harmonize the summary statistics data with either genotype or LD reference.
                 # This procedure checks for flips in the effect allele between data sources.
                 if self.sumstats_table is not None:
-
                     id_cols = self.sumstats_table[c].identifier_cols
 
                     if self.genotype is not None:
-                        self.sumstats_table[c].match(self.genotype[c].get_snp_table(
-                            col_subset=id_cols + ['A1', 'A2']
-                        ))
+                        self.sumstats_table[c].match(
+                            self.genotype[c].get_snp_table(
+                                col_subset=id_cols + ["A1", "A2"]
+                            )
+                        )
                     elif self.ld is not None:
-                        self.sumstats_table[c].match(self.ld[c].to_snp_table(
-                            col_subset=id_cols + ['A1', 'A2']
-                        ))
+                        self.sumstats_table[c].match(
+                            self.ld[c].to_snp_table(col_subset=id_cols + ["A1", "A2"])
+                        )
 
                     # If during the allele matching process we discover incompatibilities,
                     # we filter those SNPs:
@@ -769,9 +798,11 @@ class GWADataLoader(object):
 
         self.sumstats_table = {
             c: g.perform_gwas(**gwa_kwargs)
-            for c, g in tqdm(sorted(self.genotype.items(), key=lambda x: x[0]),
-                             total=len(self.genotype),
-                             desc='Performing GWAS')
+            for c, g in tqdm(
+                sorted(self.genotype.items(), key=lambda x: x[0]),
+                total=len(self.genotype),
+                desc="Performing GWAS",
+            )
         }
 
     def score(self, beta=None, standardize_genotype=False):
@@ -786,32 +817,46 @@ class GWADataLoader(object):
 
         if beta is None:
             try:
-                beta = {c: s.marginal_beta or s.get_snp_pseudo_corr() for c, s in self.sumstats_table.items()}
+                beta = {
+                    c: s.marginal_beta or s.get_snp_pseudo_corr()
+                    for c, s in self.sumstats_table.items()
+                }
             except Exception:
-                raise ValueError("To perform linear scoring, you must "
-                                 "provide effect size estimates (BETA)!")
+                raise ValueError(
+                    "To perform linear scoring, you must "
+                    "provide effect size estimates (BETA)!"
+                )
 
         # Here, we have a very ugly way of accounting for
         # the fact that the chromosomes may be coded differently between the genotype
         # and the beta dictionary. Maybe we can find a better solution in the future.
-        common_chr_g, common_chr_b = match_chromosomes(self.genotype.keys(), beta.keys(), return_both=True)
+        common_chr_g, common_chr_b = match_chromosomes(
+            self.genotype.keys(), beta.keys(), return_both=True
+        )
 
         if len(common_chr_g) < 1:
-            raise ValueError("No common chromosomes found between "
-                             "the genotype and the effect size estimates!")
+            raise ValueError(
+                "No common chromosomes found between "
+                "the genotype and the effect size estimates!"
+            )
 
         logger.info("> Generating polygenic scores...")
 
         pgs = None
 
-        for c_g, c_b in tqdm(zip(common_chr_g, common_chr_b),
-                             total=len(common_chr_g),
-                             desc='Generating polygenic scores'):
-
+        for c_g, c_b in tqdm(
+            zip(common_chr_g, common_chr_b),
+            total=len(common_chr_g),
+            desc="Generating polygenic scores",
+        ):
             if pgs is None:
-                pgs = self.genotype[c_g].score(beta[c_b], standardize_genotype=standardize_genotype)
+                pgs = self.genotype[c_g].score(
+                    beta[c_b], standardize_genotype=standardize_genotype
+                )
             else:
-                pgs += self.genotype[c_g].score(beta[c_b], standardize_genotype=standardize_genotype)
+                pgs += self.genotype[c_g].score(
+                    beta[c_b], standardize_genotype=standardize_genotype
+                )
 
         # If we only have a single set of betas, flatten the PGS vector:
         if len(pgs.shape) > 1 and pgs.shape[1] == 1:
@@ -833,9 +878,10 @@ class GWADataLoader(object):
         # Perform linear scoring:
         pgs = self.score(beta)
 
-        if self.phenotype_likelihood == 'binomial':
+        if self.phenotype_likelihood == "binomial":
             # Apply probit link function:
             from scipy.stats import norm
+
             pgs = norm.cdf(pgs)
 
         return pgs
@@ -859,7 +905,7 @@ class GWADataLoader(object):
 
         return self.sample_table.get_phenotype_table()
 
-    def to_snp_table(self, col_subset=None, per_chromosome=False, resource='auto'):
+    def to_snp_table(self, col_subset=None, per_chromosome=False, resource="auto"):
         """
         Get a dataframe of SNP data for all variants
         across different chromosomes.
@@ -877,14 +923,14 @@ class GWADataLoader(object):
         """
 
         # Sanity checks:
-        assert resource in ('auto', 'genotype', 'ld', 'sumstats')
+        assert resource in ("auto", "genotype", "ld", "sumstats")
 
-        if resource != 'auto':
-            if resource == 'genotype' and self.genotype is None:
+        if resource != "auto":
+            if resource == "genotype" and self.genotype is None:
                 raise ValueError("Genotype matrix is not available!")
-            if resource == 'ld' and self.ld is None:
+            if resource == "ld" and self.ld is None:
                 raise ValueError("LD matrix is not available!")
-            if resource == 'sumstats' and self.sumstats_table is None:
+            if resource == "sumstats" and self.sumstats_table is None:
                 raise ValueError("Summary statistics table is not available!")
         else:
             if all(ds is None for ds in (self.genotype, self.ld, self.sumstats_table)):
@@ -894,15 +940,16 @@ class GWADataLoader(object):
 
         snp_tables = {}
 
-        if resource in ('auto', 'genotype') and self.genotype is not None:
+        if resource in ("auto", "genotype") and self.genotype is not None:
             for c in self.chromosomes:
                 snp_tables[c] = self.genotype[c].get_snp_table(col_subset=col_subset)
-        elif resource in ('auto', 'ld') and self.ld is not None:
+        elif resource in ("auto", "ld") and self.ld is not None:
             for c in self.chromosomes:
                 snp_tables[c] = self.ld[c].to_snp_table(col_subset=col_subset)
         else:
-            return self.to_summary_statistics_table(col_subset=col_subset,
-                                                    per_chromosome=per_chromosome)
+            return self.to_summary_statistics_table(
+                col_subset=col_subset, per_chromosome=per_chromosome
+            )
 
         if per_chromosome:
             return snp_tables
@@ -993,20 +1040,27 @@ class GWADataLoader(object):
 
         if groups is None:
             if proportions is None:
-                raise ValueError("To split a `GWADataloader` object by samples, the user must provide either the list "
-                                 "or proportion of individuals in each split.")
+                raise ValueError(
+                    "To split a `GWADataloader` object by samples, the user must provide either the list "
+                    "or proportion of individuals in each split."
+                )
             else:
-
                 # Assign each sample to a different split randomly by drawing from a multinomial:
-                random_split = np.random.multinomial(1, proportions, size=self.sample_size).astype(bool)
+                random_split = np.random.multinomial(
+                    1, proportions, size=self.sample_size
+                ).astype(bool)
                 # Extract the individuals in each group from the multinomial sample:
-                groups = [self.samples[random_split[:, i]] for i in range(random_split.shape[1])]
+                groups = [
+                    self.samples[random_split[:, i]]
+                    for i in range(random_split.shape[1])
+                ]
 
         gdls = []
         for i, g in enumerate(groups):
-
             if len(g) < 1:
-                raise ValueError(f"Group {i} is empty! Please ensure that all splits have at least one sample.")
+                raise ValueError(
+                    f"Group {i} is empty! Please ensure that all splits have at least one sample."
+                )
 
             if (i + 1) == len(groups) and not keep_original:
                 new_gdl = self
@@ -1019,7 +1073,7 @@ class GWADataLoader(object):
 
         return gdls
 
-    def align_with(self, other_gdls, axis='SNP', how='inner'):
+    def align_with(self, other_gdls, axis="SNP", how="inner"):
         """
         Align the `GWADataLoader` object with other GDL objects to have the same
         set of SNPs or samples. This utility method is meant to enable the user to
@@ -1041,7 +1095,7 @@ class GWADataLoader(object):
 
         assert all([isinstance(gdl, GWADataLoader) for gdl in other_gdls])
 
-        if axis == 'SNP':
+        if axis == "SNP":
             # Ensure that all the GDLs have the same set of SNPs.
             # This may be useful if the goal is to select a common set of variants
             # that are shared across different datasets.
@@ -1057,7 +1111,7 @@ class GWADataLoader(object):
 
                 self.filter_snps(extract_snps=common_snps, chromosome=c)
 
-        elif axis == 'sample':
+        elif axis == "sample":
             # Ensure that all the GDLs have the same set of samples.
             # This may be useful when different GDLs have different covariates, phenotypes,
             # or other information pertaining to the individuals.

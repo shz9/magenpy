@@ -33,13 +33,18 @@ class AnnotationMatrix(object):
 
         if self.table is not None:
             if self._annotations is None:
-                self._annotations = [ann for ann in self.table.columns if ann not in ('CHR', 'SNP', 'POS')]
+                self._annotations = [
+                    ann
+                    for ann in self.table.columns
+                    if ann not in ("CHR", "SNP", "POS")
+                ]
                 if len(self._annotations) < 1:
                     self._annotations = None
 
     @classmethod
-    def from_file(cls, annot_file, annot_format='magenpy', annot_parser=None,
-                  **parse_kwargs):
+    def from_file(
+        cls, annot_file, annot_format="magenpy", annot_parser=None, **parse_kwargs
+    ):
         """
         Initialize an AnnotationMatrix object from a file.
 
@@ -53,15 +58,20 @@ class AnnotationMatrix(object):
         :return: An instance of the `AnnotationMatrix` class.
         """
 
-        from .parsers.annotation_parsers import AnnotationMatrixParser, LDSCAnnotationMatrixParser
+        from .parsers.annotation_parsers import (
+            AnnotationMatrixParser,
+            LDSCAnnotationMatrixParser,
+        )
 
         if annot_parser is None:
-            if annot_format == 'magenpy':
+            if annot_format == "magenpy":
                 annot_parser = AnnotationMatrixParser(None, **parse_kwargs)
-            elif annot_format == 'ldsc':
+            elif annot_format == "ldsc":
                 annot_parser = LDSCAnnotationMatrixParser(None, **parse_kwargs)
             else:
-                raise KeyError(f"Annotation matrix format {annot_format} not recognized!")
+                raise KeyError(
+                    f"Annotation matrix format {annot_format} not recognized!"
+                )
 
         annot_table, annotations = annot_parser.parse(annot_file)
 
@@ -100,15 +110,15 @@ class AnnotationMatrix(object):
         """
         :return: The list of unique chromosomes in the annotation matrix.
         """
-        if 'CHR' in self.table.columns:
-            return self.table['CHR'].unique()
+        if "CHR" in self.table.columns:
+            return self.table["CHR"].unique()
 
     @property
     def snps(self):
         """
         :return: The list of SNP rsIDs in the annotation matrix.
         """
-        return self.table['SNP'].values
+        return self.table["SNP"].values
 
     @property
     def n_annotations(self):
@@ -126,8 +136,9 @@ class AnnotationMatrix(object):
         :return: A list of binary (0/1) annotations in the annotation matrix.
         """
         assert self.annotations is not None
-        return np.array([c for c in self.annotations
-                         if len(self.table[c].unique()) == 2])
+        return np.array(
+            [c for c in self.annotations if len(self.table[c].unique()) == 2]
+        )
 
     @property
     def annotations(self):
@@ -166,6 +177,7 @@ class AnnotationMatrix(object):
 
         if extract_file is not None:
             from .parsers.misc_parsers import read_snp_filter_file
+
             extract_snps = read_snp_filter_file(extract_file)
 
         from .utils.compute_utils import intersect_arrays
@@ -183,8 +195,10 @@ class AnnotationMatrix(object):
         if self.annotations is None:
             return
 
-        self._annotations = [annot for annot in self._annotations if annot in keep_annotations]
-        self.table = self.table[['CHR', 'SNP', 'POS'] + self._annotations]
+        self._annotations = [
+            annot for annot in self._annotations if annot in keep_annotations
+        ]
+        self.table = self.table[["CHR", "SNP", "POS"] + self._annotations]
 
     def add_annotation(self, annot_vec, annotation_name):
         """
@@ -236,7 +250,7 @@ class AnnotationMatrix(object):
 
         bed_df = parse_annotation_bed_file(bed_file)
         # Group the BED annotation file by chromosome:
-        range_groups = bed_df.groupby('CHR').groups
+        range_groups = bed_df.groupby("CHR").groups
 
         def annotation_overlap(row):
             """
@@ -245,11 +259,11 @@ class AnnotationMatrix(object):
             SNP is within the range specified by the annotation BED file.
             """
             try:
-                chr_range = bed_df.iloc[range_groups[row['CHR']], :]
+                chr_range = bed_df.iloc[range_groups[row["CHR"]], :]
             except KeyError:
                 return False
 
-            check = (chr_range.Start <= row['POS']) & (chr_range.End >= row['POS'])
+            check = (chr_range.Start <= row["POS"]) & (chr_range.End >= row["POS"])
             return int(np.any(check))
 
         self.table[annotation_name] = self.table.apply(annotation_overlap, axis=1)
@@ -274,15 +288,19 @@ class AnnotationMatrix(object):
         :return: A dictionary of `AnnotationMatrix` objects, where the keys are the chromosome numbers.
         """
 
-        if 'CHR' in self.table.columns:
-            chrom_tables = self.table.groupby('CHR')
+        if "CHR" in self.table.columns:
+            chrom_tables = self.table.groupby("CHR")
             return {
-                c: AnnotationMatrix(annotation_table=chrom_tables.get_group(c),
-                                    annotations=self.annotations)
+                c: AnnotationMatrix(
+                    annotation_table=chrom_tables.get_group(c),
+                    annotations=self.annotations,
+                )
                 for c in chrom_tables.groups
             }
         else:
-            raise KeyError("Chromosome information is not available in the annotation table!")
+            raise KeyError(
+                "Chromosome information is not available in the annotation table!"
+            )
 
     def to_file(self, output_path, col_subset=None, compress=True, **to_csv_kwargs):
         """
@@ -294,19 +312,19 @@ class AnnotationMatrix(object):
         :param to_csv_kwargs: Key-word arguments to the pandas csv writer.
         """
 
-        if 'sep' not in to_csv_kwargs and 'delimiter' not in to_csv_kwargs:
-            to_csv_kwargs['sep'] = '\t'
+        if "sep" not in to_csv_kwargs and "delimiter" not in to_csv_kwargs:
+            to_csv_kwargs["sep"] = "\t"
 
-        if 'index' not in to_csv_kwargs:
-            to_csv_kwargs['index'] = False
+        if "index" not in to_csv_kwargs:
+            to_csv_kwargs["index"] = False
 
         if col_subset is not None:
             table = self.table[col_subset]
         else:
             table = self.table
 
-        file_name = output_path + '.annot'
+        file_name = output_path + ".annot"
         if compress:
-            file_name += '.gz'
+            file_name += ".gz"
 
         table.to_csv(file_name, **to_csv_kwargs)

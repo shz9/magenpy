@@ -16,8 +16,7 @@ from .simulation.PhenotypeSimulator import PhenotypeSimulator
 
 from .utils.data_utils import *
 
-__version__ = '0.1.6'
-__release_date__ = 'June 2025'
+from ._version import __release_date__, __version__
 
 
 def make_ascii_logo(desc=None, left_padding=None):

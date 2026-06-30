@@ -165,8 +165,8 @@ class SampleLD(object):
 
         """
 
-        from .utils import compute_ld_xarray, compute_ld_plink1p9
-        from ...GenotypeMatrix import xarrayGenotypeMatrix, plinkBEDGenotypeMatrix
+        from .utils import compute_ld_magenpy, compute_ld_plink1p9, compute_ld_xarray
+        from ...GenotypeMatrix import MagenpyGenotypeMatrix, plinkBEDGenotypeMatrix, xarrayGenotypeMatrix
 
         assert str(dtype) in ('float32', 'float64', 'int8', 'int16')
 
@@ -200,6 +200,14 @@ class SampleLD(object):
                                          dtype=dtype,
                                          compressor_name=compressor_name,
                                          compression_level=compression_level)
+        elif isinstance(self.genotype_matrix, MagenpyGenotypeMatrix):
+            ld_mat = compute_ld_magenpy(self.genotype_matrix,
+                                        ld_boundaries,
+                                        output_dir,
+                                        overwrite=overwrite,
+                                        dtype=dtype,
+                                        compressor_name=compressor_name,
+                                        compression_level=compression_level)
         else:
             raise NotImplementedError
 
@@ -777,4 +785,3 @@ class BlockLD(SampleLD):
         if ld_mat.validate_ld_matrix():
             temp_dir.cleanup()
             return ld_mat
-

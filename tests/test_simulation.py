@@ -1,17 +1,18 @@
-import magenpy as mgp
-import numpy as np
 import shutil
+
+import numpy as np
 import pytest
 
+import magenpy as mgp
 
-@pytest.fixture(scope='module')
+
+@pytest.fixture(scope="module")
 def gsim_object():
     """
     Initialize a GWADataLoader using data pre-packaged with magenpy.
     Make this data loader available to all tests.
     """
-    gsim = mgp.PhenotypeSimulator(mgp.tgp_eur_data_path(),
-                                  backend='xarray')
+    gsim = mgp.PhenotypeSimulator(mgp.tgp_eur_data_path(), backend="magenpy")
 
     yield gsim
 
@@ -30,15 +31,14 @@ def test_simulator(gsim_object):
 
     assert gsim_object.sample_table is not None
     assert gsim_object.sample_table.phenotype is not None
-    assert gsim_object.sample_table.phenotype_likelihood == 'gaussian'
+    assert gsim_object.sample_table.phenotype_likelihood == "gaussian"
     assert len(gsim_object.sample_table.phenotype) == gsim_object.sample_size
 
-    gsim_object.phenotype_likelihood = 'binomial'
+    gsim_object.phenotype_likelihood = "binomial"
 
     gsim_object.simulate()
 
     assert gsim_object.sample_table is not None
     assert gsim_object.sample_table.phenotype is not None
-    assert gsim_object.sample_table.phenotype_likelihood == 'binomial'
+    assert gsim_object.sample_table.phenotype_likelihood == "binomial"
     assert sorted(np.unique(gsim_object.sample_table.phenotype)) == [0, 1]
-
