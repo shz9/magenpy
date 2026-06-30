@@ -981,10 +981,15 @@ class bedReaderGenotypeMatrix(GenotypeMatrix):
 
         from bed_reader import open_bed
 
+        bed_file = file_path
         try:
-            bed_reader = open_bed(file_path)
-        except Exception as e:
-            raise e
+            bed_reader = open_bed(bed_file)
+        except Exception:
+            if not file_path.endswith(".bed"):
+                bed_file = file_path + ".bed"
+                bed_reader = open_bed(bed_file)
+            else:
+                raise
 
         # Set the sample table:
         sample_table = pd.DataFrame(
@@ -1008,7 +1013,7 @@ class bedReaderGenotypeMatrix(GenotypeMatrix):
         )
 
         sample_table["phenotype"] = sample_table["phenotype"].replace({-9.0: np.nan})
-        sample_table = sample_table.reset_index()
+        sample_table = sample_table.reset_index(drop=True)
 
         # Set the snp table:
         snp_table = pd.DataFrame(
@@ -1035,11 +1040,51 @@ class bedReaderGenotypeMatrix(GenotypeMatrix):
             sample_table=SampleTable(sample_table),
             snp_table=snp_table,
             temp_dir=temp_dir,
+            bed_file=bed_file,
             bed_reader=bed_reader,
             **kwargs,
         )
 
         return g_mat
+
+    def to_numpy(self, dtype=np.int8, order="C"):
+        """
+        Convert the selected genotype matrix to a numpy array.
+
+        Missing values are encoded as -1 for integer dtypes and NaN for
+        floating-point dtypes.
+        """
+
+        mat = self.bed_reader.read(
+            np.s_[self.sample_index, self.snp_index],
+            dtype=dtype,
+            order=order,
+            num_threads=self.threads,
+        )
+
+        dtype = np.dtype(dtype)
+        if np.issubdtype(dtype, np.integer):
+            mat[mat == -127] = -1
+
+        return mat
+
+    def to_csr(self, dtype=np.int8, batch_size=None):
+        """
+        Convert the selected genotype matrix to a scipy sparse CSR matrix.
+        """
+
+        mat = self.bed_reader.read_sparse(
+            np.s_[self.sample_index, self.snp_index],
+            dtype=dtype,
+            batch_size=batch_size,
+            format="csr",
+            num_threads=self.threads,
+        )
+
+        if np.issubdtype(np.dtype(dtype), np.integer):
+            mat.data[mat.data == -127] = -1
+
+        return mat
 
     def score(self, beta, standardize_genotype=False, skip_na=True):
         """
@@ -1076,12 +1121,12 @@ class bedReaderGenotypeMatrix(GenotypeMatrix):
         """
         Perform genome-wide association testing of all variants against the phenotype.
 
-        TODO: Implement this method...
-
         :param gwa_kwargs: Keyword arguments to pass to the GWA functions. Consult `stats.gwa.utils`
         """
 
-        raise NotImplementedError
+        from .stats.gwa.utils import perform_gwa_bed_reader
+
+        return perform_gwa_bed_reader(self, **gwa_kwargs)
 
     def compute_allele_frequency(self):
         """
@@ -1116,7 +1161,8 @@ class bedReaderGenotypeMatrix(GenotypeMatrix):
         if chunk_size == "auto":
             matrix_size = self.estimate_memory_allocation()
             # By default, we allocate 128MB per chunk:
-            chunk_size = int(self.n // (matrix_size // 128))
+            n_chunks = max(1, int(np.ceil(matrix_size / 128.0)))
+            chunk_size = max(1, int(np.ceil(self.n / n_chunks)))
 
         for i in range(int(np.ceil(self.n / chunk_size))):
             start, end = int(i * chunk_size), min(int((i + 1) * chunk_size), self.n)
@@ -1142,7 +1188,8 @@ class bedReaderGenotypeMatrix(GenotypeMatrix):
         if chunk_size == "auto":
             matrix_size = self.estimate_memory_allocation()
             # By default, we allocate 128MB per chunk:
-            chunk_size = int(self.m // (matrix_size // 128))
+            n_chunks = max(1, int(np.ceil(matrix_size / 128.0)))
+            chunk_size = max(1, int(np.ceil(self.m / n_chunks)))
 
         for i in range(int(np.ceil(self.m / chunk_size))):
             start, end = int(i * chunk_size), min(int((i + 1) * chunk_size), self.m)

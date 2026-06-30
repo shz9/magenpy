@@ -347,6 +347,132 @@ def perform_gwa_xarray(genotype_matrix,
     return ss_table
 
 
+def perform_gwa_bed_reader(genotype_matrix,
+                           standardize_genotype=False,
+                           **phenotype_transform_kwargs):
+    """
+    Perform genome-wide association testing using the bed-reader backend.
+
+    This function only implements simple association testing for continuous
+    phenotypes. Genotypes are streamed in SNP chunks, so the full genotype
+    matrix is not materialized in memory.
+
+    :param genotype_matrix: A bedReaderGenotypeMatrix object.
+    :param standardize_genotype: If True, genotype columns are standardized
+        before association testing.
+    :param phenotype_transform_kwargs: Keyword arguments passed to
+        `chained_transform`.
+
+    :return: A SumstatsTable object containing the summary statistics from the
+        association tests.
+    """
+
+    from ...GenotypeMatrix import bedReaderGenotypeMatrix
+
+    assert isinstance(genotype_matrix, bedReaderGenotypeMatrix)
+
+    if genotype_matrix.sample_table.phenotype_likelihood is None:
+        warnings.warn("The phenotype likelihood is not specified! "
+                      "Assuming that the phenotype is continuous...")
+    elif genotype_matrix.sample_table.phenotype_likelihood == 'binomial':
+        raise ValueError("The bed-reader backend currently does not support performing association "
+                         "testing on binary (case-control) phenotypes! Try setting the backend to `plink` or "
+                         "use external software (e.g. GCTA or REGENIE) for performing GWAS.")
+
+    sumstats_table = genotype_matrix.get_snp_table(
+        ['CHR', 'SNP', 'POS', 'A1', 'A2']
+    )
+
+    phenotype, mask = chained_transform(genotype_matrix.sample_table,
+                                        **phenotype_transform_kwargs)
+    phenotype = np.asarray(phenotype, dtype=np.float64)
+    centered_phenotype = phenotype - phenotype.mean()
+    sample_index = genotype_matrix.sample_index[mask]
+
+    maf = np.zeros(genotype_matrix.n_snps, dtype=np.float64)
+    n_per_snp = np.zeros(genotype_matrix.n_snps, dtype=np.int32)
+    x_dot_y = np.zeros(genotype_matrix.n_snps, dtype=np.float64)
+    sum_x_sq = np.zeros(genotype_matrix.n_snps, dtype=np.float64)
+
+    for (start, end), chunk in genotype_matrix._iter_col_chunks(return_slice=True):
+        if not np.array_equal(sample_index, genotype_matrix.sample_index):
+            chunk = genotype_matrix.bed_reader.read(
+                np.s_[sample_index, genotype_matrix.snp_index[start:end]],
+                num_threads=genotype_matrix.threads,
+            )
+
+        observed = ~np.isnan(chunk)
+        n_obs = observed.sum(axis=0)
+        allele_sum = np.nansum(chunk, axis=0)
+        mean = np.divide(
+            allele_sum,
+            n_obs,
+            out=np.full(end - start, np.nan, dtype=np.float64),
+            where=n_obs > 0,
+        )
+
+        x = np.where(observed, chunk - mean, 0.0)
+
+        if standardize_genotype:
+            sd = np.sqrt(np.divide(
+                np.square(x).sum(axis=0),
+                n_obs,
+                out=np.full(end - start, np.nan, dtype=np.float64),
+                where=n_obs > 0,
+            ))
+            x = np.divide(
+                x,
+                sd,
+                out=np.zeros_like(x, dtype=np.float64),
+                where=sd > 0,
+            )
+
+        maf[start:end] = np.divide(
+            allele_sum,
+            2.0 * n_obs,
+            out=np.full(end - start, np.nan, dtype=np.float64),
+            where=n_obs > 0,
+        )
+        n_per_snp[start:end] = n_obs
+        x_dot_y[start:end] = x.T.dot(centered_phenotype)
+        sum_x_sq[start:end] = np.square(x).sum(axis=0)
+
+    slope = np.divide(
+        x_dot_y,
+        sum_x_sq,
+        out=np.full(genotype_matrix.n_snps, np.nan, dtype=np.float64),
+        where=sum_x_sq > 0,
+    )
+
+    y_centered_sum_sq = np.dot(centered_phenotype, centered_phenotype)
+    residual_sum_sq = y_centered_sum_sq - slope*x_dot_y
+    residual_sum_sq = np.maximum(residual_sum_sq, 0.)
+
+    s2 = np.divide(
+        residual_sum_sq,
+        n_per_snp - 2,
+        out=np.full(genotype_matrix.n_snps, np.nan, dtype=np.float64),
+        where=n_per_snp > 2,
+    )
+
+    se = np.sqrt(np.divide(
+        s2,
+        sum_x_sq,
+        out=np.full(genotype_matrix.n_snps, np.nan, dtype=np.float64),
+        where=sum_x_sq > 0,
+    ))
+
+    sumstats_table['MAF'] = maf
+    sumstats_table['N'] = n_per_snp
+    sumstats_table['BETA'] = slope
+    sumstats_table['SE'] = se
+
+    ss_table = SumstatsTable(sumstats_table)
+    _, _ = ss_table.z_score, ss_table.pval
+
+    return ss_table
+
+
 def perform_gwa_magenpy(genotype_matrix,
                         temp_dir=None,
                         standardize_genotype=False,

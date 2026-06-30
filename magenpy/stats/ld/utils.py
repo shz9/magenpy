@@ -723,6 +723,127 @@ def compute_ld_magenpy(genotype_matrix,
     return LDMatrix(z)
 
 
+def compute_ld_bed_reader(genotype_matrix,
+                          ld_boundaries,
+                          output_dir,
+                          allele_frequencies=None,
+                          overwrite=True,
+                          dtype='int16',
+                          compressor_name='zstd',
+                          compression_level=7):
+
+    """
+    Compute LD from a PLINK BED file using the bed-reader backend, and store
+    the result as an upper-triangular sparse LDMatrix.
+
+    :param genotype_matrix: A bedReaderGenotypeMatrix object.
+    :param ld_boundaries: A 2xM matrix of LD boundaries for every variant.
+    :param output_dir: The output directory for the final LD matrix file.
+    :param allele_frequencies: Optional allele frequency vector for the selected
+        variants. If None, frequencies are taken from `genotype_matrix.maf`.
+    :param overwrite: If True, overwrite the output LD store.
+    :param dtype: Storage dtype for the LDMatrix.
+    :param compressor_name: The name of the compressor to use for the Zarr arrays.
+    :param compression_level: The compression level to use with the compressor.
+    :return: An LDMatrix object.
+    """
+
+    from ...GenotypeMatrix import bedReaderGenotypeMatrix
+    from ...utils.model_utils import quantize
+    from ...utils.system_utils import makedir
+
+    assert isinstance(genotype_matrix, bedReaderGenotypeMatrix)
+
+    makedir(output_dir)
+
+    m = genotype_matrix.n_snps
+    n = genotype_matrix.sample_size
+    dtype = np.dtype(dtype)
+
+    if allele_frequencies is None:
+        allele_frequencies = genotype_matrix.maf
+    allele_frequencies = np.asarray(allele_frequencies, dtype=np.float64)
+
+    if allele_frequencies.shape[0] != m:
+        raise ValueError("allele_frequencies must have one value per selected SNP.")
+
+    def read_standardized_chunk(start, end):
+        chunk = genotype_matrix.bed_reader.read(
+            np.s_[genotype_matrix.sample_index, genotype_matrix.snp_index[start:end]],
+            num_threads=genotype_matrix.threads,
+        )
+        mean = 2.0 * allele_frequencies[start:end]
+        centered = np.where(np.isnan(chunk), 0.0, chunk - mean)
+        sum_sq = np.square(centered).sum(axis=0)
+        inv_sd = np.divide(
+            np.sqrt(n),
+            np.sqrt(sum_sq),
+            out=np.zeros(end - start, dtype=np.float64),
+            where=sum_sq > 0,
+        )
+        return centered * inv_sd
+
+    ld_boundaries_end = ld_boundaries[1, :].astype(np.int64, copy=False)
+    row_indices = np.arange(m, dtype=np.int64)
+    indptr_counts = np.maximum(ld_boundaries_end - (row_indices + 1), 0)
+    indptr = np.insert(np.cumsum(indptr_counts, dtype=np.int64), 0, 0)
+    total_len = int(indptr[-1])
+
+    fin_ld_store = osp.join(output_dir, 'chr_' + str(genotype_matrix.chromosome))
+
+    store = zarr.DirectoryStore(fin_ld_store)
+    z = zarr.group(store=store, overwrite=overwrite)
+    compressor = zarr.Blosc(cname=compressor_name, clevel=compression_level)
+    mat = z.create_group('matrix')
+    mat.empty('data', shape=total_len, dtype=dtype, compressor=compressor)
+    mat.array('indptr', indptr, dtype=np.int64, compressor=compressor)
+
+    max_window = int(indptr_counts.max()) if m > 0 else 1
+    rows_per_chunk = estimate_rows_per_chunk(m, max(1, max_window), dtype=np.float32)
+    rows_per_chunk = max(1, int(rows_per_chunk))
+
+    offset = 0
+    for start in range(0, m, rows_per_chunk):
+        end = min(start + rows_per_chunk, m)
+        max_end = int(ld_boundaries_end[start:end].max()) if end > start else start
+
+        if max_end <= start + 1:
+            continue
+
+        row_chunk = read_standardized_chunk(start, end)
+        window_chunk = read_standardized_chunk(start + 1, max_end)
+        corr = row_chunk.T.dot(window_chunk) / n
+
+        row_offsets = np.arange(end - start, dtype=np.int64)
+        row_lengths = np.maximum(
+            ld_boundaries_end[start:end] - (np.arange(start, end) + 1),
+            0,
+        ).astype(np.int64)
+        chunk_len = int(row_lengths.sum())
+
+        if chunk_len == 0:
+            continue
+
+        col_offsets = np.arange(corr.shape[1], dtype=np.int64)
+        keep = (
+            (col_offsets.reshape(1, -1) >= row_offsets.reshape(-1, 1))
+            & (
+                col_offsets.reshape(1, -1)
+                < (row_offsets + row_lengths).reshape(-1, 1)
+            )
+        )
+        data = corr[keep]
+
+        if np.issubdtype(dtype, np.integer):
+            mat['data'][offset:offset + chunk_len] = quantize(data, int_dtype=dtype)
+        else:
+            mat['data'][offset:offset + chunk_len] = data.astype(dtype)
+
+        offset += chunk_len
+
+    return LDMatrix(z)
+
+
 def compute_ld_xarray(genotype_matrix,
                       ld_boundaries,
                       output_dir,

@@ -16,8 +16,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # macos-13 is an intel runner, macos-14 is apple silicon
-        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
+        # macos-15-intel is an intel runner; macos-14 and macos-latest are apple silicon
+        os: [ubuntu-latest, windows-latest, macos-15-intel, macos-14, macos-latest]
     env:
       CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-*"
       CIBW_SKIP: "pp* cp36-* *-musllinux_* *win32 *_i686 *_s390x"
