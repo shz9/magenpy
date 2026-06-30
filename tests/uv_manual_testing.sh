@@ -32,7 +32,7 @@ echo "Virtualenv root: $ENV_ROOT"
 if [[ -n "${PYTHON_VERSIONS:-}" ]]; then
     read -r -a python_versions <<< "$PYTHON_VERSIONS"
 else
-    python_versions=("3.10" "3.11" "3.12" "3.13" "3.14")
+    python_versions=("3.10" "3.11" "3.12" "3.13")
 fi
 
 mkdir -p "$ENV_ROOT"
