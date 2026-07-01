@@ -11,9 +11,69 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 
+[project]
+name = "magenpy"
+version = "0.2.0"
+description = "Modeling and Analysis of Statistical Genetics data in python"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Shadi Zabad", email = "shadi.zabad@stats.ox.ac.uk" },
+]
+classifiers = [
+    "Programming Language :: Python",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "numpy>=2,<3",
+    "scipy",
+    "joblib",
+    "pandas",
+    "psutil",
+    "tqdm",
+    "zarr<3",
+]
+
+[project.optional-dependencies]
+opt = [
+    "matplotlib",
+    "seaborn",
+    "statsmodels",
+    "huggingface_hub",
+    "s3fs",
+]
+test = [
+    "pytest",
+]
+docs = [
+    "mkdocs",
+    "mkdocstrings-python",
+    "mkdocs-material",
+    "mkdocs-material-extensions",
+]
+
+[project.urls]
+Homepage = "https://github.com/shz9/magenpy"
+Repository = "https://github.com/shz9/magenpy"
+Documentation = "https://shz9.github.io/magenpy/"
+
+
 [tool.cibuildwheel]
 test-extras = "test"
 test-command = "pytest {project}/tests"
+# Match the Linux baseline used by current SciPy wheels; manylinux2014
+# can force source builds of SciPy during cibuildwheel's test install.
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
 # Optional
 build-verbosity = 1
 
