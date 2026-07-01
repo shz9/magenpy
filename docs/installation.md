@@ -56,8 +56,8 @@ uv pip install magenpy
 For command-line use, `uvx` can run the installed console scripts in an isolated temporary environment:
 
 ```bash
-uvx --from magenpy magenpy_ld -h
-uvx --from magenpy magenpy_simulate -h
+uvx --from magenpy mgp_compute_ld -h
+uvx --from magenpy mgp_simulate -h
 ```
 
 This is useful on systems where you want to try the command-line tools without permanently installing `magenpy`
@@ -92,19 +92,22 @@ If you are using `Docker` containers, you can build a CLI image with the `magenp
 and the standard command-line tools:
 
 ```bash
-# Build the linux/amd64 image from the latest PyPI release:
+# Build the linux/amd64 image from the local repository checkout:
 docker build --platform linux/amd64 -f containers/cli.Dockerfile -t magenpy-cli .
 
 # Run one of the command-line tools:
-docker run --rm magenpy-cli magenpy_ld -h
-docker run --rm magenpy-cli magenpy_simulate -h
+docker run --rm magenpy-cli mgp_compute_ld -h
+docker run --rm magenpy-cli mgp_simulate -h
+docker run --rm magenpy-cli mgp_extract_ld -h
+docker run --rm magenpy-cli mgp_prune_ld -h
+docker run --rm magenpy-cli mgp_expand_ld -h
 ```
 
-To build the image from a local repository checkout instead of PyPI, pass the local install target:
+To build the image from the latest PyPI release instead of the local checkout, pass the PyPI install target:
 
 ```bash
 docker build --platform linux/amd64 -f containers/cli.Dockerfile \
-  --build-arg MAGENPY_INSTALL_TARGET=. \
+  --build-arg MAGENPY_INSTALL_TARGET=magenpy \
   -t magenpy-cli .
 ```
 
@@ -112,5 +115,24 @@ Once a DockerHub image is published, you can run the same commands by replacing 
 published image name, for example:
 
 ```bash
-docker run --rm shadizabad/magenpy:latest magenpy_ld -h
+docker run --rm shadizabad/magenpy:latest mgp_compute_ld -h
+```
+
+### Using `Apptainer`
+
+On shared computing clusters where Docker is not available, you can run the command-line tools with
+[`Apptainer`](https://apptainer.org/) once the Docker image is live on DockerHub. Apptainer can pull and
+run Docker images directly:
+
+```bash
+apptainer run docker://shadizabad/magenpy:latest mgp_compute_ld -h
+apptainer run docker://shadizabad/magenpy:latest mgp_simulate -h
+apptainer run docker://shadizabad/magenpy:latest mgp_extract_ld -h
+```
+
+For repeated use, pull the image into a local SIF file:
+
+```bash
+apptainer pull magenpy_latest.sif docker://shadizabad/magenpy:latest
+apptainer run magenpy_latest.sif mgp_compute_ld -h
 ```

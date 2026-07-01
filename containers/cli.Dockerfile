@@ -1,14 +1,17 @@
 # Docker image for the standard magenpy command-line tools.
 #
-# Build from the latest PyPI release:
+# Build from this repository checkout:
 #   docker build --platform linux/amd64 -f containers/cli.Dockerfile -t magenpy-cli .
 #
-# Build from this repository checkout:
-#   docker build --platform linux/amd64 -f containers/cli.Dockerfile --build-arg MAGENPY_INSTALL_TARGET=. -t magenpy-cli .
+# Build from the latest PyPI release:
+#   docker build --platform linux/amd64 -f containers/cli.Dockerfile --build-arg MAGENPY_INSTALL_TARGET=magenpy -t magenpy-cli .
 #
 # Run a command:
-#   docker run --rm magenpy-cli magenpy_ld -h
-#   docker run --rm magenpy-cli magenpy_simulate -h
+#   docker run --rm magenpy-cli mgp_compute_ld -h
+#   docker run --rm magenpy-cli mgp_simulate -h
+#   docker run --rm magenpy-cli mgp_extract_ld -h
+#   docker run --rm magenpy-cli mgp_prune_ld -h
+#   docker run --rm magenpy-cli mgp_expand_ld -h
 
 FROM python:3.11-slim-bookworm
 
@@ -18,7 +21,7 @@ LABEL org.opencontainers.image.authors="Shadi Zabad" \
       org.opencontainers.image.source="https://github.com/shz9/magenpy" \
       org.opencontainers.image.licenses="MIT"
 
-ARG MAGENPY_INSTALL_TARGET="magenpy"
+ARG MAGENPY_INSTALL_TARGET="."
 ARG PLINK2_URL="https://s3.amazonaws.com/plink2-assets/alpha5/plink2_linux_x86_64_20240105.zip"
 ARG PLINK1_URL="https://s3.amazonaws.com/plink1-assets/plink_linux_x86_64_20231211.zip"
 
@@ -53,9 +56,12 @@ COPY . /opt/magenpy
 
 RUN python -m pip install --upgrade pip \
     && python -m pip install "${MAGENPY_INSTALL_TARGET}" \
-    && magenpy_ld -h >/dev/null \
-    && magenpy_simulate -h >/dev/null
+    && mgp_compute_ld -h >/dev/null \
+    && mgp_simulate -h >/dev/null \
+    && mgp_extract_ld -h >/dev/null \
+    && mgp_prune_ld -h >/dev/null \
+    && mgp_expand_ld -h >/dev/null
 
 WORKDIR /work
 
-CMD ["magenpy_ld", "-h"]
+CMD ["mgp_compute_ld", "-h"]

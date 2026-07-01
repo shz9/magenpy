@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+
+"""
+Prune SNPs using pre-computed magenpy LD matrices.
+"""
+
+import argparse
+import logging
+import os
+import sys
+
+import numpy as np
+import pandas as pd
+
+import magenpy as mgp
+from magenpy.parsers.misc_parsers import read_snp_filter_file
+from magenpy.utils.system_utils import setup_logger
+
+
+logger = logging.getLogger("magenpy.cli.mgp_prune_ld")
+
+
+def read_variant_table(path, snp_column=0, rank_column=None):
+    """
+    Read a plink-style variant file, optionally with a numeric ranking column.
+    """
+    if rank_column is None:
+        snps = read_snp_filter_file(path, snp_id_col=snp_column)
+        out = pd.DataFrame({"SNP": pd.Series(snps).dropna().astype(str).values})
+        out["_order"] = np.arange(len(out), dtype=np.int64)
+        return out
+
+    table = pd.read_csv(path, sep=r"\s+", engine="python", header=None, comment="#")
+    if table.empty:
+        raise ValueError(f"No variants were found in {path}")
+
+    rank_column = int(rank_column)
+    max_column = max(snp_column, rank_column)
+    if table.shape[1] <= max_column:
+        raise ValueError(
+            f"Expected at least {max_column + 1} columns in ranked variant file."
+        )
+
+    out = pd.DataFrame(
+        {
+            "SNP": table.iloc[:, snp_column],
+            "_rank": pd.to_numeric(table.iloc[:, rank_column], errors="raise"),
+        }
+    ).dropna(subset=["SNP"])
+    out["SNP"] = out["SNP"].astype(str)
+    out["_order"] = np.arange(len(out), dtype=np.int64)
+    return out
+
+
+def make_data_loader(args):
+    """
+    Load LD matrices, and summary statistics when provided, through GWADataLoader.
+    """
+    kwargs = {
+        "ld_store_files": args.ld_path,
+    }
+    if args.sumstats_file is not None:
+        kwargs["sumstats_files"] = args.sumstats_file
+        kwargs["sumstats_format"] = args.sumstats_format
+
+    gdl = mgp.GWADataLoader(**kwargs)
+    if gdl.ld is None or len(gdl.ld) < 1:
+        raise FileNotFoundError(f"No LD matrices were found at: {args.ld_path}")
+    return gdl
+
+
+def get_ranked_sumstats_snps(gdl, rank_column):
+    """
+    Return harmonized summary-statistic SNPs ordered by rank within chromosome.
+    """
+    ranked = {}
+    for chrom, ss in gdl.sumstats_table.items():
+        table = ss.table.copy()
+        if "SNP" not in table.columns:
+            raise ValueError(
+                "The harmonized sumstats table does not contain a SNP column."
+            )
+
+        table["_order"] = np.arange(len(table), dtype=np.int64)
+        if rank_column is None:
+            for candidate in ("PVAL", "P", "PVALUE"):
+                if candidate in table.columns:
+                    rank_column = candidate
+                    break
+
+        if rank_column is not None:
+            if rank_column not in table.columns:
+                raise ValueError(
+                    f"Rank column '{rank_column}' was not found in the sumstats table."
+                )
+            table["_rank"] = pd.to_numeric(table[rank_column], errors="raise")
+            table = table.sort_values(["_rank", "_order"], ascending=[True, True])
+        else:
+            table = table.sort_values("_order")
+        ranked[chrom] = table["SNP"].astype(str).tolist()
+    return ranked
+
+
+def get_ranked_file_snps(gdl, variant_table, rank_descending=False):
+    """
+    Split requested variants by chromosome and filter LD matrices to those SNPs.
+    """
+    variant_table = variant_table.drop_duplicates("SNP", keep="first").copy()
+    if "_rank" in variant_table.columns:
+        variant_table = variant_table.sort_values(
+            ["_rank", "_order"], ascending=[not rank_descending, True]
+        )
+    else:
+        variant_table = variant_table.sort_values("_order")
+
+    ordered_snps = variant_table["SNP"].astype(str).tolist()
+    ranked = {}
+    for chrom, ld_mat in gdl.ld.items():
+        present = set(ld_mat.snps.astype(str)).intersection(ordered_snps)
+        if present:
+            ranked[chrom] = [snp for snp in ordered_snps if snp in present]
+            ld_mat.filter_snps(extract_snps=np.asarray(ranked[chrom], dtype=str))
+    for chrom in list(gdl.ld.keys()):
+        if chrom not in ranked:
+            del gdl.ld[chrom]
+    return ranked
+
+
+def prune_chromosome(ld_mat, ordered_snps, corr_threshold):
+    """
+    Prune one LD matrix in the requested SNP priority order.
+    """
+    ld_mat.load(dtype=np.float32)
+    ld_snps = ld_mat.snps.astype(str).tolist()
+    snp_to_idx = {snp: i for i, snp in enumerate(ld_snps)}
+    variant_order = [snp_to_idx[snp] for snp in ordered_snps if snp in snp_to_idx]
+    if not variant_order:
+        return []
+
+    kept = set(
+        ld_mat.prune(
+            threshold=corr_threshold,
+            variant_order=np.asarray(variant_order, dtype=np.int32),
+            return_value="snps",
+        ).astype(str)
+    )
+    ld_mat.release()
+    return [snp for snp in ordered_snps if snp in kept]
+
+
+def write_variants(snps, output_file):
+    """
+    Write retained SNP IDs to a tab-delimited output table.
+    """
+    os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
+    pd.DataFrame({"SNP": snps}).to_csv(output_file, sep="\t", index=False)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Prune a list of SNPs using pre-computed magenpy LD matrices."
+    )
+    parser.add_argument(
+        "-l",
+        "--ld",
+        dest="ld_path",
+        required=True,
+        help="LD matrix path or glob for multiple matrices.",
+    )
+    parser.add_argument("--sumstats-file", help="Summary statistics file.")
+    parser.add_argument(
+        "--sumstats-format",
+        default="magenpy",
+        help="Summary statistics format passed to GWADataLoader.",
+    )
+    parser.add_argument(
+        "--variants-file", help="Plink-style variant file, optionally with a rank column."
+    )
+    parser.add_argument(
+        "--snp-column", type=int, default=0, help="Zero-based SNP column index."
+    )
+    parser.add_argument(
+        "--rank-column",
+        help="For --variants-file, a zero-based rank column index. For --sumstats-file, a sumstats column name.",
+    )
+    parser.add_argument(
+        "--rank-descending",
+        action="store_true",
+        help="For --variants-file, treat larger rank values as higher priority.",
+    )
+    parser.add_argument("--r2-threshold", type=float, default=0.1, help="Default: 0.1.")
+    parser.add_argument("--output-file", required=True, help="Output table path.")
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level.",
+    )
+    return parser.parse_args()
+
+
+def main():
+    """
+    Parse CLI inputs, LD-prune requested variants, and write retained SNP IDs.
+    """
+    args = parse_args()
+    setup_logger(modules=["magenpy"], log_level=args.log_level)
+
+    if (args.sumstats_file is None) == (args.variants_file is None):
+        raise ValueError("Specify exactly one of --sumstats-file or --variants-file.")
+    if not 0.0 < args.r2_threshold <= 1.0:
+        raise ValueError("--r2-threshold must be in (0, 1].")
+
+    gdl = make_data_loader(args)
+    if args.sumstats_file is not None:
+        if gdl.sumstats_table is None or len(gdl.sumstats_table) < 1:
+            raise ValueError("No summary statistics remained after LD harmonization.")
+        ranked_by_chrom = get_ranked_sumstats_snps(gdl, args.rank_column)
+    else:
+        variant_table = read_variant_table(
+            args.variants_file, args.snp_column, args.rank_column
+        )
+        ranked_by_chrom = get_ranked_file_snps(gdl, variant_table, args.rank_descending)
+
+    corr_threshold = float(np.sqrt(args.r2_threshold))
+    pruned = []
+    for chrom, ld_mat in sorted(gdl.ld.items(), key=lambda x: str(x[0])):
+        pruned.extend(
+            prune_chromosome(ld_mat, ranked_by_chrom.get(chrom, []), corr_threshold)
+        )
+
+    write_variants(pruned, args.output_file)
+    logger.info("Wrote %s pruned variants to %s", len(pruned), args.output_file)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        logger.error("Error: %s", e)
+        sys.exit(1)

@@ -9,17 +9,17 @@ BFILE_PATH=$(python3 -c "import magenpy as mgp; print(mgp.tgp_eur_data_path())")
 
 
 # -------------------------------------------------------------------
-# Test the `magenpy_ld` cli script:
+# Test the `mgp_compute_ld` cli script:
 
 # Test the commandline argument parsing:
-echo "> Testing the magenpy_ld script..."
-magenpy_ld --help
+echo "> Testing the mgp_compute_ld script..."
+mgp_compute_ld --help
 
 echo "> Estimating LD using the windowed estimator:"
-magenpy_ld --estimator "windowed" \
-           --bfile "$BFILE_PATH" \
-           --ld-window-cm 3. \
-           --output-dir "output/ld_windowed/"
+mgp_compute_ld --estimator "windowed" \
+               --bfile "$BFILE_PATH" \
+               --ld-window-cm 3. \
+               --output-dir "output/ld_windowed/"
 
 # Check that there's a directory called "output/ld_windowed/chr_22/":
 if [ ! -d "output/ld_windowed/chr_22/" ]; then
@@ -38,17 +38,17 @@ rm -rf output/ld_windowed
 rm -rf temp/
 
 # -------------------------------------------------------------------
-# Test the `magenpy_simulate` cli script:
+# Test the `mgp_simulate` cli script:
 
 # Test the commandline argument parsing:
-echo "> Testing the magenpy_simulate script..."
-magenpy_simulate --help
+echo "> Testing the mgp_simulate script..."
+mgp_simulate --help
 
-echo "> Simulating genotypes using the magenpy_simulate script:"
-magenpy_simulate --bfile "$BFILE_PATH" \
-                 --h2 0.5 \
-                 --output-file "output/pheno_1" \
-                 --output-simulated-beta
+echo "> Simulating genotypes using the mgp_simulate script:"
+mgp_simulate --bfile "$BFILE_PATH" \
+             --h2 0.5 \
+             --output-file "output/pheno_1" \
+             --output-simulated-beta
 
 # Check that the output file exists:
 if [ ! -f "output/pheno_1.SimPheno" ]; then

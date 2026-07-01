@@ -22,25 +22,19 @@ Usage:
 """
 
 import argparse
+import logging
 import os.path as osp
 import time
-import warnings
 from datetime import timedelta
 
 import numpy as np
 
 import magenpy as mgp
 from magenpy.simulation.PhenotypeSimulator import PhenotypeSimulator
-from magenpy.utils.system_utils import get_filenames, makedir
+from magenpy.utils.system_utils import get_filenames, makedir, setup_logger
 
-print(
-    "\n"
-    + mgp.make_ascii_logo(
-        desc="< Simulate complex quantitative or case-control traits >", left_padding=10
-    )
-    + "\n",
-    flush=True,
-)
+
+logger = logging.getLogger("magenpy.cli.mgp_simulate")
 
 # --------- Options ---------
 
@@ -166,8 +160,23 @@ parser.add_argument(
     type=int,
     help="The random seed to use for the random number generator.",
 )
+parser.add_argument(
+    "--log-level",
+    dest="log_level",
+    type=str,
+    default="INFO",
+    choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+    help="Logging level.",
+)
 
 args = parser.parse_args()
+setup_logger(modules=["magenpy"], log_level=args.log_level)
+logger.info(
+    "\n%s\n",
+    mgp.make_ascii_logo(
+        desc="< Simulate complex quantitative or case-control traits >", left_padding=10
+    ),
+)
 
 # ------------------------------------------------------
 # Sanity checks on the inputs:
@@ -191,7 +200,7 @@ elif args.mix_prop is not None:
             "Specifying mixing proportions without variance multipliers is not permitted."
         )
 else:
-    warnings.warn(
+    logger.warning(
         "Mixing proportions not specified. Assuming an infinitesimal architecture "
         "where all variants are causal!"
     )
@@ -204,29 +213,29 @@ if len(pi) != len(d):
     )
 
 # ------------------------------------------------------
-# Print out the parsed input commands:
-print(f"> Simulating complex trait with {args.likelihood} likelihood...")
-print(">>> Heritability:", args.h2)
-print(">>> Mixing proportions:", pi)
-print(">>> Variance multipliers:", d)
+# Log parsed input commands:
+logger.info("> Simulating complex trait with %s likelihood...", args.likelihood)
+logger.info(">>> Heritability: %s", args.h2)
+logger.info(">>> Mixing proportions: %s", pi)
+logger.info(">>> Variance multipliers: %s", d)
 if args.likelihood == "binomial" and args.prevalence is not None:
-    print(">>> Prevalence:", args.prevalence)
+    logger.info(">>> Prevalence: %s", args.prevalence)
 
-print("\n\n> Source data:")
-print(">>> BED files:", args.bed_file)
+logger.info("\n\n> Source data:")
+logger.info(">>> BED files: %s", args.bed_file)
 
 if args.keep_file is not None:
-    print(">>> Keep samples:", args.keep_file)
+    logger.info(">>> Keep samples: %s", args.keep_file)
 if args.extract_file is not None:
-    print(">>> Keep variants:", args.extract_file)
+    logger.info(">>> Keep variants: %s", args.extract_file)
 if args.min_maf is not None:
-    print(">>> Minimum allele frequency:", args.min_maf)
+    logger.info(">>> Minimum allele frequency: %s", args.min_maf)
 if args.min_mac is not None:
-    print(">>> Minimum allele count:", args.min_mac)
+    logger.info(">>> Minimum allele count: %s", args.min_mac)
 
-print("\n\n> Output:")
-print(">>> Temporary directory:", args.temp_dir)
-print(">>> Output file:", args.output_file)
+logger.info("\n\n> Output:")
+logger.info(">>> Temporary directory: %s", args.temp_dir)
+logger.info(">>> Output file: %s", args.output_file)
 
 # ------------------------------------------------------
 
@@ -252,7 +261,7 @@ gs = PhenotypeSimulator(
     temp_dir=args.temp_dir,
 )
 
-print("> Simulating phenotype...")
+logger.info("> Simulating phenotype...")
 gs.simulate(reset_beta=True, perform_gwas=False)
 pheno_table = gs.to_phenotype_table()
 
@@ -267,10 +276,10 @@ if args.output_sim_beta:
 
 gs.cleanup()
 
-print("Done!")
-print("> Output file(s):\n\t", args.output_file + ".SimPheno")
+logger.info("Done!")
+logger.info("> Output file(s):\n\t%s", args.output_file + ".SimPheno")
 if args.output_sim_beta:
-    print("\t", args.output_file + ".SimEffect")
+    logger.info("\t%s", args.output_file + ".SimEffect")
 # Record the end time:
 end_time = time.time()
-print("Total runtime:", timedelta(seconds=end_time - start_time))
+logger.info("Total runtime: %s", timedelta(seconds=end_time - start_time))

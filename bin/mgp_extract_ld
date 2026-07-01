@@ -1,0 +1,271 @@
+#!/usr/bin/env python3
+
+"""
+Extract dense LD blocks from pre-computed magenpy LD matrices.
+"""
+
+import argparse
+import logging
+import os
+import re
+import sys
+
+import numpy as np
+import pandas as pd
+from scipy.sparse import block_diag
+
+import magenpy as mgp
+from magenpy.parsers.annotation_parsers import parse_annotation_bed_file
+from magenpy.parsers.misc_parsers import read_snp_filter_file
+from magenpy.utils.system_utils import setup_logger
+
+
+logger = logging.getLogger("magenpy.cli.mgp_extract_ld")
+
+
+def read_snp_file(path, column=0):
+    """
+    Read a plink-style SNP filter file.
+    """
+    return (
+        pd.Series(read_snp_filter_file(path, snp_id_col=int(column)))
+        .dropna()
+        .astype(str)
+        .tolist()
+    )
+
+
+def read_bed_file(path):
+    """
+    Read a BED-like genomic interval file with chromosome, start, and end columns.
+    """
+    return parse_annotation_bed_file(path)
+
+
+def normalize_chromosome(chromosome):
+    """
+    Normalize chromosome labels for matching LD metadata to user-provided ranges.
+    """
+    return str(chromosome).lower().removeprefix("chr")
+
+
+def parse_regions(regions):
+    """
+    Parse one or more comma-separated regions formatted as chr:start-end.
+    """
+    parsed = []
+    for region in regions.split(","):
+        region = region.strip()
+        if not region:
+            continue
+        match = re.fullmatch(r"(?:chr)?([^:]+):([0-9]+)-([0-9]+)", region, re.I)
+        if match is None:
+            raise ValueError("Regions must be formatted like chr22:100000-200000.")
+        chrom, start, end = match.groups()
+        parsed.append((chrom, int(start), int(end)))
+    return pd.DataFrame(parsed, columns=["CHR", "Start", "End"])
+
+
+def make_data_loader(args, extract_snps=None):
+    """
+    Load LD matrices through GWADataLoader, optionally applying a SNP filter.
+    """
+    gdl = mgp.GWADataLoader(ld_store_files=args.ld_path, extract_snps=extract_snps)
+    if gdl.ld is None or len(gdl.ld) < 1:
+        raise FileNotFoundError(f"No LD matrices were found at: {args.ld_path}")
+    return gdl
+
+
+def selected_snps_from_ranges(gdl, ranges):
+    """
+    Identify SNPs in each loaded LD matrix that overlap requested BP ranges.
+    """
+    selected = {}
+    ranges = ranges.copy()
+    ranges["CHR"] = ranges["CHR"].map(normalize_chromosome)
+    ranges["Start"] = pd.to_numeric(ranges["Start"], errors="raise")
+    ranges["End"] = pd.to_numeric(ranges["End"], errors="raise")
+
+    for chrom, ld_mat in sorted(gdl.ld.items(), key=lambda x: str(x[0])):
+        chrom_ranges = ranges.loc[ranges["CHR"] == normalize_chromosome(chrom)]
+        if chrom_ranges.empty:
+            continue
+
+        bp = ld_mat.get_metadata("bp", apply_mask=False)
+        snps = ld_mat.get_metadata("snps", apply_mask=False).astype(str)
+        mask = np.zeros(len(snps), dtype=bool)
+        for _, row in chrom_ranges.iterrows():
+            mask |= (bp >= int(row["Start"])) & (bp <= int(row["End"]))
+        if mask.any():
+            selected[chrom] = snps[mask]
+
+    return selected
+
+
+def extract_dense_matrix(gdl):
+    """
+    Convert selected LD matrices to float32 dense arrays and block-stack chromosomes.
+    """
+    matrices = []
+    snps = []
+    for chrom, ld_mat in sorted(gdl.ld.items(), key=lambda x: str(x[0])):
+        if ld_mat.n_snps < 1:
+            continue
+        csr = ld_mat.to_csr(dtype=np.float32, return_symmetric=True)
+        dense = csr.toarray().astype(np.float32, copy=False)
+        matrices.append(dense)
+        snps.extend(ld_mat.snps.astype(str).tolist())
+        ld_mat.release()
+
+    if not matrices:
+        raise ValueError(
+            "None of the requested variants were found in the LD matrices."
+        )
+    if len(matrices) == 1:
+        return matrices[0], snps
+    return block_diag(matrices, format="csr", dtype=np.float32).toarray(), snps
+
+
+def output_format(args):
+    """
+    Resolve the requested matrix output format from the option or file extension.
+    """
+    if args.output_format != "auto":
+        return args.output_format
+    ext = os.path.splitext(args.output_file)[1].lower().removeprefix(".")
+    return ext if ext in {"csv", "npy", "npz"} else "csv"
+
+
+def write_output(matrix, snps, args):
+    """
+    Write the extracted LD matrix in CSV, NPY, or NPZ format.
+    """
+    out_dir = os.path.dirname(os.path.abspath(args.output_file))
+    os.makedirs(out_dir, exist_ok=True)
+    fmt = output_format(args)
+    matrix = matrix.astype(np.float32, copy=False)
+
+    if fmt == "csv":
+        pd.DataFrame(matrix, index=snps, columns=snps).to_csv(args.output_file)
+    elif fmt == "npy":
+        with open(args.output_file, "wb") as f:
+            np.save(f, matrix)
+    elif fmt == "npz":
+        np.savez_compressed(
+            args.output_file, ld=matrix, snps=np.asarray(snps, dtype=str)
+        )
+    else:
+        raise ValueError(f"Unsupported output format: {fmt}")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Extract LD blocks from pre-computed magenpy LD matrices."
+    )
+    parser.add_argument(
+        "-l",
+        "--ld",
+        dest="ld_path",
+        required=True,
+        help="LD matrix path or glob for multiple matrices.",
+    )
+    parser.add_argument("--snps", help="Comma-separated SNP IDs.")
+    parser.add_argument("--snp-file", help="Plink-style SNP filter file.")
+    parser.add_argument(
+        "--snp-column", type=int, default=0, help="Zero-based SNP column index."
+    )
+    parser.add_argument(
+        "--region",
+        help="One or more comma-separated genomic regions formatted as chr:start-end.",
+    )
+    parser.add_argument(
+        "--chromosome", help="Chromosome for --start/--end range selection."
+    )
+    parser.add_argument("--start", type=int, help="Start base-pair position.")
+    parser.add_argument("--end", type=int, help="End base-pair position.")
+    parser.add_argument(
+        "--bed-file", help="BED-like file with chromosome, start, end columns."
+    )
+    parser.add_argument("--output-file", required=True, help="Output file path.")
+    parser.add_argument(
+        "--output-format",
+        default="auto",
+        choices={"auto", "csv", "npy", "npz"},
+        help="Output format. Defaults to file extension, or csv when ambiguous.",
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level.",
+    )
+    return parser.parse_args()
+
+
+def main():
+    """
+    Parse CLI inputs, extract requested LD entries, and write the output matrix.
+    """
+    args = parse_args()
+    setup_logger(modules=["magenpy"], log_level=args.log_level)
+
+    selectors = [
+        args.snps is not None,
+        args.snp_file is not None,
+        args.region is not None or args.chromosome is not None,
+        args.bed_file is not None,
+    ]
+    if sum(selectors) != 1:
+        raise ValueError(
+            "Specify exactly one selector: --snps, --snp-file, --region, "
+            "--chromosome/--start/--end, or --bed-file."
+        )
+
+    if args.snps is not None:
+        extract_snps = [s.strip() for s in args.snps.split(",") if s.strip()]
+        gdl = make_data_loader(args, extract_snps=extract_snps)
+    elif args.snp_file is not None:
+        extract_snps = read_snp_file(args.snp_file, column=args.snp_column)
+        gdl = make_data_loader(args, extract_snps=extract_snps)
+    else:
+        gdl = make_data_loader(args)
+        if args.bed_file is not None:
+            ranges = read_bed_file(args.bed_file)
+        elif args.region is not None:
+            ranges = parse_regions(args.region)
+        else:
+            if args.chromosome is None or args.start is None or args.end is None:
+                raise ValueError(
+                    "--chromosome, --start, and --end must be provided together."
+                )
+            ranges = pd.DataFrame(
+                {"CHR": [args.chromosome], "Start": [args.start], "End": [args.end]}
+            )
+
+        selected_by_chrom = selected_snps_from_ranges(gdl, ranges)
+        if not selected_by_chrom:
+            raise ValueError(
+                "No variants in the LD matrices overlapped the requested range(s)."
+            )
+        for chrom in list(gdl.ld.keys()):
+            if chrom in selected_by_chrom:
+                gdl.ld[chrom].filter_snps(extract_snps=selected_by_chrom[chrom])
+            else:
+                del gdl.ld[chrom]
+
+    matrix, snps = extract_dense_matrix(gdl)
+    write_output(matrix, snps, args)
+    logger.info(
+        "Wrote %s x %s LD matrix to %s",
+        matrix.shape[0],
+        matrix.shape[1],
+        args.output_file,
+    )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        logger.error("Error: %s", e)
+        sys.exit(1)

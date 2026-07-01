@@ -94,8 +94,11 @@ nav:
   - "Tutorials": tutorials/overview.md
   - "Command Line Scripts":
     - "Overview": commandline/overview.md
-    - "magenpy_ld": commandline/magenpy_ld.md
-    - "magenpy_simulate": commandline/magenpy_simulate.md
+    - "mgp_compute_ld": commandline/mgp_compute_ld.md
+    - "mgp_simulate": commandline/mgp_simulate.md
+    - "mgp_extract_ld": commandline/mgp_extract_ld.md
+    - "mgp_prune_ld": commandline/mgp_prune_ld.md
+    - "mgp_expand_ld": commandline/mgp_expand_ld.md
   - "Report issues/bugs": "https://github.com/shz9/magenpy/issues"
   - "FAQ": faq.md
   - "Citation": citation.md

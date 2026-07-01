@@ -288,7 +288,13 @@ setup(
             "config/*.ini",
         ]
     },
-    scripts=["bin/magenpy_ld", "bin/magenpy_simulate"],
+    scripts=[
+        "bin/mgp_compute_ld",
+        "bin/mgp_simulate",
+        "bin/mgp_extract_ld",
+        "bin/mgp_prune_ld",
+        "bin/mgp_expand_ld",
+    ],
     install_requires=install_requires,
     extras_require={"opt": opt_requires, "test": test_requires, "docs": docs_requires},
     ext_modules=extensions,
