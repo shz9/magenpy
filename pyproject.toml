@@ -35,7 +35,7 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=2,<3",
-    "scipy",
+    "scipy<1.17",
     "joblib",
     "pandas",
     "psutil",
@@ -70,10 +70,6 @@ Documentation = "https://shz9.github.io/magenpy/"
 [tool.cibuildwheel]
 test-extras = "test"
 test-command = "pytest {project}/tests"
-# Match the Linux baseline used by current SciPy wheels; manylinux2014
-# can force source builds of SciPy during cibuildwheel's test install.
-manylinux-x86_64-image = "manylinux_2_28"
-manylinux-aarch64-image = "manylinux_2_28"
 # Optional
 build-verbosity = 1
 

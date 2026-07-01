@@ -1,5 +1,5 @@
 numpy>=2,<3
-scipy
+scipy<1.17
 joblib
 pandas
 psutil
