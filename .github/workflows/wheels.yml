@@ -16,14 +16,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # macos-15-intel is an intel runner; macos-14 and macos-latest are apple silicon
+        # macos-15-intel is an Intel runner; macos-14 is Apple Silicon.
+        # Do not include macos-latest here because it can duplicate arm64 wheel
+        # filenames and race/overwrite files when artifacts are merged before upload.
         os:
           [
             ubuntu-latest,
             windows-latest,
             macos-15-intel,
             macos-14,
-            macos-latest,
           ]
     env:
       CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-*"
@@ -84,8 +85,14 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Check distributions
+        run: |
+          python -m pip install --upgrade twine
+          python -m twine check --strict dist/*
+
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           user: __token__
           password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
           # To test: repository-url: https://test.pypi.org/legacy/
