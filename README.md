@@ -35,6 +35,6 @@ The package provides tools for:
 - [Report issues/bugs](https://github.com/shz9/magenpy/issues)
 
 ### AI Usage
-[![AI-Declaration](https://shields.io)](AI-DECLARATION.md)
+[![AI-DECLARATION: assist](https://img.shields.io/badge/䷼%20AI--DECLARATION-assist-fef9c3?labelColor=fef9c3)](https://ai-declaration.md)
 
 This project is developed using AI-assisted technologies. Please review our [AI Declaration](AI-DECLARATION.md) for full transparency on automated pipelines.

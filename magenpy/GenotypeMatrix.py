@@ -689,6 +689,16 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
 
         from pandas_plink import read_plink1_bin
 
+        warnings.warn(
+            "The xarray genotype backend is likely broken with the current "
+            "NumPy 2 compatibility stack and may be deprecated in a future "
+            "magenpy release unless upstream pandas-plink/xarray support is "
+            "restored. Prefer backend='magenpy' or backend='bed-reader' for "
+            "new workflows.",
+            UserWarning,
+            stacklevel=2,
+        )
+
         def convert_string_python_to_numpy(ds):
             """
             Convert PandasExtension string[python] coordinates to numpy arrays of

@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-07-01
+
+### Changed
+
+- Updated dependency and build support for `numpy>=2,<3`.
+- Dropped support for Python 3.8 and 3.9; supported Python versions are now
+  3.10, 3.11, 3.12, and 3.13.
+- Reworked genotype backends so the default `magenpy` backend uses native
+  BED-backed C++ kernels, reducing reliance on the `pandas-plink` / `xarray`
+  stack for core genotype operations.
+- Promoted the `bed-reader` backend to a fully supported backend with coverage
+  for genotype extraction, sparse and dense conversion, variant statistics,
+  scoring, GWAS, and LD computation.
+- Renamed command-line scripts from `magenpy_ld` and `magenpy_simulate` to
+  `mgp_compute_ld` and `mgp_simulate`, and standardized CLI logging through
+  the package logger interface.
+- Updated GitHub Actions CI and wheel workflows, including newer macOS runner
+  versions and Python/Numpy build targets.
+- Improved documentation across installation, command-line usage, genotype
+  backends, LD workflows, citation, and container-based usage.
+
+### Added
+
+- Added native C++/Cython code paths for PLINK BED-backed genotype extraction,
+  variant statistics, quantitative-trait GWAS, and score/statistical kernels.
+- Added three new command-line utilities for interacting with pre-computed
+  magenpy LD matrices:
+  - `mgp_extract_ld` for extracting dense LD submatrices by SNP list or genomic
+    region.
+  - `mgp_prune_ld` for LD-based pruning of variant lists or harmonized summary
+    statistics.
+  - `mgp_expand_ld` for expanding focal SNP lists to include LD neighbors.
+- Added support for reading local ZipStore-backed LD matrices and for streaming
+  LD matrices hosted on Hugging Face.
+- Added a DockerHub publishing workflow and refreshed Docker CLI container
+  support, including PLINK/PLINK2 availability and validation of all CLI tools.
+- Added Apptainer documentation for running the DockerHub image on shared
+  computing systems where Docker is unavailable.
+- Added and expanded tests for the native `magenpy` backend, `bed-reader`
+  backend, PLINK backend comparisons, LD matrix handling, CLI scripts, and
+  summary-statistics parsers.
+- Added `uv`-based manual testing instructions and refreshed package metadata
+  for the 0.2 release.
+- Added citation and AI declaration documentation.
+
+### Fixed
+
+- Improved robustness of GWAS summary-statistics parsers, including support for
+  additional column-name conventions and stricter parser tests.
+- Added support for writing summary statistics in supported output formats,
+  making the parser layer more useful for format conversion workflows.
+- Improved robustness of LD matrix creation and conversion from sparse inputs,
+  including handling of row-wise gaps in the upper-triangular LD representation.
+- Fixed and improved phenotype simulation, `xarrayGenotypeMatrix`, and utility
+  behavior encountered during the Python/Numpy/backend upgrade work.
+- Improved command-line tests and documentation so installed scripts, Docker
+  checks, and documentation now use the same `mgp_*` command names.
+
 ## [0.1.5] - 2025-04-01
 
 ### Changed

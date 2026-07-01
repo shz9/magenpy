@@ -10,7 +10,7 @@ Building the `magenpy` package requires the following dependencies:
 * `Python` (>=3.10)
 * `C/C++` Compiler
 * `Cython` (>=0.29.21)
-* `NumPy` (>=1.19.5)
+* `NumPy` (>=2.0)
 
 ### Setting up the environment with `conda`
 
