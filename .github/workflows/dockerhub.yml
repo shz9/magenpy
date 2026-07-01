@@ -1,6 +1,9 @@
 name: DockerHub
 
 on:
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
       image_name:
@@ -47,19 +50,34 @@ jobs:
           IMAGE_NAME: ${{ inputs.image_name }}
           INPUT_TAGS: ${{ inputs.tags }}
           PUSH_LATEST: ${{ inputs.push_latest }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
+          image_name="${IMAGE_NAME:-shadizabad/magenpy}"
+          input_tags="${INPUT_TAGS}"
+          push_latest="${PUSH_LATEST:-true}"
+
+          if [ "${EVENT_NAME}" = "release" ]; then
+            input_tags="${RELEASE_TAG}"
+            push_latest="true"
+
+            if [[ "${RELEASE_TAG}" == v* && -n "${RELEASE_TAG#v}" ]]; then
+              input_tags="${input_tags},${RELEASE_TAG#v}"
+            fi
+          fi
+
           tags=""
 
-          IFS=',' read -ra tag_array <<< "${INPUT_TAGS}"
+          IFS=',' read -ra tag_array <<< "${input_tags}"
           for tag in "${tag_array[@]}"; do
             tag="$(echo "${tag}" | xargs)"
             if [ -n "${tag}" ]; then
-              tags="${tags}${IMAGE_NAME}:${tag}"$'\n'
+              tags="${tags}${image_name}:${tag}"$'\n'
             fi
           done
 
-          if [ "${PUSH_LATEST}" = "true" ] && ! grep -qx "${IMAGE_NAME}:latest" <<< "${tags}"; then
-            tags="${tags}${IMAGE_NAME}:latest"$'\n'
+          if [ "${push_latest}" = "true" ] && ! grep -qx "${image_name}:latest" <<< "${tags}"; then
+            tags="${tags}${image_name}:latest"$'\n'
           fi
 
           if [ -z "${tags}" ]; then

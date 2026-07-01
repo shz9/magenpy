@@ -33,8 +33,15 @@ import magenpy as mgp
 from magenpy.simulation.PhenotypeSimulator import PhenotypeSimulator
 from magenpy.utils.system_utils import get_filenames, makedir, setup_logger
 
-
 logger = logging.getLogger("magenpy.cli.mgp_simulate")
+
+# --------- Print logo ---------
+
+logo = mgp.make_ascii_logo(
+    desc="< Simulate complex quantitative or case-control traits >",
+    left_padding=10,
+)
+print(f"\n{logo}\n", flush=True)
 
 # --------- Options ---------
 
@@ -171,12 +178,6 @@ parser.add_argument(
 
 args = parser.parse_args()
 setup_logger(modules=["magenpy"], log_level=args.log_level)
-logger.info(
-    "\n%s\n",
-    mgp.make_ascii_logo(
-        desc="< Simulate complex quantitative or case-control traits >", left_padding=10
-    ),
-)
 
 # ------------------------------------------------------
 # Sanity checks on the inputs:

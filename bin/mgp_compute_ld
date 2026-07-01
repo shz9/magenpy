@@ -32,8 +32,17 @@ import magenpy as mgp
 from magenpy.GenotypeMatrix import plinkBEDGenotypeMatrix, xarrayGenotypeMatrix
 from magenpy.utils.system_utils import setup_logger, valid_url
 
-
 logger = logging.getLogger("magenpy.cli.mgp_compute_ld")
+
+# --------- Print logo ---------
+
+logo = mgp.make_ascii_logo(
+    desc="< Compute LD matrix and store in Zarr format >",
+    left_padding=10,
+)
+print(f"\n{logo}\n", flush=True)
+
+# --------- Options ---------
 
 parser = argparse.ArgumentParser(
     description="""
@@ -219,14 +228,9 @@ parser.add_argument(
     help="Logging level.",
 )
 
+
 args = parser.parse_args()
 setup_logger(modules=["magenpy"], log_level=args.log_level)
-logger.info(
-    "\n%s\n",
-    mgp.make_ascii_logo(
-        desc="< Compute LD matrix and store in Zarr format >", left_padding=10
-    ),
-)
 
 # ------------------------------------------------------
 # Sanity checks on the parsed arguments:
