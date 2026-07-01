@@ -12,3 +12,10 @@ are available for use. The available scripts are:
 * [`magenpy_simulate`](magenpy_simulate.md): This script is used to simulate complex traits with a variety of genetic 
     architectures. The script provides a variety of options for the user to customize the simulation process, 
     including the choice of genetic architecture, the proportion of causal variants, the effect sizes, etc.
+
+If you use `uv`, you can also run the scripts without permanently installing `magenpy` into the active environment:
+
+```bash
+uvx --from magenpy magenpy_ld -h
+uvx --from magenpy magenpy_simulate -h
+```

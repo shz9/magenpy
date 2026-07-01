@@ -134,14 +134,12 @@ Pearson correlation coefficient. In general, LD matrices are computed for each c
 or may also be computed within LD blocks from, e.g. LDetect. For large autosomal chromosomes, 
 LD matrices can be huge and may require extra care from the user.
 
-In `magenpy`, LD matrices can be computed using either `xarray` or `plink`, depending on the 
-backend that the user specifies (see Section 5 below). In general, at this moment, we do not recommend using 
-`xarray` as a backend for large genotype matrices, as it is less efficient than `plink`. When using the default 
-`xarray` as a backend, we compute the full `X'X` (X-transpose-X) matrix first, store it on-disk in chunked 
-`Zarr` arrays and then perform all sparsification procedures afterwards. When using `plink` as a 
-backend, on the other hand, we only compute LD between variants that are generally in close proximity 
-along the chromosome, so it is generally more efficient. In the end, both will be transformed such that 
-the LD matrix is stored in sparse `Zarr` arrays.
+In `magenpy`, LD matrices can be computed using the `magenpy`, `bed-reader`, `plink`, or `xarray` genotype
+backends (see Section 5 below). The default `magenpy` backend uses native BED-backed kernels and avoids
+materializing the full genotype matrix. The `bed-reader` backend streams BED chunks through Python/NumPy, and
+the `plink` backend delegates LD computation to PLINK. The `xarray` backend remains available, but for large
+genotype matrices it can be less efficient because it relies on `pandas-plink`, `xarray`, and `dask`.
+Regardless of backend, the resulting LD matrix is stored in sparse `Zarr` arrays.
 
 In either case, to compute an LD matrix using `magenpy`, you can invoke the `.compute_ld()` method 
 of all `GWADataLoader`-derived objects, as follows:
@@ -321,15 +319,45 @@ any of the data sources, we recommend that you invoke the `.harmonize_data()` me
 to make sure that all the data sources are aligned properly. In the near future, 
 we are planning to add many other functionalities in this space. Stay tuned.
 
-## (5) Using `plink` as backend
+## (5) Genotype matrix backends
 
-Many of the functionalities that `magenpy` supports require access to and performing linear algebra 
-operations on the genotype matrix. By default, `magenpy` uses `xarray` and `dask` 
-to carry out these operations, as these are the tools supported by our main dependency: `pandas-plink`.
+Many `magenpy` workflows need random access to genotype data stored in PLINK BED/BIM/FAM files. The
+`GenotypeMatrix` interface provides a common set of methods for filtering variants and samples, computing
+allele frequencies, computing LD, scoring samples, and running simple GWAS. Different implementations can be
+selected with the `backend` argument in `GWADataLoader`, `PhenotypeSimulator`, and related classes.
 
-However, `dask` can be quite slow and inefficient when deployed on large-scale genotype matrices. To get 
-around this difficulty, for many operations, such as linear scoring or computing minor allele frequency, 
-we support (and recommend) using `plink` as a backend.
+The currently supported backends are:
+
+| Backend | GenotypeMatrix class | Notes |
+| --- | --- | --- |
+| `magenpy` | `MagenpyGenotypeMatrix` | Default backend. Uses native `magenpy` C++ kernels for BED-backed scoring, variant summaries, GWAS for quantitative traits, and LD computation. |
+| `bed-reader` | `bedReaderGenotypeMatrix` | Uses the `bed-reader` Python package to stream selected BED slices into NumPy or sparse matrices. Useful when you want in-process Python execution without calling PLINK. |
+| `plink` | `plinkBEDGenotypeMatrix` | Delegates operations such as scoring, GWAS, allele frequencies, and sample-size calculations to PLINK/PLINK2. This is still useful when you want exact PLINK behavior or need PLINK's association-testing support. |
+| `xarray` | `xarrayGenotypeMatrix` | Uses `pandas-plink`, `xarray`, and `dask`. This backend remains available for compatibility and interactive workflows, but can be slower on large genotype matrices. |
+
+For most new workflows, start with the default `backend='magenpy'`:
+
+```python linenums="1"
+import magenpy as mgp
+
+gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path())
+```
+
+You can choose another backend explicitly:
+
+```python linenums="1"
+gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(),
+                        backend='bed-reader')
+```
+
+```python linenums="1"
+gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(),
+                        backend='plink')
+```
+
+The same backend names are accepted by the command-line tools via `--backend`.
+
+### Using `plink` as a backend
 
 To use `plink` as a backend for `magenpy`, first you may need to configure the paths 
 on your system. By default, `magenpy` assumes that, in the shell, the name `plink2` invokes the `plink2` 
@@ -374,9 +402,8 @@ Note that for most of the operations, we assume that the user has `plink2` insta
 use `plink1.9` for some operations that are currently not supported by `plink2`, especially for 
 e.g. LD computation. This behavior may change in the near future.
 
-Once the paths are configured, to use `plink` as a backend for the various computations and 
-tools, make sure that you specify the `backend='plink'` flag in `GWADataLoader` and all of its 
-derived data structures (including all the `PhenotypeSimulator` classes):
+Once the paths are configured, specify the `backend='plink'` flag in `GWADataLoader` and all of its 
+derived data structures, including all the `PhenotypeSimulator` classes:
 
 ```python linenums="1"
 import magenpy as mgp

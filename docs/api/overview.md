@@ -4,8 +4,8 @@
 
 * [GWADataLoader](GWADataLoader.md): A general class for loading multiple statistical genetics data sources and
 harmonizing them for downstream analyses.
-* [GenotypeMatrix](GenotypeMatrix.md): A class for representing on-disk genotype matrices. It provides 
-interfaces for querying / manipulating / and performing computations on genotype data.
+* [GenotypeMatrix](GenotypeMatrix.md): A common interface for PLINK BED-backed genotype matrices, with
+implementations for the native `magenpy`, `bed-reader`, `plink`, and `xarray` backends.
 * [LDMatrix](LDMatrix.md): A class for representing on-disk Linkage-Disequilibrium (LD) matrices. It provides 
 interfaces for querying / manipulating / and performing computations on LD data.
 * [SampleTable](SampleTable.md): A class for representing data about samples (individuals), including covariates,
@@ -42,4 +42,3 @@ performing computations on annotation data.
 * [System utilities](utils/system_utils.md): Utilities for interfacing with the system environment (e.g. file I/O, environment variables, etc.).
 
 ## Data
-

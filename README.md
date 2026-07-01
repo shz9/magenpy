@@ -33,3 +33,8 @@ The package provides tools for:
 - [Documentation](https://shz9.github.io/magenpy/)
 - [Citation / BibTeX records](./CITATION.md)
 - [Report issues/bugs](https://github.com/shz9/magenpy/issues)
+
+### AI Usage
+[![AI-Declaration](https://shields.io)](AI-DECLARATION.md)
+
+This project is developed using AI-assisted technologies. Please review our [AI Declaration](AI-DECLARATION.md) for full transparency on automated pipelines.

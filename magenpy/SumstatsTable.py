@@ -688,18 +688,20 @@ class SumstatsTable(object):
 
         return table[list(col_subset)]
 
-    def to_file(self, output_file, col_subset=None, **to_csv_kwargs):
+    def to_file(self, output_file, col_subset=None, sumstats_format='magenpy', **to_csv_kwargs):
         """
         A convenience method to write the summary statistics table to file.
 
-        TODO: Add a format argument to this method and allow the user to output summary statistics
-        according to supported formats (e.g. COJO, plink, fastGWA, etc.).
-
         :param output_file: The path to the file where to write the summary statistics.
         :param col_subset: A subset of the columns to write to file.
+        :param sumstats_format: The format to use for the output summary statistics.
         :param to_csv_kwargs: Keyword arguments to pass to pandas' `to_csv` method.
 
         """
+
+        from .parsers.sumstats_parsers import get_sumstats_parser
+
+        parser_cls = get_sumstats_parser(sumstats_format)
 
         if 'sep' not in to_csv_kwargs and 'delimiter' not in to_csv_kwargs:
             to_csv_kwargs['sep'] = '\t'
@@ -707,7 +709,11 @@ class SumstatsTable(object):
         if 'index' not in to_csv_kwargs:
             to_csv_kwargs['index'] = False
 
+        if col_subset is None:
+            col_subset = parser_cls.get_standard_cols()
+
         table = self.to_table(col_subset)
+        table = parser_cls.format_table(table)
         table.to_csv(output_file, **to_csv_kwargs)
 
     @classmethod
@@ -729,31 +735,10 @@ class SumstatsTable(object):
         """
         assert sumstats_format is not None or parser is not None
 
-        from .parsers.sumstats_parsers import (
-            SumstatsParser, Plink1SSParser, Plink2SSParser, COJOSSParser,
-            FastGWASSParser, SSFParser, SaigeSSParser
-        )
+        from .parsers.sumstats_parsers import get_sumstats_parser
 
         if parser is None:
-            # Convert the format to lowercase:
-            sumstats_format_l = sumstats_format.lower()
-
-            if sumstats_format_l == 'magenpy':
-                parser = SumstatsParser(None, **parse_kwargs)
-            elif sumstats_format_l in ('plink', 'plink2'):
-                parser = Plink2SSParser(None, **parse_kwargs)
-            elif sumstats_format_l == 'plink1.9':
-                parser = Plink1SSParser(None, **parse_kwargs)
-            elif sumstats_format_l == 'cojo':
-                parser = COJOSSParser(None, **parse_kwargs)
-            elif sumstats_format_l == 'fastgwa':
-                parser = FastGWASSParser(None, **parse_kwargs)
-            elif sumstats_format_l in ('ssf', 'gwas-ssf', 'gwascatalog'):
-                parser = SSFParser(None, **parse_kwargs)
-            elif sumstats_format_l == 'saige':
-                parser = SaigeSSParser(None, **parse_kwargs)
-            else:
-                raise KeyError(f"Parsers for summary statistics format {sumstats_format} are not implemented!")
+            parser = get_sumstats_parser(sumstats_format)(None, **parse_kwargs)
 
         sumstats_table = parser.parse(sumstats_file)
         return cls(sumstats_table)

@@ -40,7 +40,8 @@ class GWADataLoader(object):
     :ivar ld: A dictionary of `LDMatrix` objects, where the key is the chromosome number.
     :ivar sumstats_table: A dictionary of `SumstatsTable` objects, where the key is the chromosome number.
     :ivar annotation: A dictionary of `AnnotationMatrix` objects, where the key is the chromosome number.
-    :ivar backend: The backend software used for the computation. Currently, supports `magenpy`, `xarray` and `plink`.
+    :ivar backend: The backend used for genotype-backed computations. Currently, supports
+    `magenpy`, `bed-reader`, `plink`, and `xarray`.
     :ivar temp_dir: The temporary directory where we store intermediate files (if necessary).
     :ivar output_dir: The output directory where we store the results of the computation.
     """
@@ -95,8 +96,8 @@ class GWADataLoader(object):
         :param annotation_files: The path to the annotation file(s). The path may contain a wildcard.
         :param annotation_format: The format for the summary statistics. Currently, supports the following
         formats: `magenpy`, `ldsc`.
-        :param backend: The backend software used for computations with the genotype matrix. Currently, supports
-        `xarray` and `plink`.
+        :param backend: The backend used for computations with the genotype matrix. Currently, supports
+        `magenpy`, `bed-reader`, `plink`, and `xarray`.
         :param temp_dir: The temporary directory where to store intermediate files.
         :param output_dir: The output directory where to store the results of the computation.
         :param threads: The number of threads to use for computations.

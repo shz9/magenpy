@@ -14,7 +14,10 @@ The `magenpy` package provides tools for:
 * Interfaces for performing association testing on simulated and real phenotypes.
 * Preliminary support for processing and integrating genomic annotations with other data sources.
 
-If you use `magenpy` in your research, please cite the following paper:
+If you use `magenpy` in your research, please cite the following papers:
+
+> Zabad, S., Haryan, C. A., Gravel, S., Misra, S., Li, Y. (2025). **Toward whole-genome inference of polygenic scores with fast and memory-efficient algorithms.** 
+The American Journal of Human Genetics, 112(7), 1528-1546. https://doi.org/10.1016/j.ajhg.2025.05.002
 
 > Zabad, S., Gravel, S., & Li, Y. (2023). **Fast and accurate Bayesian polygenic risk modeling with variational inference.** 
 The American Journal of Human Genetics, 110(5), 741–761. https://doi.org/10.1016/j.ajhg.2023.03.009
@@ -36,7 +39,6 @@ The American Journal of Human Genetics, 110(5), 741–761. https://doi.org/10.10
 If you have any questions or issues, please feel free to open an [issue](https://github.com/shz9/magenpy/issues) 
 on the `GitHub` repository or contact us directly at:
 
-* [Shadi Zabad](mailto:shadi.zabad@mail.mcgill.ca)
+* [Shadi Zabad](mailto:shadi.zabad@stats.ox.ac.uk)
 * [Yue Li](mailto:yueli@cs.mcgill.ca)
 * [Simon Gravel](mailto:simon.gravel@mcgill.ca)
-

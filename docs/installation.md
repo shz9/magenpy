@@ -7,7 +7,7 @@ to ensure that a `C/C++` Compiler (with appropriate flags) is present on your sy
 
 Building the `magenpy` package requires the following dependencies:
 
-* `Python` (>=3.8)
+* `Python` (>=3.10)
 * `C/C++` Compiler
 * `Cython` (>=0.29.21)
 * `NumPy` (>=1.19.5)
@@ -33,8 +33,35 @@ the `C/C++` extensions on your system.
 The package is available for easy installation via the Python Package Index (`pypi`) can be installed using `pip`:
 
 ```bash
-python -m pip install magenpy>=0.1
+python -m pip install magenpy
 ```
+
+### Using `uv`
+
+If you use [`uv`](https://docs.astral.sh/uv/) to manage Python environments, you can install `magenpy` into the
+current environment with:
+
+```bash
+uv pip install magenpy
+```
+
+You can also create a dedicated virtual environment first:
+
+```bash
+uv venv --python 3.11 magenpy_env
+source magenpy_env/bin/activate
+uv pip install magenpy
+```
+
+For command-line use, `uvx` can run the installed console scripts in an isolated temporary environment:
+
+```bash
+uvx --from magenpy magenpy_ld -h
+uvx --from magenpy magenpy_simulate -h
+```
+
+This is useful on systems where you want to try the command-line tools without permanently installing `magenpy`
+into your active Python environment.
 
 ### Building from source
 
@@ -52,27 +79,38 @@ If you wish to use `magenpy` on a shared computing environment or cluster, it is
 the package in a virtual environment. Here's a quick example of how to install `magenpy` on a SLURM-based cluster:
 
 ```bash
-module load python/3.8
+module load python/3.11
 python -m venv magenpy_env
 source magenpy_env/bin/activate
 python -m pip install --upgrade pip
-python -m pip install magenpy>=0.1
+python -m pip install magenpy
 ```
 
 ### Using `Docker` containers
 
-If you are using `Docker` containers, you can build a container with the `viprs` package 
-and all its dependencies by downloading the relevant `Dockerfile` from the 
-[repository](https://github.com/shz9/magenpy/tree/master/containers) and building it 
-as follows:
+If you are using `Docker` containers, you can build a CLI image with the `magenpy` package, PLINK/PLINK2,
+and the standard command-line tools:
 
 ```bash
-# Build the docker image:
-docker build -f cli.Dockerfile -t magenpy-cli .
-# Run the container in interactive mode:
-docker run -it magenpy-cli /bin/bash
-# Test that the package installed successfully:
-magenpy_ld -h
+# Build the linux/amd64 image from the latest PyPI release:
+docker build --platform linux/amd64 -f containers/cli.Dockerfile -t magenpy-cli .
+
+# Run one of the command-line tools:
+docker run --rm magenpy-cli magenpy_ld -h
+docker run --rm magenpy-cli magenpy_simulate -h
 ```
 
-We plan to publish pre-built `Docker` images on `DockerHub` in the future.
+To build the image from a local repository checkout instead of PyPI, pass the local install target:
+
+```bash
+docker build --platform linux/amd64 -f containers/cli.Dockerfile \
+  --build-arg MAGENPY_INSTALL_TARGET=. \
+  -t magenpy-cli .
+```
+
+Once a DockerHub image is published, you can run the same commands by replacing `magenpy-cli` with the
+published image name, for example:
+
+```bash
+docker run --rm shadizabad/magenpy:latest magenpy_ld -h
+```

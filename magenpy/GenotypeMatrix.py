@@ -16,14 +16,16 @@ class GenotypeMatrix(object):
     provides a convenient interface to interact with and perform computations
     on the genotype matrix.
 
-    Currently, we assume that the genotype matrix is stored using plink's BED
+    Currently, we assume that the genotype matrix is stored using PLINK's BED
     file format, with associated tables for the samples (i.e. FAM file) and genetic
     variants (i.e. BIM file). Classes that inherit from this generic class support
-    various backends to access and performing computations on this genotype data.
+    various backends to access and perform computations on this genotype data.
 
     !!! seealso "See Also"
-            * [xarrayGenotypeMatrix][magenpy.GenotypeMatrix.xarrayGenotypeMatrix]
+            * [MagenpyGenotypeMatrix][magenpy.GenotypeMatrix.MagenpyGenotypeMatrix]
+            * [bedReaderGenotypeMatrix][magenpy.GenotypeMatrix.bedReaderGenotypeMatrix]
             * [plinkBEDGenotypeMatrix][magenpy.GenotypeMatrix.plinkBEDGenotypeMatrix]
+            * [xarrayGenotypeMatrix][magenpy.GenotypeMatrix.xarrayGenotypeMatrix]
 
     :ivar sample_table: A table containing information about the samples in the genotype matrix
     (initially read from the FAM file).

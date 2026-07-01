@@ -1,44 +1,61 @@
-# Usage:
-# ** Step 1 ** Build the docker image:
-# docker build -f cli.Dockerfile -t magenpy-cli .
-# ** Step 2** Run the docker container in interactive shell mode:
-# docker run -it magenpy-cli /bin/bash
-# ** Step 3** Test magenpy_ld:
-# magenpy_ld -h
+# Docker image for the standard magenpy command-line tools.
+#
+# Build from the latest PyPI release:
+#   docker build --platform linux/amd64 -f containers/cli.Dockerfile -t magenpy-cli .
+#
+# Build from this repository checkout:
+#   docker build --platform linux/amd64 -f containers/cli.Dockerfile --build-arg MAGENPY_INSTALL_TARGET=. -t magenpy-cli .
+#
+# Run a command:
+#   docker run --rm magenpy-cli magenpy_ld -h
+#   docker run --rm magenpy-cli magenpy_simulate -h
 
-FROM python:3.11-slim-buster
+FROM python:3.11-slim-bookworm
 
-LABEL authors="Shadi Zabad"
-LABEL version="0.1.5"
-LABEL description="Docker image containing all requirements to run the commandline scripts in the magenpy package"
+LABEL org.opencontainers.image.authors="Shadi Zabad" \
+      org.opencontainers.image.title="magenpy CLI" \
+      org.opencontainers.image.description="Docker image for the standard magenpy command-line tools" \
+      org.opencontainers.image.source="https://github.com/shz9/magenpy" \
+      org.opencontainers.image.licenses="MIT"
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    unzip \
-    wget \
-    pkg-config \
-    g++ gcc \
-    libopenblas-dev \
-    libomp-dev
+ARG MAGENPY_INSTALL_TARGET="magenpy"
+ARG PLINK2_URL="https://s3.amazonaws.com/plink2-assets/alpha5/plink2_linux_x86_64_20240105.zip"
+ARG PLINK1_URL="https://s3.amazonaws.com/plink1-assets/plink_linux_x86_64_20231211.zip"
 
-# Download and setup plink2:
-RUN mkdir -p /software && \
-    wget https://s3.amazonaws.com/plink2-assets/alpha5/plink2_linux_x86_64_20240105.zip -O /software/plink2.zip && \
-    unzip /software/plink2.zip -d /software && \
-    rm /software/plink2.zip
+ENV PATH="/software:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
 
-# Download and setup plink1.9:
-RUN mkdir -p /software && \
-    wget https://s3.amazonaws.com/plink1-assets/plink_linux_x86_64_20231211.zip -O /software/plink.zip && \
-    unzip /software/plink.zip -d /software && \
-    rm /software/plink.zip
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        g++ \
+        gcc \
+        libopenblas-dev \
+        libomp-dev \
+        pkg-config \
+        unzip \
+        wget \
+    && rm -rf /var/lib/apt/lists/*
 
-# Add plink1.9 and plink2 to PATH:
-RUN echo 'export PATH=$PATH:/software' >> ~/.bashrc
+RUN mkdir -p /software \
+    && wget -q "${PLINK2_URL}" -O /software/plink2.zip \
+    && unzip -q /software/plink2.zip -d /software \
+    && rm /software/plink2.zip \
+    && wget -q "${PLINK1_URL}" -O /software/plink.zip \
+    && unzip -q /software/plink.zip -d /software \
+    && rm /software/plink.zip \
+    && chmod +x /software/plink /software/plink2 \
+    && plink2 --version \
+    && plink --version
 
-# Install magenpy package from PyPI
-RUN pip install --upgrade pip magenpy
+WORKDIR /opt/magenpy
+COPY . /opt/magenpy
 
-# Test the installation
-RUN magenpy_ld -h
-RUN magenpy_simulate -h
+RUN python -m pip install --upgrade pip \
+    && python -m pip install "${MAGENPY_INSTALL_TARGET}" \
+    && magenpy_ld -h >/dev/null \
+    && magenpy_simulate -h >/dev/null
+
+WORKDIR /work
+
+CMD ["magenpy_ld", "-h"]
