@@ -9,7 +9,15 @@ def test_essential_cols_resolve_to_first_available_column_sets():
     columns = ['CHR', 'SNP', 'POS', 'A1', 'A2', 'BETA', 'SE', 'Z']
 
     assert SumstatsParser.get_essential_cols(columns) == [
-        'CHR', 'SNP', 'A1', 'A2', 'BETA', 'SE'
+        'SNP', 'A1', 'BETA', 'SE'
+    ]
+
+
+def test_essential_cols_fall_back_to_position_when_snp_is_missing():
+    columns = ['CHR', 'POS', 'A1', 'A2', 'Z']
+
+    assert SumstatsParser.get_essential_cols(columns) == [
+        'CHR', 'POS', 'A1', 'Z'
     ]
 
 
@@ -19,7 +27,7 @@ def test_drop_na_is_restricted_to_resolved_essential_columns(tmp_path):
         'CHR': [1, 1, 1],
         'SNP': ['rs1', 'rs2', 'rs3'],
         'A1': ['A', 'C', 'G'],
-        'A2': ['G', 'T', 'A'],
+        'A2': ['G', 'T', np.nan],
         'BETA': [0.1, np.nan, -0.2],
         'SE': [0.01, 0.02, 0.03],
         'MAF': [np.nan, 0.2, 0.3],
@@ -29,6 +37,7 @@ def test_drop_na_is_restricted_to_resolved_essential_columns(tmp_path):
 
     assert parsed['SNP'].tolist() == ['rs1', 'rs3']
     assert parsed.loc[parsed['SNP'] == 'rs1', 'MAF'].isna().all()
+    assert parsed.loc[parsed['SNP'] == 'rs3', 'A2'].isna().all()
 
 
 def test_to_file_uses_parser_standard_cols_and_output_names(tmp_path):
