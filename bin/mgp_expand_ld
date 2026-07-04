@@ -14,9 +14,48 @@ import pandas as pd
 
 import magenpy as mgp
 from magenpy.parsers.misc_parsers import read_snp_filter_file
-from magenpy.utils.system_utils import setup_logger
+from magenpy.utils.bin_utils import (
+    format_cli_block,
+    format_rows,
+    format_sections,
+    print_cli_logo,
+    setup_cli_logger,
+)
 
 logger = logging.getLogger("magenpy.cli.mgp_expand_ld")
+
+LOGO_DESCRIPTION = "< Find tagging variants using pre-computed LD matrices >"
+
+
+def format_run_summary(args, n_focal_snps=None):
+    """
+    Build a compact summary of the requested LD expansion operation.
+
+    :param args: Parsed command-line arguments.
+    :param n_focal_snps: Number of unique focal SNPs read from the input file.
+    :return: A formatted multi-line string.
+    """
+    sections = [
+        ("LD source", [("LD path", args.ld_path)]),
+        (
+            "Variant input",
+            [
+                ("SNP file", args.snp_file),
+                ("SNP column", args.snp_column),
+                ("Unique focal SNPs", n_focal_snps),
+            ],
+        ),
+        (
+            "Expansion",
+            [
+                ("R2 threshold", args.r2_threshold),
+                ("Correlation threshold", round(float(np.sqrt(args.r2_threshold)), 2)),
+            ],
+        ),
+        ("Output", [("Output file", args.output_file)]),
+    ]
+
+    return format_sections(sections)
 
 
 def read_snp_file(path, column=0):
@@ -46,6 +85,23 @@ def make_data_loader(args):
     if gdl.ld is None or len(gdl.ld) < 1:
         raise FileNotFoundError(f"No LD matrices were found at: {args.ld_path}")
     return gdl
+
+
+def focal_snps_by_chromosome(gdl, focal_snps):
+    """
+    Split focal SNPs by the LD matrices where they are present.
+
+    :param gdl: A ``GWADataLoader`` object with LD matrices.
+    :param focal_snps: Ordered focal SNP IDs supplied by the user.
+    :return: Dictionary mapping chromosomes to matched focal SNP IDs.
+    """
+    matched = {}
+    for chrom, ld_mat in gdl.ld.items():
+        ld_snps = set(ld_mat.snps.astype(str))
+        present = [snp for snp in focal_snps if snp in ld_snps]
+        if present:
+            matched[chrom] = present
+    return matched
 
 
 def expand_chromosome(ld_mat, focal_snps, corr_threshold):
@@ -102,30 +158,51 @@ def main():
     """
     Parse CLI inputs, expand focal SNPs to LD neighbors, and write SNP IDs.
     """
-    logo = mgp.make_ascii_logo(
-        desc="< Expand variants using pre-computed LD matrices >",
-        left_padding=10,
-    )
-    print(f"\n{logo}\n", flush=True)
-
+    print_cli_logo(mgp, LOGO_DESCRIPTION)
     args = parse_args()
-    setup_logger(modules=["magenpy"], log_level=args.log_level)
+    setup_cli_logger(logger, args.log_level)
 
     if not 0.0 < args.r2_threshold <= 1.0:
         raise ValueError("--r2-threshold must be in (0, 1].")
 
     focal_snps = unique_preserving_order(read_snp_file(args.snp_file, args.snp_column))
+    logger.info(
+        "%s",
+        format_cli_block(
+            "LD expansion request",
+            format_run_summary(args, n_focal_snps=len(focal_snps)),
+        ),
+    )
     gdl = make_data_loader(args)
+    focal_by_chrom = focal_snps_by_chromosome(gdl, focal_snps)
+    n_matched_focal = sum(len(snps) for snps in focal_by_chrom.values())
+    logger.info(
+        "Matched %s of %s focal variants to %s LD matrices before expansion.",
+        n_matched_focal,
+        len(focal_snps),
+        len(focal_by_chrom),
+    )
     corr_threshold = float(np.sqrt(args.r2_threshold))
 
     expanded = list(focal_snps)
-    for _, ld_mat in sorted(gdl.ld.items(), key=lambda x: str(x[0])):
-        expanded.extend(expand_chromosome(ld_mat, focal_snps, corr_threshold))
+    for chrom, ld_mat in sorted(gdl.ld.items(), key=lambda x: str(x[0])):
+        expanded.extend(
+            expand_chromosome(ld_mat, focal_by_chrom.get(chrom, []), corr_threshold)
+        )
         ld_mat.release()
 
     output_snps = unique_preserving_order(expanded)
     write_variants(output_snps, args.output_file)
-    logger.info("Wrote %s expanded variants to %s", len(output_snps), args.output_file)
+    logger.info(
+        "LD expansion completed.\n%s",
+        format_rows(
+            [
+                ("Input variants", len(focal_snps)),
+                ("Output variants", len(output_snps)),
+                ("Output file", args.output_file),
+            ]
+        ),
+    )
 
 
 if __name__ == "__main__":

@@ -43,7 +43,6 @@ class GWADataLoader(object):
     :ivar backend: The backend used for genotype-backed computations. Currently, supports
     `magenpy`, `bed-reader`, `plink`, and `xarray`.
     :ivar temp_dir: The temporary directory where we store intermediate files (if necessary).
-    :ivar output_dir: The output directory where we store the results of the computation.
     """
 
     def __init__(
@@ -66,7 +65,7 @@ class GWADataLoader(object):
         annotation_format="magenpy",
         backend="magenpy",
         temp_dir="temp",
-        output_dir="output",
+        genome_build=None,
         threads=1,
     ):
         """
@@ -99,7 +98,7 @@ class GWADataLoader(object):
         :param backend: The backend used for computations with the genotype matrix. Currently, supports
         `magenpy`, `bed-reader`, `plink`, and `xarray`.
         :param temp_dir: The temporary directory where to store intermediate files.
-        :param output_dir: The output directory where to store the results of the computation.
+        :param genome_build: The genome build or assembly under which the SNP coordinates are defined.
         :param threads: The number of threads to use for computations.
         """
 
@@ -113,10 +112,9 @@ class GWADataLoader(object):
         self.backend = backend
 
         self.temp_dir = temp_dir
-        self.output_dir = output_dir
         self.cleanup_dir_list = []  # Directories to clean up after execution.
 
-        makedir([temp_dir, output_dir])
+        makedir(temp_dir)
 
         self.threads = threads
 
@@ -133,7 +131,11 @@ class GWADataLoader(object):
         # ------- Read data files -------
 
         self.read_genotypes(
-            bed_files, min_maf=min_maf, min_mac=min_mac, drop_duplicated=drop_duplicated
+            bed_files,
+            min_maf=min_maf,
+            min_mac=min_mac,
+            drop_duplicated=drop_duplicated,
+            genome_build=genome_build,
         )
         self.read_phenotype(phenotype_file)
         self.read_covariates(covariates_file)
@@ -380,6 +382,7 @@ class GWADataLoader(object):
         min_maf=None,
         min_mac=1,
         drop_duplicated=True,
+        genome_build=None,
     ):
         """
         Read the genotype matrix and/or associated metadata from plink's BED file format.
@@ -394,6 +397,7 @@ class GWADataLoader(object):
         :param min_maf: The minimum minor allele frequency cutoff.
         :param min_mac: The minimum minor allele count cutoff.
         :param drop_duplicated: If True, drop SNPs with duplicated rsID.
+        :param genome_build: The genome build or assembly under which the SNP coordinates are defined.
         """
 
         if bed_paths is None:
@@ -429,7 +433,10 @@ class GWADataLoader(object):
             # Read BED file and update the genotypes dictionary:
             self.genotype.update(
                 gmat_class.from_file(
-                    bfile, temp_dir=self.temp_dir, threads=self.threads
+                    bfile,
+                    temp_dir=self.temp_dir,
+                    threads=self.threads,
+                    genome_build=genome_build,
                 ).split_by_chromosome()
             )
 

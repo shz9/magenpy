@@ -68,6 +68,9 @@ do
         make clean
         uv pip install --python "$python_bin" --no-cache -e ".[test]"
         uv pip list --python "$python_bin"
+        export PATH="$(dirname "$python_bin"):$PATH"
+        export PYTHON_BIN="$python_bin"
+        hash -r
         "$python_bin" -m pytest -v
         bash "$SCRIPT_DIR/test_cli.sh"
     )

@@ -13,12 +13,12 @@ for storing large numerical arrays.
 
 Usage:
 
-    python -m magenpy_ld --bfile <bed_file> --estimator <estimator> --output-dir <output_dir>
+    python -m mgp_compute_ld --bfile <bed_file> --estimator <estimator> --output-dir <output_dir>
 
 For larger genotype matrices, we recommend using `plink1.9` as a backend to compute the LD matrices.
 You can do that by specifying the `--backend` parameter:
 
-    python -m magenpy_ld --bfile <bed_file> --estimator <estimator> --output-dir <output_dir> --backend plink
+    python -m mgp_compute_ld --bfile <bed_file> --estimator <estimator> --output-dir <output_dir> --backend plink
 
 """
 
@@ -29,18 +29,169 @@ import time
 from datetime import timedelta
 
 import magenpy as mgp
-from magenpy.GenotypeMatrix import plinkBEDGenotypeMatrix, xarrayGenotypeMatrix
-from magenpy.utils.system_utils import setup_logger, valid_url
+from magenpy.utils.bin_utils import (
+    format_cli_block,
+    format_rows,
+    format_sections,
+    print_cli_logo,
+    setup_cli_logger,
+)
+from magenpy.utils.system_utils import valid_url
 
 logger = logging.getLogger("magenpy.cli.mgp_compute_ld")
 
-# --------- Print logo ---------
+LOGO_DESCRIPTION = "< Compute LD matrix and store in Zarr format >"
 
-logo = mgp.make_ascii_logo(
-    desc="< Compute LD matrix and store in Zarr format >",
-    left_padding=10,
-)
-print(f"\n{logo}\n", flush=True)
+
+def validate_args(args):
+    """
+    Validate estimator-specific command-line arguments.
+
+    :param args: Parsed command-line arguments.
+    :raises ValueError: If required estimator inputs are missing.
+    :raises FileNotFoundError: If an LD block file path does not exist.
+    """
+    if args.estimator == "windowed":
+        if (
+            args.ld_window is None
+            and args.ld_window_kb is None
+            and args.ld_window_cm is None
+        ):
+            raise ValueError(
+                "For the windowed estimator, provide --ld-window, "
+                "--ld-window-kb, or --ld-window-cm."
+            )
+    elif args.estimator == "block":
+        if args.ld_blocks is None:
+            raise ValueError(
+                "The block LD estimator requires an LD blocks file via --ld-blocks."
+            )
+        if not osp.isfile(args.ld_blocks) and not valid_url(args.ld_blocks):
+            raise FileNotFoundError("The LD blocks file does not exist.")
+    elif args.estimator == "shrinkage":
+        if args.genmap_ne is None:
+            raise ValueError("The shrinkage estimator requires --genmap-Ne.")
+        if args.genmap_ss is None:
+            raise ValueError("The shrinkage estimator requires --genmap-sample-size.")
+
+
+def get_ld_kwargs(args):
+    """
+    Convert estimator-specific command-line arguments to LD estimator keywords.
+
+    :param args: Parsed command-line arguments.
+    :return: A dictionary of keyword arguments for ``GWADataLoader.compute_ld``.
+    """
+    ld_kwargs = {}
+
+    if args.estimator == "windowed":
+        if args.ld_window is not None:
+            ld_kwargs["window_size"] = args.ld_window
+        if args.ld_window_kb is not None:
+            ld_kwargs["kb_window_size"] = args.ld_window_kb
+        if args.ld_window_cm is not None:
+            ld_kwargs["cm_window_size"] = args.ld_window_cm
+    elif args.estimator == "block":
+        ld_kwargs["ld_blocks_file"] = args.ld_blocks
+    elif args.estimator == "shrinkage":
+        ld_kwargs["genetic_map_ne"] = args.genmap_ne
+        ld_kwargs["genetic_map_sample_size"] = args.genmap_ss
+        if args.shrink_cutoff is not None:
+            ld_kwargs["threshold"] = args.shrink_cutoff
+
+    return ld_kwargs
+
+
+def parse_metadata(metadata):
+    """
+    Parse comma-separated ``key=value`` metadata supplied by the user.
+
+    :param metadata: A comma-separated string of metadata key-value pairs.
+    :return: A dictionary of parsed metadata.
+    :raises ValueError: If any metadata entry is not formatted as ``key=value``.
+    """
+    if metadata is None:
+        return {}
+
+    parsed_metadata = {}
+    for entry in metadata.split(","):
+        entry = entry.strip()
+        if len(entry) < 1:
+            continue
+        if "=" not in entry:
+            raise ValueError(f"Metadata entry '{entry}' is not formatted as key=value.")
+        key, value = entry.split("=", 1)
+        parsed_metadata[key.strip()] = value.strip()
+
+    return parsed_metadata
+
+
+def format_run_summary(args, ld_kwargs, metadata):
+    """
+    Build a compact summary of the requested LD computation.
+
+    :param args: Parsed command-line arguments.
+    :param ld_kwargs: Estimator keyword arguments.
+    :param metadata: Parsed metadata dictionary.
+    :return: A formatted multi-line string.
+    """
+    filter_rows = [
+        ("Keep samples", args.keep_file),
+        ("Extract variants", args.extract_file),
+        ("Minimum MAF", args.min_maf),
+        ("Minimum MAC", args.min_mac),
+    ]
+
+    sections = [
+        (
+            "Estimator",
+            [
+                ("Method", args.estimator),
+                ("Parameters", ld_kwargs if ld_kwargs else "default"),
+            ],
+        ),
+        (
+            "Genotype source",
+            [
+                ("BED path", args.bed_file),
+                ("Backend", args.backend),
+                ("Genome build", args.genome_build),
+            ],
+        ),
+        ("Filters", filter_rows),
+        (
+            "Storage",
+            [
+                ("Output directory", args.output_dir),
+                ("Temporary directory", args.temp_dir),
+                ("Storage dtype", args.storage_dtype),
+                ("Compressor", args.compressor),
+                ("Compression level", args.compression_level),
+                ("Spectral properties", args.compute_spectral),
+            ],
+        ),
+        ("Metadata", [("Attributes", metadata if metadata else "Date only")]),
+    ]
+
+    return format_sections(sections)
+
+
+def set_ld_metadata(ld_matrices, metadata):
+    """
+    Store metadata attributes on each computed LD matrix.
+
+    :param ld_matrices: Dictionary of chromosome to ``LDMatrix`` objects.
+    :param metadata: Metadata dictionary to store.
+    """
+    if "Date" not in metadata:
+        metadata["Date"] = time.strftime("%Y-%m-%d")
+
+    for ld_mat in ld_matrices.values():
+        for key, value in metadata.items():
+            ld_mat.set_store_attr(key, value)
+
+
+print_cli_logo(mgp, LOGO_DESCRIPTION)
 
 # --------- Options ---------
 
@@ -228,126 +379,35 @@ parser.add_argument(
     help="Logging level.",
 )
 
-
 args = parser.parse_args()
-setup_logger(modules=["magenpy"], log_level=args.log_level)
+setup_cli_logger(logger, args.log_level)
+validate_args(args)
+ld_kwargs = get_ld_kwargs(args)
+metadata = parse_metadata(args.metadata)
 
-# ------------------------------------------------------
-# Sanity checks on the parsed arguments:
+logger.info(
+    "%s",
+    format_cli_block(
+        "LD computation request", format_run_summary(args, ld_kwargs, metadata)
+    ),
+)
 
-if args.estimator == "windowed":
-    if (
-        args.ld_window is None
-        and args.ld_window_kb is None
-        and args.ld_window_cm is None
-    ):
-        raise Exception(
-            "For the windowed estimator, the user must provide the window size using --ld-window or "
-            "the maximum distance in kilobases (--ld-window-kb) or centi Morgan (--ld-window-cm)."
-        )
-
-elif args.estimator == "block":
-    if args.ld_blocks is None:
-        raise Exception(
-            "If you select the [block] LD estimator, make sure that "
-            "you also provide the ld blocks file via the --ld-blocks flag!"
-        )
-    elif not osp.isfile(args.ld_blocks) and not valid_url(args.ld_blocks):
-        raise FileNotFoundError("The LD blocks file does not exist!")
-elif args.estimator == "shrinkage":
-    if args.genmap_ne is None:
-        raise Exception(
-            "If you select the [shrinkage] estimator, you need to specify the "
-            "effective population size via the --genmap-Ne flag!"
-        )
-    elif args.genmap_ss is None:
-        raise Exception(
-            "If you select the [shrinkage] estimator, you need to specify the "
-            "sample size for the genetic map via the --genmap-sample-size flag!"
-        )
-
-# ------------------------------------------------------
-# Extract the arguments for selected estimator:
-
-ld_kwargs = {}
-
-if args.estimator == "windowed":
-    if args.ld_window is not None:
-        ld_kwargs["window_size"] = args.ld_window
-    if args.ld_window_kb is not None:
-        ld_kwargs["kb_window_size"] = args.ld_window_kb
-    if args.ld_window_cm is not None:
-        ld_kwargs["cm_window_size"] = args.ld_window_cm
-elif args.estimator == "block":
-    ld_kwargs["ld_blocks_file"] = args.ld_blocks
-elif args.estimator == "shrinkage":
-    if args.genmap_ne is not None:
-        ld_kwargs["genetic_map_ne"] = args.genmap_ne
-    if args.genmap_ss is not None:
-        ld_kwargs["genetic_map_sample_size"] = args.genmap_ss
-    if args.shrink_cutoff is not None:
-        ld_kwargs["threshold"] = args.shrink_cutoff
-
-# ------------------------------------------------------
-
-# Log parsed input commands:
-logger.info("> LD estimator: %s", args.estimator)
-
-logger.info(">>> Parsed estimator characteristics:\n%s", ld_kwargs)
-
-logger.info("\n\n> Source data:")
-logger.info(">>> BED file: %s", args.bed_file)
-
-if args.keep_file is not None:
-    logger.info(">>> Keep samples: %s", args.keep_file)
-if args.extract_file is not None:
-    logger.info(">>> Keep variants: %s", args.extract_file)
-if args.min_maf is not None:
-    logger.info(">>> Minimum allele frequency: %s", args.min_maf)
-if args.min_mac is not None:
-    logger.info(">>> Minimum allele count: %s", args.min_mac)
-
-logger.info(">>> Storage data type: %s", args.storage_dtype)
-logger.info(">>> Compressor: %s", args.compressor)
-logger.info(">>> Compression level: %s", args.compression_level)
-
-logger.info("\n\n> Output:")
-logger.info(">>> Temporary directory: %s", args.temp_dir)
-logger.info(">>> Output directory: %s", args.output_dir)
-
-# ------------------------------------------------------
-# Perform the computation:
-
-logger.info("\n\n> Processing the genotype data...")
-
-if args.backend == "xarray":
-    g = xarrayGenotypeMatrix.from_file(
-        args.bed_file, temp_dir=args.temp_dir, genome_build=args.genome_build
-    )
-else:
-    g = plinkBEDGenotypeMatrix.from_file(
-        args.bed_file, temp_dir=args.temp_dir, genome_build=args.genome_build
-    )
-
-if args.keep_file is not None:
-    logger.info("> Filtering samples...")
-    g.filter_samples(keep_file=args.keep_file)
-
-if args.extract_file is not None:
-    logger.info("> Filtering variants...")
-    g.filter_snps(extract_file=args.extract_file)
-
-if args.min_mac is not None or args.min_maf is not None:
-    logger.info("> Filtering variants by allele frequency/count...")
-    g.filter_by_allele_frequency(min_maf=args.min_maf, min_mac=args.min_mac)
-
-
-# Record start time:
 start_time = time.time()
 
-# Compute LD matrix:
-logger.info("> Computing the LD matrix...")
-ld_mat = g.compute_ld(
+logger.info("Reading genotype data with GWADataLoader...")
+gdl = mgp.GWADataLoader(
+    bed_files=args.bed_file,
+    keep_file=args.keep_file,
+    extract_file=args.extract_file,
+    min_maf=args.min_maf,
+    min_mac=args.min_mac,
+    backend=args.backend,
+    temp_dir=args.temp_dir,
+    genome_build=args.genome_build,
+)
+
+logger.info("Computing LD matrices...")
+gdl.compute_ld(
     args.estimator,
     args.output_dir,
     dtype=args.storage_dtype,
@@ -356,33 +416,22 @@ ld_mat = g.compute_ld(
     compute_spectral_properties=args.compute_spectral,
     **ld_kwargs,
 )
+ld_matrices = gdl.get_ld_matrices()
 
-# Store metadata (if provided):
+logger.info("Storing LD metadata...")
+set_ld_metadata(ld_matrices, metadata)
 
-if args.metadata is not None:
-    parsed_metadata = {
-        k: v
-        for entry in args.metadata.split(",")
-        for k, v in [entry.strip().split("=")]
-        if len(entry.strip()) > 0
-    }
+gdl.cleanup()
 
-    if len(parsed_metadata) > 0:
-        for k, v in parsed_metadata.items():
-            ld_mat.set_store_attr(k, v)
-
-    if "Date" not in parsed_metadata:
-        # Store the date when the computation was done:
-        ld_mat.set_store_attr("Date", time.strftime("%Y-%m-%d"))
-
-else:
-    # Store the date when the computation was done:
-    ld_mat.set_store_attr("Date", time.strftime("%Y-%m-%d"))
-
-# Clean up all intermediate files and directories:
-g.cleanup()
-
-logger.info("> Output directory:\n\t%s", args.output_dir)
-# Record the end time:
 end_time = time.time()
-logger.info("Total runtime: %s", timedelta(seconds=end_time - start_time))
+chromosomes = ", ".join(map(str, sorted(ld_matrices)))
+logger.info(
+    "LD computation completed\n%s",
+    format_rows(
+        [
+            ("Output directory", args.output_dir),
+            ("Chromosomes", chromosomes),
+            ("Total runtime", timedelta(seconds=end_time - start_time)),
+        ]
+    ),
+)

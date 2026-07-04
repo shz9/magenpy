@@ -85,8 +85,10 @@ def test_to_numpy_respects_dtype(magenpy_gmat, genotype_numpy):
     as_float32 = magenpy_gmat.to_numpy(dtype=np.float32)
     assert as_float32.dtype == np.dtype(np.float32)
     assert np.array_equal(np.isnan(as_float32), genotype_numpy < 0)
-    assert np.array_equal(as_float32[genotype_numpy >= 0],
-                          genotype_numpy[genotype_numpy >= 0].astype(np.float32))
+    assert np.array_equal(
+        as_float32[genotype_numpy >= 0],
+        genotype_numpy[genotype_numpy >= 0].astype(np.float32),
+    )
 
 
 def test_compute_variant_statistics(magenpy_gmat, genotype_numpy):
@@ -100,14 +102,18 @@ def test_compute_variant_statistics(magenpy_gmat, genotype_numpy):
 
 
 def test_score_matches_numpy(genotype_numpy, magenpy_gmat):
-    beta = np.column_stack([
-        np.linspace(-0.2, 0.3, magenpy_gmat.n_snps),
-        np.cos(np.arange(magenpy_gmat.n_snps) / 7.0),
-    ])
+    beta = np.column_stack(
+        [
+            np.linspace(-0.2, 0.3, magenpy_gmat.n_snps),
+            np.cos(np.arange(magenpy_gmat.n_snps) / 7.0),
+        ]
+    )
 
     raw_genotypes = np.where(genotype_numpy > 0, genotype_numpy, 0).astype(np.float64)
     expected_raw = raw_genotypes @ beta
-    np.testing.assert_allclose(magenpy_gmat.score(beta), expected_raw, rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(
+        magenpy_gmat.score(beta), expected_raw, rtol=1e-10, atol=1e-10
+    )
 
     allele_frequency, _ = _allele_frequency_and_n(genotype_numpy)
     mean = 2.0 * allele_frequency
@@ -142,11 +148,28 @@ def test_score_matches_numpy(genotype_numpy, magenpy_gmat):
 
 
 def test_compute_ld_matches_numpy_windowed(tmp_path, genotype_numpy, magenpy_gmat):
+
     window_size = 8
-    ld_boundaries = WindowedLD(magenpy_gmat, window_size=window_size).compute_ld_boundaries()
+    ld_boundaries = WindowedLD(
+        magenpy_gmat, window_size=window_size
+    ).compute_ld_boundaries()
 
     expected_full = _imputed_standardized_genotypes(genotype_numpy)
+
+    # Assert that all elements in expected_full are finite
+    assert np.all(np.isfinite(expected_full)), (
+        "expected_full contains non-finite values"
+    )
+    # Assert that shape of genotype_numpy matches shape of expected_full
+    assert genotype_numpy.shape == expected_full.shape, (
+        "genotype_numpy and expected_full have different shapes"
+    )
+
     expected_full = expected_full.T @ expected_full / genotype_numpy.shape[0]
+
+    assert np.all(np.isfinite(expected_full)), (
+        "expected_full contains non-finite values"
+    )
 
     expected_sparse = np.zeros_like(expected_full)
     np.fill_diagonal(expected_sparse, 1.0)
@@ -154,8 +177,8 @@ def test_compute_ld_matches_numpy_windowed(tmp_path, genotype_numpy, magenpy_gma
         row_end = int(ld_boundaries[1, row])
         if row_end <= row + 1:
             continue
-        expected_sparse[row, row + 1:row_end] = expected_full[row, row + 1:row_end]
-        expected_sparse[row + 1:row_end, row] = expected_full[row + 1:row_end, row]
+        expected_sparse[row, row + 1 : row_end] = expected_full[row, row + 1 : row_end]
+        expected_sparse[row + 1 : row_end, row] = expected_full[row + 1 : row_end, row]
 
     ld_mat = magenpy_gmat.compute_ld(
         "windowed",

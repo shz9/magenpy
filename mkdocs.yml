@@ -91,7 +91,12 @@ nav:
   - "Installation": installation.md
   - "Getting Started": getting_started.md
   - "Features and Configurations": features.md
-  - "Tutorials": tutorials/overview.md
+  - "Tutorials":
+    - "Overview": tutorials/overview.md
+    - "Compute LD matrices": tutorials/compute_ld_matrices.md
+    - "Extract LD sub-blocks": tutorials/extract_ld_blocks.md
+    - "Prune variants with LD": tutorials/prune_variants.md
+    - "Find tagging variants with LD": tutorials/find_tagging_variants.md
   - "Command Line Scripts":
     - "Overview": commandline/overview.md
     - "mgp_compute_ld": commandline/mgp_compute_ld.md

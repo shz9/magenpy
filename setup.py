@@ -4,7 +4,6 @@ import warnings
 import numpy as np
 import pkgconfig
 from extension_helpers import add_openmp_flags_if_available
-from extension_helpers._openmp_helpers import check_openmp_support
 from setuptools import Extension, find_packages, setup
 
 try:

@@ -24,7 +24,6 @@ def gdl_object():
     # Clean up after tests are done:
     gdl.cleanup()
     shutil.rmtree(gdl.temp_dir)
-    shutil.rmtree(gdl.output_dir)
 
 
 def test_basic_properties(gdl_object):

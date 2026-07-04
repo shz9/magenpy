@@ -31,17 +31,73 @@ import numpy as np
 
 import magenpy as mgp
 from magenpy.simulation.PhenotypeSimulator import PhenotypeSimulator
-from magenpy.utils.system_utils import get_filenames, makedir, setup_logger
+from magenpy.utils.bin_utils import (
+    format_cli_block,
+    format_rows,
+    format_sections,
+    print_cli_logo,
+    setup_cli_logger,
+)
+from magenpy.utils.system_utils import get_filenames, makedir
 
 logger = logging.getLogger("magenpy.cli.mgp_simulate")
 
-# --------- Print logo ---------
+LOGO_DESCRIPTION = "< Simulate complex quantitative or case-control traits >"
 
-logo = mgp.make_ascii_logo(
-    desc="< Simulate complex quantitative or case-control traits >",
-    left_padding=10,
-)
-print(f"\n{logo}\n", flush=True)
+
+print_cli_logo(mgp, LOGO_DESCRIPTION)
+
+
+def format_run_summary(args, bed_files, pi, d):
+    """
+    Build a compact summary of the requested phenotype simulation.
+
+    :param args: Parsed command-line arguments.
+    :param bed_files: BED files identified from the user's path or glob.
+    :param pi: Mixture proportions for the simulation architecture.
+    :param d: Variance multipliers for the simulation architecture.
+    :return: A formatted multi-line string.
+    """
+    sections = [
+        (
+            "Simulation",
+            [
+                ("Likelihood", args.likelihood),
+                ("Heritability", args.h2),
+                ("Mixing proportions", pi),
+                ("Variance multipliers", d),
+                ("Prevalence", args.prevalence if args.likelihood == "binomial" else None),
+                ("Seed", args.seed),
+            ],
+        ),
+        (
+            "Genotype source",
+            [
+                ("BED path", args.bed_file),
+                ("Resolved BED files", len(bed_files)),
+                ("Backend", args.backend),
+            ],
+        ),
+        (
+            "Filters",
+            [
+                ("Keep samples", args.keep_file),
+                ("Extract variants", args.extract_file),
+                ("Minimum MAF", args.min_maf),
+                ("Minimum MAC", args.min_mac),
+            ],
+        ),
+        (
+            "Output",
+            [
+                ("Output prefix", args.output_file),
+                ("Temporary directory", args.temp_dir),
+                ("Output simulated beta", args.output_sim_beta),
+            ],
+        ),
+    ]
+
+    return format_sections(sections)
 
 # --------- Options ---------
 
@@ -177,7 +233,7 @@ parser.add_argument(
 )
 
 args = parser.parse_args()
-setup_logger(modules=["magenpy"], log_level=args.log_level)
+setup_cli_logger(logger, args.log_level)
 
 # ------------------------------------------------------
 # Sanity checks on the inputs:
@@ -213,30 +269,12 @@ if len(pi) != len(d):
         "The multipliers and mixing proportions must be of the same length!"
     )
 
-# ------------------------------------------------------
-# Log parsed input commands:
-logger.info("> Simulating complex trait with %s likelihood...", args.likelihood)
-logger.info(">>> Heritability: %s", args.h2)
-logger.info(">>> Mixing proportions: %s", pi)
-logger.info(">>> Variance multipliers: %s", d)
-if args.likelihood == "binomial" and args.prevalence is not None:
-    logger.info(">>> Prevalence: %s", args.prevalence)
-
-logger.info("\n\n> Source data:")
-logger.info(">>> BED files: %s", args.bed_file)
-
-if args.keep_file is not None:
-    logger.info(">>> Keep samples: %s", args.keep_file)
-if args.extract_file is not None:
-    logger.info(">>> Keep variants: %s", args.extract_file)
-if args.min_maf is not None:
-    logger.info(">>> Minimum allele frequency: %s", args.min_maf)
-if args.min_mac is not None:
-    logger.info(">>> Minimum allele count: %s", args.min_mac)
-
-logger.info("\n\n> Output:")
-logger.info(">>> Temporary directory: %s", args.temp_dir)
-logger.info(">>> Output file: %s", args.output_file)
+logger.info(
+    "%s",
+    format_cli_block(
+        "Phenotype simulation request", format_run_summary(args, bed_file, pi, d)
+    ),
+)
 
 # ------------------------------------------------------
 
@@ -262,7 +300,7 @@ gs = PhenotypeSimulator(
     temp_dir=args.temp_dir,
 )
 
-logger.info("> Simulating phenotype...")
+logger.info("Simulating phenotype...")
 gs.simulate(reset_beta=True, perform_gwas=False)
 pheno_table = gs.to_phenotype_table()
 
@@ -277,10 +315,17 @@ if args.output_sim_beta:
 
 gs.cleanup()
 
-logger.info("Done!")
-logger.info("> Output file(s):\n\t%s", args.output_file + ".SimPheno")
+output_files = [args.output_file + ".SimPheno"]
 if args.output_sim_beta:
-    logger.info("\t%s", args.output_file + ".SimEffect")
+    output_files.append(args.output_file + ".SimEffect")
 # Record the end time:
 end_time = time.time()
-logger.info("Total runtime: %s", timedelta(seconds=end_time - start_time))
+logger.info(
+    "Phenotype simulation finished\n%s",
+    format_rows(
+        [
+            ("Output files", ", ".join(output_files)),
+            ("Total runtime", timedelta(seconds=end_time - start_time)),
+        ]
+    ),
+)

@@ -7,6 +7,9 @@ from scipy.sparse import csr_matrix
 import magenpy as mgp
 
 
+LD_OUTPUT_DIR = "output"
+
+
 def _basic_ld_checks(gdl: mgp.GWADataLoader):
     """
     Perform basic checks on the computed  LD matrix, such as its dimensions,
@@ -48,7 +51,7 @@ def gdl_object():
     # Clean up after tests are done:
     gdl.cleanup()
     shutil.rmtree(gdl.temp_dir)
-    shutil.rmtree(gdl.output_dir)
+    shutil.rmtree(LD_OUTPUT_DIR)
 
 
 @pytest.fixture(scope="module")
@@ -57,7 +60,7 @@ def sample_ld(gdl_object: mgp.GWADataLoader):
     Test the LD computation functionality according to the Sample estimator
     """
 
-    gdl_object.compute_ld("sample", gdl_object.output_dir)
+    gdl_object.compute_ld("sample", LD_OUTPUT_DIR)
     gdl_object.harmonize_data()
 
     _basic_ld_checks(gdl_object)
@@ -73,7 +76,7 @@ def windowed_ld(gdl_object: mgp.GWADataLoader):
 
     gdl_object.compute_ld(
         "windowed",
-        gdl_object.output_dir,
+        LD_OUTPUT_DIR,
         compute_spectral_properties=True,
         window_size=500,
         kb_window_size=100,
@@ -94,7 +97,7 @@ def shrinkage_ld(gdl_object: mgp.GWADataLoader):
 
     gdl_object.compute_ld(
         "shrinkage",
-        gdl_object.output_dir,
+        LD_OUTPUT_DIR,
         genetic_map_ne=11400,
         genetic_map_sample_size=183,
     )
@@ -115,7 +118,7 @@ def block_ld(gdl_object: mgp.GWADataLoader):
         "https://bitbucket.org/nygcresearch/ldetect-data/raw/"
         "ac125e47bf7ff3e90be31f278a7b6a61daaba0dc/EUR/fourier_ls-all.bed"
     )
-    gdl_object.compute_ld("block", gdl_object.output_dir, ld_blocks_file=ld_block_url)
+    gdl_object.compute_ld("block", LD_OUTPUT_DIR, ld_blocks_file=ld_block_url)
     gdl_object.harmonize_data()
 
     _basic_ld_checks(gdl_object)

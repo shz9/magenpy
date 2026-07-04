@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "magenpy"
-version = "0.2.0"
+version = "0.2.1"
 description = "Modeling and Analysis of Statistical Genetics data in python"
 readme = "README.md"
 requires-python = ">=3.10"

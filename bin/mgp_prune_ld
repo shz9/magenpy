@@ -14,9 +14,56 @@ import pandas as pd
 
 import magenpy as mgp
 from magenpy.parsers.misc_parsers import read_snp_filter_file
-from magenpy.utils.system_utils import setup_logger
+from magenpy.utils.bin_utils import (
+    format_cli_block,
+    format_rows,
+    format_sections,
+    print_cli_logo,
+    setup_cli_logger,
+)
 
 logger = logging.getLogger("magenpy.cli.mgp_prune_ld")
+
+LOGO_DESCRIPTION = "< Prune variants using pre-computed LD matrices >"
+
+
+def format_run_summary(args):
+    """
+    Build a compact summary of the requested LD pruning operation.
+
+    :param args: Parsed command-line arguments.
+    :return: A formatted multi-line string.
+    """
+    if args.sumstats_file is not None:
+        input_rows = [
+            ("Input type", "summary statistics"),
+            ("Sumstats file", args.sumstats_file),
+            ("Sumstats format", args.sumstats_format),
+            ("Rank column", args.rank_column or "auto p-value"),
+        ]
+    else:
+        input_rows = [
+            ("Input type", "variant table"),
+            ("Variants file", args.variants_file),
+            ("SNP column", args.snp_column),
+            ("Rank column", args.rank_column),
+            ("Rank descending", args.rank_descending),
+        ]
+
+    sections = [
+        ("LD source", [("LD path", args.ld_path)]),
+        ("Variant input", input_rows),
+        (
+            "Pruning",
+            [
+                ("R2 threshold", args.r2_threshold),
+                ("Correlation threshold", float(np.sqrt(args.r2_threshold))),
+            ],
+        ),
+        ("Output", [("Output file", args.output_file)]),
+    ]
+
+    return format_sections(sections)
 
 
 def read_variant_table(path, snp_column=0, rank_column=None):
@@ -125,6 +172,16 @@ def get_ranked_file_snps(gdl, variant_table, rank_descending=False):
     return ranked
 
 
+def count_ranked_variants(ranked_by_chrom):
+    """
+    Count variants matched to LD matrices across chromosomes.
+
+    :param ranked_by_chrom: Dictionary mapping chromosomes to ordered SNP IDs.
+    :return: Number of matched variants.
+    """
+    return sum(len(snps) for snps in ranked_by_chrom.values())
+
+
 def prune_chromosome(ld_mat, ordered_snps, corr_threshold):
     """
     Prune one LD matrix in the requested SNP priority order.
@@ -203,31 +260,42 @@ def main():
     """
     Parse CLI inputs, LD-prune requested variants, and write retained SNP IDs.
     """
-
-    logo = mgp.make_ascii_logo(
-        desc="< Prune variants using pre-computed LD matrices >",
-        left_padding=10,
-    )
-    print(f"\n{logo}\n", flush=True)
-
+    print_cli_logo(mgp, LOGO_DESCRIPTION)
     args = parse_args()
-    setup_logger(modules=["magenpy"], log_level=args.log_level)
+    setup_cli_logger(logger, args.log_level)
 
     if (args.sumstats_file is None) == (args.variants_file is None):
         raise ValueError("Specify exactly one of --sumstats-file or --variants-file.")
     if not 0.0 < args.r2_threshold <= 1.0:
         raise ValueError("--r2-threshold must be in (0, 1].")
 
+    logger.info(
+        "%s",
+        format_cli_block("LD pruning request", format_run_summary(args)),
+    )
+
     gdl = make_data_loader(args)
     if args.sumstats_file is not None:
         if gdl.sumstats_table is None or len(gdl.sumstats_table) < 1:
             raise ValueError("No summary statistics remained after LD harmonization.")
         ranked_by_chrom = get_ranked_sumstats_snps(gdl, args.rank_column)
+        logger.info(
+            "Matched %s harmonized summary-statistic variants to %s LD matrices before pruning.",
+            count_ranked_variants(ranked_by_chrom),
+            len(ranked_by_chrom),
+        )
     else:
         variant_table = read_variant_table(
             args.variants_file, args.snp_column, args.rank_column
         )
+        n_requested = variant_table["SNP"].drop_duplicates().shape[0]
         ranked_by_chrom = get_ranked_file_snps(gdl, variant_table, args.rank_descending)
+        logger.info(
+            "Matched %s of %s input variants to %s LD matrices before pruning.",
+            count_ranked_variants(ranked_by_chrom),
+            n_requested,
+            len(ranked_by_chrom),
+        )
 
     corr_threshold = float(np.sqrt(args.r2_threshold))
     pruned = []
@@ -237,7 +305,15 @@ def main():
         )
 
     write_variants(pruned, args.output_file)
-    logger.info("Wrote %s pruned variants to %s", len(pruned), args.output_file)
+    logger.info(
+        "LD pruning completed.\n%s",
+        format_rows(
+            [
+                ("Variants retained", len(pruned)),
+                ("Output file", args.output_file),
+            ]
+        ),
+    )
 
 
 if __name__ == "__main__":

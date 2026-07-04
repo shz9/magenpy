@@ -19,7 +19,6 @@ def gsim_object():
     # Clean up after tests are done:
     gsim.cleanup()
     shutil.rmtree(gsim.temp_dir)
-    shutil.rmtree(gsim.output_dir)
 
 
 def test_simulator(gsim_object):

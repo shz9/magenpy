@@ -17,9 +17,53 @@ from scipy.sparse import block_diag
 import magenpy as mgp
 from magenpy.parsers.annotation_parsers import parse_annotation_bed_file
 from magenpy.parsers.misc_parsers import read_snp_filter_file
-from magenpy.utils.system_utils import setup_logger
+from magenpy.utils.bin_utils import (
+    format_cli_block,
+    format_rows,
+    format_sections,
+    print_cli_logo,
+    setup_cli_logger,
+)
 
 logger = logging.getLogger("magenpy.cli.mgp_extract_ld")
+
+LOGO_DESCRIPTION = "< Extract LD blocks from pre-computed LD matrices >"
+
+
+def format_run_summary(args, selector_label, selector_count=None):
+    """
+    Build a compact summary of the requested LD extraction.
+
+    :param args: Parsed command-line arguments.
+    :param selector_label: Human-readable label for the selected variant source.
+    :param selector_count: Optional count of requested SNPs or ranges.
+    :return: A formatted multi-line string.
+    """
+    sections = [
+        (
+            "LD source",
+            [
+                ("LD path", args.ld_path),
+            ],
+        ),
+        (
+            "Selector",
+            [
+                ("Type", selector_label),
+                ("Count", selector_count),
+                ("SNP column", args.snp_column if args.snp_file is not None else None),
+            ],
+        ),
+        (
+            "Output",
+            [
+                ("Output file", args.output_file),
+                ("Output format", output_format(args)),
+            ],
+        ),
+    ]
+
+    return format_sections(sections)
 
 
 def read_snp_file(path, column=0):
@@ -73,6 +117,16 @@ def make_data_loader(args, extract_snps=None):
     if gdl.ld is None or len(gdl.ld) < 1:
         raise FileNotFoundError(f"No LD matrices were found at: {args.ld_path}")
     return gdl
+
+
+def count_ld_variants(gdl):
+    """
+    Count variants currently retained across loaded LD matrices.
+
+    :param gdl: A ``GWADataLoader`` object with LD matrices.
+    :return: The total number of retained LD variants.
+    """
+    return sum(ld_mat.n_snps for ld_mat in gdl.ld.values())
 
 
 def selected_snps_from_ranges(gdl, ranges):
@@ -205,15 +259,9 @@ def main():
     """
     Parse CLI inputs, extract requested LD entries, and write the output matrix.
     """
-
-    logo = mgp.make_ascii_logo(
-        desc="< Extract LD blocks from pre-computed LD matrices >",
-        left_padding=10,
-    )
-    print(f"\n{logo}\n", flush=True)
-
+    print_cli_logo(mgp, LOGO_DESCRIPTION)
     args = parse_args()
-    setup_logger(modules=["magenpy"], log_level=args.log_level)
+    setup_cli_logger(logger, args.log_level)
 
     selectors = [
         args.snps is not None,
@@ -229,16 +277,41 @@ def main():
 
     if args.snps is not None:
         extract_snps = [s.strip() for s in args.snps.split(",") if s.strip()]
+        logger.info(
+            "%s",
+            format_cli_block(
+                "LD extraction request",
+                format_run_summary(args, "comma-separated SNP IDs", len(extract_snps)),
+            ),
+        )
         gdl = make_data_loader(args, extract_snps=extract_snps)
+        logger.info(
+            "Matched %s of %s requested variants to LD matrices before extraction.",
+            count_ld_variants(gdl),
+            len(extract_snps),
+        )
     elif args.snp_file is not None:
         extract_snps = read_snp_file(args.snp_file, column=args.snp_column)
+        logger.info(
+            "%s",
+            format_cli_block(
+                "LD extraction request",
+                format_run_summary(args, "SNP filter file", len(extract_snps)),
+            ),
+        )
         gdl = make_data_loader(args, extract_snps=extract_snps)
+        logger.info(
+            "Matched %s of %s requested variants to LD matrices before extraction.",
+            count_ld_variants(gdl),
+            len(extract_snps),
+        )
     else:
-        gdl = make_data_loader(args)
         if args.bed_file is not None:
             ranges = read_bed_file(args.bed_file)
+            selector_label = "BED range file"
         elif args.region is not None:
             ranges = parse_regions(args.region)
+            selector_label = "genomic region list"
         else:
             if args.chromosome is None or args.start is None or args.end is None:
                 raise ValueError(
@@ -247,12 +320,27 @@ def main():
             ranges = pd.DataFrame(
                 {"CHR": [args.chromosome], "Start": [args.start], "End": [args.end]}
             )
+            selector_label = "chromosome and BP range"
 
+        logger.info(
+            "%s",
+            format_cli_block(
+                "LD extraction request",
+                format_run_summary(args, selector_label, len(ranges)),
+            ),
+        )
+        gdl = make_data_loader(args)
         selected_by_chrom = selected_snps_from_ranges(gdl, ranges)
         if not selected_by_chrom:
             raise ValueError(
                 "No variants in the LD matrices overlapped the requested range(s)."
             )
+        selected_count = sum(len(snps) for snps in selected_by_chrom.values())
+        logger.info(
+            "Matched %s variants across %s LD matrices before extraction.",
+            selected_count,
+            len(selected_by_chrom),
+        )
         for chrom in list(gdl.ld.keys()):
             if chrom in selected_by_chrom:
                 gdl.ld[chrom].filter_snps(extract_snps=selected_by_chrom[chrom])
