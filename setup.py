@@ -244,6 +244,9 @@ with open("requirements.txt") as fp:
 with open("requirements-optional.txt") as fp:
     opt_requires = fp.read().strip().split("\n")
 
+with open("requirements-cloud.txt") as fp:
+    cloud_requires = fp.read().strip().split("\n")
+
 with open("requirements-test.txt") as fp:
     test_requires = fp.read().strip().split("\n")
 
@@ -295,7 +298,13 @@ setup(
         "bin/mgp_expand_ld",
     ],
     install_requires=install_requires,
-    extras_require={"opt": opt_requires, "test": test_requires, "docs": docs_requires},
+    extras_require={
+        "cloud": cloud_requires,
+        "opt": opt_requires,
+        "profiling": ["psutil"],
+        "test": test_requires,
+        "docs": docs_requires,
+    },
     ext_modules=extensions,
     zip_safe=False,
 )

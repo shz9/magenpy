@@ -2,9 +2,21 @@ import os
 import os.path as osp
 import subprocess
 import glob
-import psutil
 import time
 import threading
+
+
+def _require_psutil():
+    """Import psutil for utilities that need process-level information."""
+    try:
+        import psutil
+    except ImportError as exc:
+        raise ImportError(
+            "This feature requires the optional 'psutil' dependency. "
+            "Install it with `pip install \"magenpy[profiling]\"`."
+        ) from exc
+
+    return psutil
 
 
 class PeakMemoryProfiler:
@@ -40,7 +52,7 @@ class PeakMemoryProfiler:
         :param include_children: Whether to include memory usage from child processes. Defaults to True.
         :param unit: The unit in which to report memory usage. Options are 'bytes', 'MB', or 'GB'. Defaults to 'MB'.
         """
-        self.pid = pid or psutil.Process().pid  # Default to current process if no PID is provided
+        self.pid = pid or os.getpid()  # Default to current process if no PID is provided
         self.interval = interval
         self.include_children = include_children
         self.unit = unit
@@ -54,7 +66,8 @@ class PeakMemoryProfiler:
 
         :return: Returns the instance of PeakMemoryProfiler, so that we can access peak memory later.
         """
-        self.process = psutil.Process(self.pid)
+        self._psutil = _require_psutil()
+        self.process = self._psutil.Process(self.pid)
         self.max_memory = 0
         self._stop_monitoring.clear()  # Clear the stop flag to begin monitoring
         self.monitoring_thread = threading.Thread(target=self._monitor_memory)
@@ -87,7 +100,7 @@ class PeakMemoryProfiler:
             for child in self.process.children(recursive=True):
                 try:
                     memory += child.memory_info().rss
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                except (self._psutil.NoSuchProcess, self._psutil.AccessDenied):
                     continue
 
         if self.unit == "MB":
@@ -112,7 +125,7 @@ class PeakMemoryProfiler:
                 # Update max memory if a new peak is found
                 self.max_memory = max(self.max_memory, curr_memory)
                 time.sleep(self.interval)
-            except psutil.NoSuchProcess:
+            except self._psutil.NoSuchProcess:
                 break  # Process no longer exists, stop monitoring
 
     def get_peak_memory(self):
@@ -129,13 +142,15 @@ def available_cpu():
     """
     :return: The number of available cores on the system minus 1.
     """
-    return psutil.cpu_count() - 1
+    cpu_count = os.cpu_count()
+    return cpu_count - 1 if cpu_count is not None else 0
 
 
 def get_memory_usage():
     """
     :return: The current memory usage of the running process in Mega Bytes (MB)
     """
+    psutil = _require_psutil()
     process = psutil.Process(os.getpid())
     mem_info = process.memory_info()
     return mem_info.rss / (1024 ** 2)
@@ -226,7 +241,14 @@ def glob_s3_path(path):
     :return: A list of strings with the full paths of the files/folders.
     """
 
-    import s3fs
+    try:
+        import s3fs
+    except ImportError as exc:
+        raise ImportError(
+            "AWS S3 support requires the optional 's3fs' dependency. "
+            "Install it with `pip install \"magenpy[cloud]\"`."
+        ) from exc
+
     s3 = s3fs.S3FileSystem(anon=True)
 
     return s3.glob(path)
@@ -237,7 +259,13 @@ def glob_hf_path(path):
     Get the list of files/folders in the provided Hugging Face path. This works with wildcards.
     """
 
-    from huggingface_hub import HfFileSystem
+    try:
+        from huggingface_hub import HfFileSystem
+    except ImportError as exc:
+        raise ImportError(
+            "Hugging Face support requires the optional 'huggingface_hub' "
+            "dependency. Install it with `pip install \"magenpy[cloud]\"`."
+        ) from exc
 
     hf_prefix = "hf://"
     path = path.replace(hf_prefix, "", 1)

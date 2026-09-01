@@ -38,7 +38,6 @@ dependencies = [
     "scipy<1.17",
     "joblib",
     "pandas",
-    "psutil",
     "tqdm",
     "zarr<3",
 ]
@@ -48,8 +47,13 @@ opt = [
     "matplotlib",
     "seaborn",
     "statsmodels",
+]
+cloud = [
     "huggingface_hub",
     "s3fs",
+]
+profiling = [
+    "psutil",
 ]
 test = [
     "pytest",

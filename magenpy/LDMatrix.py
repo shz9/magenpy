@@ -154,7 +154,8 @@ class LDMatrix(object):
         :param cache_size: The size of the cache for the Zarr store (in bytes). Default is 16MB.
 
         .. note::
-            Requires installing the `s3fs` package to access the Zarr store on AWS s3.
+            Requires installing the `cloud` extra to access the Zarr store on AWS s3:
+            `pip install "magenpy[cloud]"`.
 
         !!! seealso "See Also"
             * [from_path][magenpy.LDMatrix.LDMatrix.from_path]
@@ -163,7 +164,13 @@ class LDMatrix(object):
         :return: An `LDMatrix` object.
         """
 
-        import s3fs
+        try:
+            import s3fs
+        except ImportError as exc:
+            raise ImportError(
+                "AWS S3 support requires the optional 's3fs' dependency. "
+                "Install it with `pip install \"magenpy[cloud]\"`."
+            ) from exc
 
         s3 = s3fs.S3FileSystem(anon=True, client_kwargs=dict(region_name="us-east-2"))
         store = s3fs.S3Map(root=s3_path.replace("s3://", ""), s3=s3, check=False)
@@ -178,6 +185,14 @@ class LDMatrix(object):
         """
         Initialize an `LDMatrix` object from a Zarr store hosted on Hugging Face.
         """
+
+        try:
+            import huggingface_hub  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                "Hugging Face support requires the optional 'huggingface_hub' "
+                "dependency. Install it with `pip install \"magenpy[cloud]\"`."
+            ) from exc
 
         import fsspec
 

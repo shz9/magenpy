@@ -1106,7 +1106,7 @@ wheels = [
 
 [[package]]
 name = "magenpy"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "joblib" },
@@ -1115,7 +1115,6 @@ dependencies = [
     { name = "numpy", version = "2.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "psutil" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "tqdm" },
@@ -1124,6 +1123,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+cloud = [
+    { name = "huggingface-hub" },
+    { name = "s3fs" },
+]
 docs = [
     { name = "mkdocs" },
     { name = "mkdocs-material" },
@@ -1131,12 +1134,13 @@ docs = [
     { name = "mkdocstrings-python" },
 ]
 opt = [
-    { name = "huggingface-hub" },
     { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "matplotlib", version = "3.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "s3fs" },
     { name = "seaborn" },
     { name = "statsmodels" },
+]
+profiling = [
+    { name = "psutil" },
 ]
 test = [
     { name = "pytest" },
@@ -1144,7 +1148,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "huggingface-hub", marker = "extra == 'opt'" },
+    { name = "huggingface-hub", marker = "extra == 'cloud'" },
     { name = "joblib" },
     { name = "matplotlib", marker = "extra == 'opt'" },
     { name = "mkdocs", marker = "extra == 'docs'" },
@@ -1153,16 +1157,16 @@ requires-dist = [
     { name = "mkdocstrings-python", marker = "extra == 'docs'" },
     { name = "numpy", specifier = ">=2,<3" },
     { name = "pandas" },
-    { name = "psutil" },
+    { name = "psutil", marker = "extra == 'profiling'" },
     { name = "pytest", marker = "extra == 'test'" },
-    { name = "s3fs", marker = "extra == 'opt'" },
+    { name = "s3fs", marker = "extra == 'cloud'" },
     { name = "scipy", specifier = "<1.17" },
     { name = "seaborn", marker = "extra == 'opt'" },
     { name = "statsmodels", marker = "extra == 'opt'" },
     { name = "tqdm" },
     { name = "zarr", specifier = "<3" },
 ]
-provides-extras = ["opt", "test", "docs"]
+provides-extras = ["opt", "cloud", "profiling", "test", "docs"]
 
 [[package]]
 name = "markdown"

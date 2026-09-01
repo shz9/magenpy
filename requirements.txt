@@ -2,6 +2,5 @@ numpy>=2,<3
 scipy<1.17
 joblib
 pandas
-psutil
 tqdm
 zarr<3

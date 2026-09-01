@@ -36,6 +36,18 @@ The package is available for easy installation via the Python Package Index (`py
 python -m pip install magenpy
 ```
 
+The process memory profiling utilities require the optional `psutil` dependency. Install it with:
+
+```bash
+python -m pip install "magenpy[profiling]"
+```
+
+Accessing LD stores on AWS S3 or Hugging Face requires the cloud dependencies. Install them with:
+
+```bash
+python -m pip install "magenpy[cloud]"
+```
+
 ### Using `uv`
 
 If you use [`uv`](https://docs.astral.sh/uv/) to manage Python environments, you can install `magenpy` into the

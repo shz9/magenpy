@@ -1,5 +1,3 @@
 matplotlib
 seaborn
 statsmodels
-huggingface_hub
-s3fs
