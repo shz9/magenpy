@@ -49,6 +49,7 @@ opt = [
     "statsmodels",
 ]
 cloud = [
+    "gcsfs",
     "huggingface_hub",
     "s3fs",
 ]

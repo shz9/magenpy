@@ -184,7 +184,10 @@ class AnnotationMatrix(object):
 
         arr_idx = intersect_arrays(self.snps, extract_snps, return_index=True)
 
-        self.table = self.table.iloc[arr_idx, :].reset_index()
+        # Taking a copy consolidates potentially fragmented annotation columns.
+        # ``drop=True`` avoids inserting the old index as an extra column, which
+        # can itself trigger a PerformanceWarning on wide, fragmented frames.
+        self.table = self.table.iloc[arr_idx, :].copy().reset_index(drop=True)
 
     def filter_annotations(self, keep_annotations):
         """

@@ -42,7 +42,7 @@ The process memory profiling utilities require the optional `psutil` dependency.
 python -m pip install "magenpy[profiling]"
 ```
 
-Accessing LD stores on AWS S3 or Hugging Face requires the cloud dependencies. Install them with:
+Accessing LD stores on AWS S3, Google Cloud Storage, or Hugging Face requires the cloud dependencies. Install them with:
 
 ```bash
 python -m pip install "magenpy[cloud]"

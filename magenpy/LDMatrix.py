@@ -23,6 +23,8 @@ class LDMatrix(object):
     * Initialize an `LDMatrix` object from plink's LD table files.
     * Initialize an `LDMatrix` object from a sparse CSR matrix.
     * Initialize an `LDMatrix` object from a Zarr array store.
+    * Read Zarr stores from local filesystems, AWS S3, Google Cloud Storage,
+      or Hugging Face.
     * Compute LD scores for each SNP in the LD matrix.
     * Filter the LD matrix based on SNP indices or ranges.
     * Perform linear algebra operations on LD matrices, including SVD, estimating extremal eigenvalues,
@@ -120,7 +122,7 @@ class LDMatrix(object):
     def from_path(cls, ld_store_path, cache_size=None, store_type=None):
         """
         Initialize an `LDMatrix` object from a pre-computed Zarr group store. This is a genetic method
-        that can work with both cloud-based stores (e.g. s3 storage) or local filesystems.
+        that can work with both cloud-based stores (e.g. S3 or Google Cloud Storage) and local filesystems.
 
         :param ld_store_path: The path to the Zarr array store.
         :param cache_size: The size of the cache for the Zarr store (in bytes). Default is `None` (no caching).
@@ -129,6 +131,7 @@ class LDMatrix(object):
         !!! seealso "See Also"
             * [from_directory][magenpy.LDMatrix.LDMatrix.from_directory]
             * [from_s3][magenpy.LDMatrix.LDMatrix.from_s3]
+            * [from_gcs][magenpy.LDMatrix.LDMatrix.from_gcs]
 
         :return: An `LDMatrix` object.
         """
@@ -139,6 +142,8 @@ class LDMatrix(object):
             return cls.from_hf(ld_store_path, cache_size)
         elif "s3://" in ld_store_path:
             return cls.from_s3(ld_store_path, cache_size)
+        elif ld_store_path.startswith(("gs://", "gcs://")):
+            return cls.from_gcs(ld_store_path, cache_size)
         elif store_type == "zip" or str(ld_store_path).lower().endswith(".zip"):
             return cls.from_zip(ld_store_path, cache_size)
         else:
@@ -174,6 +179,53 @@ class LDMatrix(object):
 
         s3 = s3fs.S3FileSystem(anon=True, client_kwargs=dict(region_name="us-east-2"))
         store = s3fs.S3Map(root=s3_path.replace("s3://", ""), s3=s3, check=False)
+        if cache_size is not None:
+            store = zarr.LRUStoreCache(store, max_size=cache_size)
+        ld_group = zarr.open_group(store=store, mode="r")
+
+        return cls(ld_group)
+
+    @classmethod
+    def from_gcs(cls, gcs_path, cache_size=None, token=None, **gcs_kwargs):
+        """
+        Initialize an `LDMatrix` object from a Zarr group store hosted on
+        Google Cloud Storage.
+
+        :param gcs_path: The path to the Zarr group store on Google Cloud
+        Storage. Paths may use either the `gs://` or `gcs://` protocol.
+        :param cache_size: The size of the cache for the Zarr store (in bytes).
+        Default is `None` (no caching).
+        :param token: Authentication token accepted by `gcsfs`. When omitted,
+        `gcsfs` discovers available credentials and falls back to anonymous
+        access for public buckets.
+        :param gcs_kwargs: Additional arguments passed to
+        `gcsfs.GCSFileSystem`, such as `project` or `requester_pays`.
+
+        .. note::
+            Requires installing the `cloud` extra to access Google Cloud
+            Storage: `pip install "magenpy[cloud]"`.
+
+        !!! seealso "See Also"
+            * [from_path][magenpy.LDMatrix.LDMatrix.from_path]
+            * [from_s3][magenpy.LDMatrix.LDMatrix.from_s3]
+            * [from_directory][magenpy.LDMatrix.LDMatrix.from_directory]
+
+        :return: An `LDMatrix` object.
+        """
+
+        try:
+            import gcsfs
+        except ImportError as exc:
+            raise ImportError(
+                "Google Cloud Storage support requires the optional 'gcsfs' "
+                "dependency. Install it with `pip install \"magenpy[cloud]\"`."
+            ) from exc
+
+        if token is not None:
+            gcs_kwargs["token"] = token
+
+        gcs = gcsfs.GCSFileSystem(**gcs_kwargs)
+        store = gcs.get_mapper(gcs_path, check=False)
         if cache_size is not None:
             store = zarr.LRUStoreCache(store, max_size=cache_size)
         ld_group = zarr.open_group(store=store, mode="r")

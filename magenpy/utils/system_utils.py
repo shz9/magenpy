@@ -138,6 +138,23 @@ class PeakMemoryProfiler:
         return self.max_memory
 
 
+def fits_in_memory(alloc_size, max_prop=.9):
+    """
+    Check whether there's enough memory resources to load an object
+    with the given allocation size (in MB).
+    :param alloc_size: The allocation size
+    :param max_prop: The maximum proportion of available memory allowed for the object
+    """
+
+    psutil = _require_psutil()
+    avail_mem = psutil.virtual_memory().available / (1024.0 ** 2)
+
+    if alloc_size / avail_mem > max_prop:
+        return False
+    else:
+        return True
+
+
 def available_cpu():
     """
     :return: The number of available cores on the system minus 1.
