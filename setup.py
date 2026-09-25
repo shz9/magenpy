@@ -244,8 +244,12 @@ with open("requirements.txt") as fp:
 with open("requirements-optional.txt") as fp:
     opt_requires = fp.read().strip().split("\n")
 
-with open("requirements-cloud.txt") as fp:
-    cloud_requires = fp.read().strip().split("\n")
+cloud_requires = {
+    "http": ["fsspec[http]"],
+    "s3": ["s3fs"],
+    "gcs": ["gcsfs"],
+    "hf": ["huggingface_hub"],
+}
 
 with open("requirements-test.txt") as fp:
     test_requires = fp.read().strip().split("\n")
@@ -299,7 +303,12 @@ setup(
     ],
     install_requires=install_requires,
     extras_require={
-        "cloud": cloud_requires,
+        **cloud_requires,
+        "cloud": [
+            dependency
+            for dependencies in cloud_requires.values()
+            for dependency in dependencies
+        ],
         "opt": opt_requires,
         "profiling": ["psutil"],
         "test": test_requires,

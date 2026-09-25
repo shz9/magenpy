@@ -42,7 +42,18 @@ The process memory profiling utilities require the optional `psutil` dependency.
 python -m pip install "magenpy[profiling]"
 ```
 
-Accessing LD stores on AWS S3, Google Cloud Storage, or Hugging Face requires the cloud dependencies. Install them with:
+Cloud storage support is split into backend-specific extras, so you only need
+to install the dependencies for the services you use:
+
+```bash
+python -m pip install "magenpy[http]"  # HTTP(S)
+python -m pip install "magenpy[s3]"    # AWS S3
+python -m pip install "magenpy[gcs]"   # Google Cloud Storage
+python -m pip install "magenpy[hf]"    # Hugging Face
+```
+
+Extras can be combined, for example `python -m pip install "magenpy[s3,gcs]"`.
+To install support for every cloud backend, use the aggregate `cloud` extra:
 
 ```bash
 python -m pip install "magenpy[cloud]"

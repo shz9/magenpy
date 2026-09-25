@@ -263,7 +263,7 @@ def glob_s3_path(path):
     except ImportError as exc:
         raise ImportError(
             "AWS S3 support requires the optional 's3fs' dependency. "
-            "Install it with `pip install \"magenpy[cloud]\"`."
+            "Install it with `pip install \"magenpy[s3]\"`."
         ) from exc
 
     s3 = s3fs.S3FileSystem(anon=True)
@@ -281,7 +281,7 @@ def glob_hf_path(path):
     except ImportError as exc:
         raise ImportError(
             "Hugging Face support requires the optional 'huggingface_hub' "
-            "dependency. Install it with `pip install \"magenpy[cloud]\"`."
+            "dependency. Install it with `pip install \"magenpy[hf]\"`."
         ) from exc
 
     hf_prefix = "hf://"

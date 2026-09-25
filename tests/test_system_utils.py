@@ -78,14 +78,14 @@ def test_profiling_utilities_with_psutil():
 
 
 @pytest.mark.parametrize(
-    ("dependency", "cloud_utility", "path"),
+    ("dependency", "extra", "cloud_utility", "path"),
     [
-        ("s3fs", system_utils.glob_s3_path, "s3://bucket/path/*"),
-        ("huggingface_hub", system_utils.glob_hf_path, "hf://repo/path/*"),
+        ("s3fs", "s3", system_utils.glob_s3_path, "s3://bucket/path/*"),
+        ("huggingface_hub", "hf", system_utils.glob_hf_path, "hf://repo/path/*"),
     ],
 )
 def test_cloud_utilities_explain_how_to_install_dependencies(
-    monkeypatch, dependency, cloud_utility, path
+    monkeypatch, dependency, extra, cloud_utility, path
 ):
     real_import = builtins.__import__
 
@@ -96,5 +96,5 @@ def test_cloud_utilities_explain_how_to_install_dependencies(
 
     monkeypatch.setattr(builtins, "__import__", import_without_dependency)
 
-    with pytest.raises(ImportError, match=r"magenpy\[cloud\]"):
+    with pytest.raises(ImportError, match=rf"magenpy\[{extra}\]"):
         cloud_utility(path)

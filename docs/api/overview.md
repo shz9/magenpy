@@ -28,6 +28,10 @@ performing computations on annotation data.
 
 ## Statistics
 
+* [LD/summary-statistics similarity](stats/ld/similarity.md): Relative
+  allele-frequency or LD-likelihood agreement between GWAS summary statistics
+  and candidate LD reference panels.
+
 ## Plotting
 
 * [GWAS plots](plot/gwa.md): Functions for plotting various quantities / results from GWAS studies.

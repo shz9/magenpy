@@ -1,12 +1,25 @@
+from __future__ import annotations
+
+from importlib import import_module
 import os.path as osp
 from typing import Union
 
 import numpy as np
 import pandas as pd
-import zarr
 
-from .LDLinearOperator import LDLinearOperator
 from .utils.model_utils import dequantize, quantize
+
+
+class _LazyZarr:
+    """Load Zarr on first LD store access rather than on package import."""
+
+    def __getattr__(self, name):
+        module = import_module("zarr")
+        globals()["zarr"] = module
+        return getattr(module, name)
+
+
+zarr = _LazyZarr()
 
 
 class LDMatrix(object):
@@ -23,8 +36,8 @@ class LDMatrix(object):
     * Initialize an `LDMatrix` object from plink's LD table files.
     * Initialize an `LDMatrix` object from a sparse CSR matrix.
     * Initialize an `LDMatrix` object from a Zarr array store.
-    * Read Zarr stores from local filesystems, AWS S3, Google Cloud Storage,
-      or Hugging Face.
+    * Read Zarr stores from local filesystems, HTTP(S) URLs, AWS S3,
+      Google Cloud Storage, or Hugging Face.
     * Compute LD scores for each SNP in the LD matrix.
     * Filter the LD matrix based on SNP indices or ranges.
     * Perform linear algebra operations on LD matrices, including SVD, estimating extremal eigenvalues,
@@ -66,12 +79,24 @@ class LDMatrix(object):
         # Checking the input for correct formatting:
         # First, it has to be a Zarr group:
         assert isinstance(zarr_group, zarr.hierarchy.Group)
-        # Second, it has to have a group called `matrix`:
-        assert "matrix" in list(zarr_group.group_keys())
+        # Validate the hierarchy by looking up the required keys directly.
+        # Unlike group_keys()/array_keys(), direct lookups also work with HTTP
+        # servers that expose Zarr objects but do not support directory listing.
+        try:
+            matrix_group = zarr_group["matrix"]
+        except KeyError as exc:
+            raise AssertionError("The Zarr group must contain a 'matrix' group.") from exc
 
-        # Third, all the sparse array keys must be present:
-        arr_keys = list(zarr_group["matrix"].array_keys())
-        assert all([arr in arr_keys for arr in ("data", "indptr")])
+        assert isinstance(matrix_group, zarr.hierarchy.Group)
+
+        for arr_name in ("data", "indptr"):
+            try:
+                array = matrix_group[arr_name]
+            except KeyError as exc:
+                raise AssertionError(
+                    f"The Zarr 'matrix' group must contain a '{arr_name}' array."
+                ) from exc
+            assert isinstance(array, zarr.core.Array)
 
         # The Zarr storage hierarchy:
         self._zg: zarr.hierarchy.Group = zarr_group
@@ -130,6 +155,7 @@ class LDMatrix(object):
 
         !!! seealso "See Also"
             * [from_directory][magenpy.LDMatrix.LDMatrix.from_directory]
+            * [from_url][magenpy.LDMatrix.LDMatrix.from_url]
             * [from_s3][magenpy.LDMatrix.LDMatrix.from_s3]
             * [from_gcs][magenpy.LDMatrix.LDMatrix.from_gcs]
 
@@ -144,10 +170,97 @@ class LDMatrix(object):
             return cls.from_s3(ld_store_path, cache_size)
         elif ld_store_path.startswith(("gs://", "gcs://")):
             return cls.from_gcs(ld_store_path, cache_size)
+        elif ld_store_path.startswith(("http://", "https://")):
+            return cls.from_url(ld_store_path, cache_size)
         elif store_type == "zip" or str(ld_store_path).lower().endswith(".zip"):
             return cls.from_zip(ld_store_path, cache_size)
         else:
             return cls.from_directory(ld_store_path, cache_size)
+
+    @classmethod
+    def from_url(
+        cls,
+        url,
+        cache_size=None,
+        consolidated=None,
+        **storage_options,
+    ):
+        """
+        Initialize an `LDMatrix` from a directory-style Zarr store exposed
+        over HTTP or HTTPS.
+
+        The URL must point to the root of the Zarr store, so that metadata and
+        chunk keys can be fetched by appending their paths to the URL. For
+        example, a public Hugging Face dataset may use a URL of the form
+        `https://huggingface.co/datasets/<repo>/resolve/main/<path>`, while a
+        GitHub repository should use a raw-content URL rather than a
+        `tree` or `blob` webpage URL.
+
+        Consolidated Zarr metadata is preferred because it avoids directory
+        listing and reduces the number of HTTP requests. When `consolidated`
+        is `None`, consolidated metadata is tried first and the loader falls
+        back to ordinary Zarr metadata if `.zmetadata` is absent.
+
+        :param url: HTTP(S) URL to the root of a Zarr v2 store.
+        :param cache_size: The size of the in-memory cache for the Zarr store
+        (in bytes). Default is `None` (no caching).
+        :param consolidated: If `True`, require consolidated metadata. If
+        `False`, ignore consolidated metadata. If `None`, use it when present
+        and otherwise fall back to ordinary metadata. Default is `None`.
+        :param storage_options: Additional options passed to fsspec's HTTP
+        filesystem, such as `headers` for authenticated URLs.
+
+        .. note::
+            Requires installing the `http` extra:
+            `pip install "magenpy[http]"`.
+
+        !!! seealso "See Also"
+            * [from_path][magenpy.LDMatrix.LDMatrix.from_path]
+            * [from_hf][magenpy.LDMatrix.LDMatrix.from_hf]
+            * [from_s3][magenpy.LDMatrix.LDMatrix.from_s3]
+            * [from_gcs][magenpy.LDMatrix.LDMatrix.from_gcs]
+
+        :return: An `LDMatrix` object.
+        """
+
+        try:
+            import fsspec  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                "HTTP URL support requires the optional 'fsspec' dependency. "
+                "Install it with `pip install \"magenpy[http]\"`."
+            ) from exc
+
+        url = str(url)
+        if not url.startswith(("http://", "https://")):
+            raise ValueError("url must start with 'http://' or 'https://'.")
+
+        try:
+            store = zarr.storage.FSStore(
+                url.rstrip("/"),
+                mode="r",
+                check=False,
+                **storage_options,
+            )
+        except ImportError as exc:
+            raise ImportError(
+                "HTTP URL support requires fsspec's HTTP dependencies. "
+                "Install them with `pip install \"magenpy[http]\"`."
+            ) from exc
+        if cache_size is not None:
+            store = zarr.LRUStoreCache(store, max_size=cache_size)
+
+        if consolidated is True:
+            ld_group = zarr.open_consolidated(store=store, mode="r")
+        elif consolidated is False:
+            ld_group = zarr.open_group(store=store, mode="r")
+        else:
+            try:
+                ld_group = zarr.open_consolidated(store=store, mode="r")
+            except KeyError:
+                ld_group = zarr.open_group(store=store, mode="r")
+
+        return cls(ld_group)
 
     @classmethod
     def from_s3(cls, s3_path, cache_size=None):
@@ -159,8 +272,8 @@ class LDMatrix(object):
         :param cache_size: The size of the cache for the Zarr store (in bytes). Default is 16MB.
 
         .. note::
-            Requires installing the `cloud` extra to access the Zarr store on AWS s3:
-            `pip install "magenpy[cloud]"`.
+            Requires installing the `s3` extra to access the Zarr store on AWS s3:
+            `pip install "magenpy[s3]"`.
 
         !!! seealso "See Also"
             * [from_path][magenpy.LDMatrix.LDMatrix.from_path]
@@ -174,7 +287,7 @@ class LDMatrix(object):
         except ImportError as exc:
             raise ImportError(
                 "AWS S3 support requires the optional 's3fs' dependency. "
-                "Install it with `pip install \"magenpy[cloud]\"`."
+                "Install it with `pip install \"magenpy[s3]\"`."
             ) from exc
 
         s3 = s3fs.S3FileSystem(anon=True, client_kwargs=dict(region_name="us-east-2"))
@@ -202,8 +315,8 @@ class LDMatrix(object):
         `gcsfs.GCSFileSystem`, such as `project` or `requester_pays`.
 
         .. note::
-            Requires installing the `cloud` extra to access Google Cloud
-            Storage: `pip install "magenpy[cloud]"`.
+            Requires installing the `gcs` extra to access Google Cloud
+            Storage: `pip install "magenpy[gcs]"`.
 
         !!! seealso "See Also"
             * [from_path][magenpy.LDMatrix.LDMatrix.from_path]
@@ -218,7 +331,7 @@ class LDMatrix(object):
         except ImportError as exc:
             raise ImportError(
                 "Google Cloud Storage support requires the optional 'gcsfs' "
-                "dependency. Install it with `pip install \"magenpy[cloud]\"`."
+                "dependency. Install it with `pip install \"magenpy[gcs]\"`."
             ) from exc
 
         if token is not None:
@@ -243,7 +356,7 @@ class LDMatrix(object):
         except ImportError as exc:
             raise ImportError(
                 "Hugging Face support requires the optional 'huggingface_hub' "
-                "dependency. Install it with `pip install \"magenpy[cloud]\"`."
+                "dependency. Install it with `pip install \"magenpy[hf]\"`."
             ) from exc
 
         import fsspec
@@ -1260,7 +1373,7 @@ class LDMatrix(object):
 
         # Check that mask is a numpy array:
         if not isinstance(mask, np.ndarray):
-            raise ValueError("Mask must be a numpy array.")
+            raise TypeError("Mask must be a numpy array.")
 
         # Check that mask is either a boolean array or an array of indices:
         if mask.dtype != bool and not np.issubdtype(mask.dtype, np.integer):
@@ -2146,6 +2259,11 @@ class LDMatrix(object):
 
         else:
             # Otherwise, return as a linear operator:
+
+            # Importing scipy.sparse.linalg accounts for a substantial fraction of
+            # magenpy's startup time. Most LDMatrix operations do not need it, so
+            # materialize the operator implementation only when one is requested.
+            from .LDLinearOperator import LDLinearOperator
 
             return LDLinearOperator(
                 indptr, data, leftmost_idx, symmetric=return_symmetric, shape=shape

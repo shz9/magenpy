@@ -10,7 +10,7 @@
 FROM python:3.11-slim-buster
 
 LABEL authors="Shadi Zabad"
-LABEL version="0.1"
+LABEL version="0.2.2"
 LABEL description="Docker image containing all requirements to run the magenpy package in a Jupyter Notebook"
 
 # Install system dependencies

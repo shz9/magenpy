@@ -1,3 +1,0 @@
-gcsfs
-huggingface_hub
-s3fs

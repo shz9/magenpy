@@ -1,4 +1,5 @@
 import warnings
+from collections.abc import Mapping
 
 import numpy as np
 import pandas as pd
@@ -64,6 +65,8 @@ class SumstatsParser(object):
     standard_cols = MAGENPY_SUMSTATS_COLUMNS
     essential_col_groups = DEFAULT_ESSENTIAL_COL_GROUPS
     output_col_name_converter = {}
+    string_columns = ("SNP", "A1", "A2")
+    raw_string_columns = ()
 
     def __init__(self, col_name_converter=None, **read_csv_kwargs):
         """
@@ -84,7 +87,9 @@ class SumstatsParser(object):
                 if len(entry.strip()) > 0
             }
         else:
-            self.col_name_converter = col_name_converter
+            self.col_name_converter = (
+                None if col_name_converter is None else dict(col_name_converter)
+            )
 
         self.read_csv_kwargs = read_csv_kwargs
 
@@ -94,6 +99,47 @@ class SumstatsParser(object):
             and "delimiter" not in self.read_csv_kwargs
         ):
             self.read_csv_kwargs["sep"] = r"\s+"
+
+    def _get_read_csv_kwargs(self):
+        """Return read options with safe identifier and allele dtypes.
+
+        Dtypes supplied by the caller always take precedence. Numeric columns are
+        left to pandas' optimized inference because missing values and format-
+        specific encodings make a universal numeric dtype unsafe.
+        """
+
+        kwargs = self.read_csv_kwargs.copy()
+        user_dtype = kwargs.get("dtype")
+
+        # A scalar dtype is an explicit instruction for every column and should
+        # not be combined with the parser defaults.
+        if user_dtype is not None and not isinstance(user_dtype, Mapping):
+            return kwargs
+
+        dtype = {}
+        converters = self.col_name_converter or {}
+
+        # Files may already use magenpy names, or may use raw names that are
+        # renamed after reading. pandas ignores dtype entries absent from a file.
+        for column in self.string_columns:
+            dtype[column] = str
+        for raw_column, output_column in converters.items():
+            if output_column in self.string_columns:
+                dtype[raw_column] = str
+        for column in self.raw_string_columns:
+            dtype[column] = str
+
+        # pandas converters take precedence over dtype. Remove those defaults to
+        # avoid warnings and unnecessary dtype bookkeeping.
+        for column in (kwargs.get("converters") or {}):
+            dtype.pop(column, None)
+
+        if isinstance(user_dtype, Mapping):
+            dtype.update(user_dtype)
+        if dtype:
+            kwargs["dtype"] = dtype
+
+        return kwargs
 
     @classmethod
     def get_standard_cols(cls):
@@ -166,6 +212,35 @@ class SumstatsParser(object):
         """
         return df.rename(columns=cls.output_col_name_converter)
 
+    def post_process(self, df):
+        """Apply format-specific transformations after reading and renaming."""
+
+        return df
+
+    @staticmethod
+    def _standardize_position_dtype(df):
+        """Store base-pair positions as int32, allowing missing nonessential POS."""
+
+        if "POS" not in df.columns:
+            return df
+
+        position = df["POS"]
+        if pd.api.types.is_integer_dtype(position.dtype):
+            if position.dtype != np.dtype(np.int32):
+                df["POS"] = position.astype(np.int32)
+            return df
+
+        if not pd.api.types.is_numeric_dtype(position.dtype):
+            position = pd.to_numeric(position, errors="raise")
+
+        if position.isna().any():
+            if str(position.dtype) != "Int32":
+                df["POS"] = position.astype("Int32")
+        elif position.dtype != np.dtype(np.int32):
+            df["POS"] = position.astype(np.int32)
+
+        return df
+
     def parse(self, file_name, drop_na=True):
         """
         Parse a summary statistics file.
@@ -175,20 +250,17 @@ class SumstatsParser(object):
         :return: A pandas DataFrame containing the parsed summary statistics.
         """
 
-        df = pd.read_csv(file_name, **self.read_csv_kwargs)
+        df = pd.read_csv(file_name, **self._get_read_csv_kwargs())
 
         if self.col_name_converter is not None:
             df.rename(columns=self.col_name_converter, inplace=True)
 
-        try:
-            df["POS"] = df["POS"].astype(np.int32)
-        except KeyError:
-            pass
+        df = self.post_process(df)
 
         if drop_na:
             df = self.drop_na_from_essential_cols(df)
 
-        return df
+        return self._standardize_position_dtype(df)
 
 
 class Plink2SSParser(SumstatsParser):
@@ -230,6 +302,7 @@ class Plink2SSParser(SumstatsParser):
         "Z": "Z_STAT",
         "PVAL": "P",
     }
+    raw_string_columns = ("REF", "ALT", "ALT1")
 
     def __init__(self, col_name_converter=None, **read_csv_kwargs):
         """
@@ -259,37 +332,30 @@ class Plink2SSParser(SumstatsParser):
             }
         )
 
-    def parse(self, file_name, drop_na=True):
+    def post_process(self, df):
         """
-        Parse a summary statistics file.
-        :param file_name: The path to the summary statistics file.
-        :param drop_na: Drop any entries with missing values.
+        Infer A2 from PLINK's REF/ALT fields when it is not emitted directly.
 
-        :return: A pandas DataFrame containing the parsed summary statistics.
+        :param df: Parsed and renamed PLINK2 summary statistics.
+        :return: The processed DataFrame.
         """
-
-        df = super().parse(file_name, drop_na=False)
 
         if "A2" not in df.columns:
-            try:
-                if "ALT1" in df.columns:
-                    df["A2"] = np.where(df["A1"] == df["ALT1"], df["REF"], df["ALT1"])
-                elif "ALT" in df.columns:
-                    df["A2"] = np.where(df["A1"] == df["ALT"], df["REF"], df["ALT"])
-                else:
-                    warnings.warn(
-                        "The reference allele A2 could not be inferred "
-                        "from the summary statistics file!"
-                    )
-            except KeyError:
+            alt_column = "ALT1" if "ALT1" in df.columns else "ALT"
+            if alt_column in df.columns and all(
+                column in df.columns for column in ("A1", "REF")
+            ):
+                df["A2"] = np.where(
+                    df["A1"] == df[alt_column],
+                    df["REF"],
+                    df[alt_column],
+                )
+            else:
                 warnings.warn(
                     "The reference allele A2 could not be inferred "
                     "from the summary statistics file! Some of the columns needed to infer "
                     "the A2 allele are missing or coded differently than what we expect."
                 )
-
-        if drop_na:
-            df = self.drop_na_from_essential_cols(df)
 
         return df
 
@@ -543,22 +609,15 @@ class SaigeSSParser(SumstatsParser):
             }
         )
 
-    def parse(self, file_name, drop_na=True):
+    def post_process(self, df):
         """
-        Parse the summary statistics file.
-        :param file_name: The path to the summary statistics file.
-        :param drop_na: Drop any entries with missing values.
+        Infer sample size from minor-allele count and frequency.
 
-        :return: A pandas DataFrame containing the parsed summary statistics.
+        :param df: Parsed and renamed SAIGE summary statistics.
+        :return: The processed DataFrame.
         """
 
-        df = super().parse(file_name, drop_na=False)
-
-        # Infer the sample size N
         df["N"] = df["MAC"] / (2.0 * df["MAF"])
-
-        if drop_na:
-            df = self.drop_na_from_essential_cols(df)
 
         return df
 

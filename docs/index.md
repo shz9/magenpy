@@ -31,6 +31,7 @@ The American Journal of Human Genetics, 110(5), 741–761. https://doi.org/10.10
 * [Features and Configurations](features.md)
 * [Command Line Scripts](commandline/overview.md)
 * [Project homepage on `GitHub`](https://github.com/shz9/magenpy)
+* [Linkage disequilibrium (LD) browser](https://shz9.github.io/ld_browser/)
 * [Sister package `viprs`](https://github.com/shz9/viprs)
 
 

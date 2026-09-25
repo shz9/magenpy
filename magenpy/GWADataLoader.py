@@ -6,18 +6,25 @@ from typing import Dict, Union
 
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 
 from .AnnotationMatrix import AnnotationMatrix
 from .GenotypeMatrix import *
 from .LDMatrix import LDMatrix
 from .SampleTable import SampleTable
 from .SumstatsTable import SumstatsTable
-from .utils.compute_utils import intersect_multiple_arrays, iterable
-from .utils.model_utils import match_chromosomes
+from .utils.compute_utils import iterable
+from .utils.model_utils import build_snp_harmonization_plan, match_chromosomes
 from .utils.system_utils import get_filenames, makedir
 
 logger = logging.getLogger(__name__)
+
+
+def tqdm(*args, **kwargs):
+    """Import tqdm only when a progress-producing operation is started."""
+
+    from tqdm import tqdm as _tqdm
+
+    return _tqdm(*args, **kwargs)
 
 
 class GWADataLoader(object):
@@ -571,7 +578,14 @@ class GWADataLoader(object):
                 ss_tab.drop_duplicates()
 
             if "CHR" in ss_tab.table.columns:
-                self.sumstats_table.update(ss_tab.split_by_chromosome())
+                chromosome_values = ss_tab.table["CHR"]
+                chromosomes = chromosome_values.dropna().unique()
+                if len(chromosomes) == 1 and not chromosome_values.isna().any():
+                    # The parsed table is already chromosome-specific and is not
+                    # used after this point, so avoid groupby and a full copy.
+                    self.sumstats_table[chromosomes[0]] = ss_tab
+                else:
+                    self.sumstats_table.update(ss_tab.split_by_chromosome())
             else:
                 if self.genotype is not None:
                     ref_table = {c: g.snps for c, g in self.genotype.items()}
@@ -727,6 +741,11 @@ class GWADataLoader(object):
         set of variants that they operate on as well as the designation of the effect allele for
         each variant.
 
+        Variant metadata is materialized once per source and chromosome. A single
+        harmonization plan then supplies positional indexers for every source, so
+        filtering and allele compatibility do not trigger repeated metadata reads.
+        When LD is present, its stored order defines the canonical variant order.
+
         !!! note
             This method is called automatically during the initialization of the `GWADataLoader` object.
             However, if you read or manipulate the data sources after initialization,
@@ -738,8 +757,16 @@ class GWADataLoader(object):
 
         """
 
-        data_sources = (self.genotype, self.sumstats_table, self.ld, self.annotation)
-        initialized_data_sources = [ds for ds in data_sources if ds is not None]
+        named_data_sources = {
+            "genotype": self.genotype,
+            "sumstats": self.sumstats_table,
+            "ld": self.ld,
+            "annotation": self.annotation,
+        }
+        initialized_data_sources = {
+            name: source for name, source in named_data_sources.items()
+            if source is not None
+        }
 
         # If less than two data sources are present, skip harmonization...
         if len(initialized_data_sources) < 2:
@@ -747,14 +774,14 @@ class GWADataLoader(object):
 
         # Get the chromosomes information from all the data sources:
         chromosomes = list(
-            set.union(*[set(ds.keys()) for ds in initialized_data_sources])
+            set.union(*[set(ds.keys()) for ds in initialized_data_sources.values()])
         )
 
         logger.info("> Harmonizing data...")
 
         for c in tqdm(chromosomes, total=len(chromosomes), desc="Harmonizing data"):
             # Which initialized data sources have information for chromosome `c`
-            miss_chroms = [c not in ds for ds in initialized_data_sources]
+            miss_chroms = [c not in ds for ds in initialized_data_sources.values()]
 
             if sum(miss_chroms) > 0:
                 # If the chromosome data only exists for some data sources but not others, remove the chromosome
@@ -764,42 +791,145 @@ class GWADataLoader(object):
                     f"Chromosome {c} is missing in some data sources. "
                     f"Removing it from all data sources."
                 )
-                for ds in initialized_data_sources:
+                for ds in initialized_data_sources.values():
                     if c in ds:
                         del ds[c]
 
             else:
-                # Find the set of SNPs that are shared across all data sources (exclude missing values):
-                common_snps = intersect_multiple_arrays(
-                    [ds[c].snps for ds in initialized_data_sources]
+                snp_ids = {}
+                alleles = {}
+                ld_original_positions = None
+                ld_current_mask = None
+
+                if self.genotype is not None:
+                    genotype = self.genotype[c]
+                    snp_ids["genotype"] = genotype.snps
+                    alleles["genotype"] = (genotype.a1, genotype.a2)
+
+                if self.sumstats_table is not None:
+                    sumstats = self.sumstats_table[c]
+                    snp_ids["sumstats"] = sumstats.snps
+                    if self.genotype is not None or self.ld is not None:
+                        if not all(
+                            column in sumstats.table.columns
+                            for column in ("A1", "A2")
+                        ):
+                            raise ValueError(
+                                "To harmonize summary statistics, both `A1` and "
+                                "`A2` must be present."
+                            )
+                        alleles["sumstats"] = (sumstats.a1, sumstats.a2)
+
+                if self.ld is not None:
+                    ld = self.ld[c]
+                    stored_snps = ld.get_metadata("snps", apply_mask=False)
+                    ld_current_mask = ld.get_mask()
+                    if ld_current_mask is None:
+                        ld_original_positions = np.arange(len(stored_snps), dtype=np.intp)
+                        snp_ids["ld"] = stored_snps
+                    else:
+                        ld_original_positions = np.flatnonzero(ld_current_mask)
+                        snp_ids["ld"] = stored_snps[ld_original_positions]
+
+                    # LD alleles are only needed when LD is the allele reference.
+                    if self.genotype is None and self.sumstats_table is not None:
+                        stored_a1 = ld.get_metadata("a1", apply_mask=False)
+                        stored_a2 = ld.get_metadata("a2", apply_mask=False)
+                        alleles["ld"] = (
+                            stored_a1[ld_original_positions],
+                            stored_a2[ld_original_positions],
+                        )
+
+                if self.annotation is not None:
+                    snp_ids["annotation"] = self.annotation[c].snps
+
+                # An LD matrix cannot be reordered without permuting its rows and
+                # columns, so its stored order is canonical whenever it is present.
+                # Otherwise retain genotype, summary-statistic, then annotation order.
+                reference = next(
+                    source for source in ("ld", "genotype", "sumstats", "annotation")
+                    if source in snp_ids
                 )
 
-                # If necessary, filter the data sources to only have the common SNPs:
-                for ds in initialized_data_sources:
-                    if ds[c].n_snps != len(common_snps):
-                        ds[c].filter_snps(extract_snps=common_snps)
+                allele_reference = None
+                allele_target = None
+                if "sumstats" in snp_ids:
+                    # TODO: When genotype and LD are both present, reconcile the
+                    # genotype A1/A2 orientation with LD as well. This requires
+                    # deciding how allele flips propagate to genotype dosages and
+                    # LD correlations; for now, as in the legacy implementation,
+                    # only summary statistics are allele-harmonized.
+                    if "genotype" in snp_ids:
+                        allele_reference = "genotype"
+                    elif "ld" in snp_ids:
+                        allele_reference = "ld"
+                    if allele_reference is not None:
+                        allele_target = "sumstats"
 
-                # Harmonize the summary statistics data with either genotype or LD reference.
-                # This procedure checks for flips in the effect allele between data sources.
+                plan = build_snp_harmonization_plan(
+                    snp_ids,
+                    reference=reference,
+                    alleles=alleles,
+                    allele_reference=allele_reference,
+                    allele_target=allele_target,
+                )
+                indexers = plan["indexers"]
+
+                if self.genotype is not None:
+                    indexer = indexers["genotype"]
+                    if not np.array_equal(indexer, np.arange(len(genotype.snp_table))):
+                        genotype.snp_table = (
+                            genotype.snp_table.iloc[indexer]
+                            .copy()
+                            .reset_index(drop=True)
+                        )
+
+                if self.annotation is not None:
+                    annotation = self.annotation[c]
+                    indexer = indexers["annotation"]
+                    if not np.array_equal(indexer, np.arange(len(annotation.table))):
+                        annotation.table = (
+                            annotation.table.iloc[indexer]
+                            .copy()
+                            .reset_index(drop=True)
+                        )
+
                 if self.sumstats_table is not None:
-                    id_cols = self.sumstats_table[c].identifier_cols
+                    indexer = indexers["sumstats"]
+                    sumstats.table = (
+                        sumstats.table.iloc[indexer]
+                        .copy()
+                        .reset_index(drop=True)
+                    )
 
-                    if self.genotype is not None:
-                        self.sumstats_table[c].match(
-                            self.genotype[c].get_snp_table(
-                                col_subset=id_cols + ["A1", "A2"]
-                            )
-                        )
-                    elif self.ld is not None:
-                        self.sumstats_table[c].match(
-                            self.ld[c].to_snp_table(col_subset=id_cols + ["A1", "A2"])
-                        )
+                    if allele_reference is not None:
+                        flip = plan["flip"].astype(int)
+                        if np.any(flip):
+                            multiplier = 1. - 2. * flip
+                            for statistic in ("BETA", "STD_BETA", "Z"):
+                                if statistic in sumstats.table:
+                                    sumstats.table[statistic] = (
+                                        multiplier * sumstats.table[statistic]
+                                    )
+                            if "MAF" in sumstats.table:
+                                sumstats.table["MAF"] = np.abs(
+                                    flip - sumstats.table["MAF"]
+                                )
 
-                    # If during the allele matching process we discover incompatibilities,
-                    # we filter those SNPs:
-                    for ds in initialized_data_sources:
-                        if ds[c].n_snps != self.sumstats_table[c].n_snps:
-                            ds[c].filter_snps(extract_snps=self.sumstats_table[c].snps)
+                        sumstats.table["A1"] = plan["a1"]
+                        sumstats.table["A2"] = plan["a2"]
+
+                if self.ld is not None:
+                    final_ld_positions = ld_original_positions[indexers["ld"]]
+                    final_mask = np.zeros(ld.stored_n_snps, dtype=bool)
+                    final_mask[final_ld_positions] = True
+
+                    if final_mask.all() and ld_current_mask is None:
+                        continue
+                    if ld_current_mask is None or not np.array_equal(
+                        final_mask, ld_current_mask
+                    ):
+                        ld.set_mask(final_mask)
 
     def perform_gwas(self, **gwa_kwargs):
         """
@@ -1168,3 +1298,169 @@ class GWADataLoader(object):
 
         # Release the LD data from memory:
         self.release_ld()
+
+    def summary(self):
+        """Return a table summarizing the loader and its available data sources.
+
+        The summary only inspects metadata already held by the loader. In
+        particular, it does not load LD matrix entries or concatenate variant
+        tables.
+
+        :return: A `pandas.DataFrame` with the main properties of this loader.
+        """
+
+        def source_description(source):
+            if source is None:
+                return "Not loaded"
+            n_chromosomes = len(source)
+            suffix = "chromosome" if n_chromosomes == 1 else "chromosomes"
+            return f"Loaded ({n_chromosomes} {suffix})"
+
+        # All initialized sources should be harmonized, so one non-empty source
+        # is sufficient to determine the common chromosome and variant counts.
+        variant_counts = {}
+        if self.genotype:
+            variant_counts = {c: g.n_snps for c, g in self.genotype.items()}
+        elif self.sumstats_table:
+            variant_counts = {
+                c: sumstats.n_snps for c, sumstats in self.sumstats_table.items()
+            }
+        elif self.ld:
+            variant_counts = {c: ld.n_snps for c, ld in self.ld.items()}
+        elif self.annotation:
+            variant_counts = {
+                c: annotation.shape[0]
+                for c, annotation in self.annotation.items()
+            }
+
+        chromosomes = list(variant_counts)
+        try:
+            chromosomes = sorted(chromosomes)
+        except TypeError:
+            # Mixed chromosome encodings (for example, 22 and "X") are still
+            # valid display values even though Python cannot order them directly.
+            chromosomes = sorted(chromosomes, key=str)
+
+        if self.sample_table is not None:
+            sample_size = self.sample_table.n
+        else:
+            sample_sizes = []
+            if self.sumstats_table:
+                for sumstats in self.sumstats_table.values():
+                    if "N" in sumstats.table.columns and len(sumstats.table):
+                        values = pd.to_numeric(
+                            sumstats.table["N"], errors="coerce"
+                        ).to_numpy(copy=False)
+                        finite_values = values[np.isfinite(values)]
+                        if finite_values.size:
+                            sample_sizes.append(finite_values.max())
+            sample_size = max(sample_sizes) if sample_sizes else "Not available"
+
+        has_phenotype = (
+            self.sample_table is not None
+            and self.sample_table.table is not None
+            and "phenotype" in self.sample_table.table.columns
+        )
+        n_covariates = 0
+        if self.sample_table is not None and self.sample_table.covariates is not None:
+            n_covariates = len(self.sample_table.covariates)
+
+        genome_builds = set()
+        if self.genotype:
+            genome_builds.update(
+                g.genome_build for g in self.genotype.values()
+                if g.genome_build is not None
+            )
+        if self.ld:
+            genome_builds.update(
+                ld.genome_build for ld in self.ld.values()
+                if ld.genome_build is not None
+            )
+        genome_build = (
+            ", ".join(sorted(map(str, genome_builds)))
+            if genome_builds
+            else "Not specified"
+        )
+
+        ld_description = source_description(self.ld)
+        if self.ld is not None:
+            n_loaded = sum(ld.in_memory for ld in self.ld.values())
+            ld_description += f"; {n_loaded}/{len(self.ld)} in memory"
+
+        annotation_description = source_description(self.annotation)
+        if self.annotation:
+            annotation_counts = {
+                annotation.n_annotations for annotation in self.annotation.values()
+            }
+            if len(annotation_counts) == 1:
+                annotation_description += f"; {annotation_counts.pop()} annotations"
+
+        return pd.DataFrame(
+            [
+                {"GWADataLoader property": "Backend", "Value": self.backend},
+                {"GWADataLoader property": "Sample size", "Value": sample_size},
+                {
+                    "GWADataLoader property": "Variants",
+                    "Value": sum(variant_counts.values()),
+                },
+                {
+                    "GWADataLoader property": "Chromosomes",
+                    "Value": ", ".join(map(str, chromosomes)) or "None",
+                },
+                {"GWADataLoader property": "Genome build", "Value": genome_build},
+                {
+                    "GWADataLoader property": "Genotype",
+                    "Value": source_description(self.genotype),
+                },
+                {
+                    "GWADataLoader property": "Summary statistics",
+                    "Value": source_description(self.sumstats_table),
+                },
+                {"GWADataLoader property": "LD matrices", "Value": ld_description},
+                {
+                    "GWADataLoader property": "Annotations",
+                    "Value": annotation_description,
+                },
+                {
+                    "GWADataLoader property": "Phenotype",
+                    "Value": "Available" if has_phenotype else "Not available",
+                },
+                {"GWADataLoader property": "Covariates", "Value": n_covariates},
+            ]
+        ).set_index("GWADataLoader property")
+
+    def __repr__(self):
+        """:return: A summary of the `GWADataLoader` object as a string."""
+
+        return self.summary().to_string()
+
+    def _repr_html_(self):
+        """:return: A summary of the `GWADataLoader` object as an HTML table."""
+
+        table = self.summary().to_html(
+            header=False,
+            classes=("dataframe", "magenpy-summary"),
+            border=0,
+        )
+        style = """
+<style>
+.magenpy-summary {
+  border-collapse: separate; border-spacing: 0; border-radius: 5px;
+  box-shadow: 0 2px 3px rgba(0,0,0,0.1); margin: 20px 0;
+  table-layout: fixed; width: 50%; overflow: hidden;
+}
+.magenpy-summary th, .magenpy-summary td {
+  padding: 10px 15px; text-align: left; white-space: normal;
+  overflow-wrap: anywhere; border-bottom: 1px solid #eaeaea;
+}
+.magenpy-summary thead th {
+  background-color: #3b5f9e; color: white; font-weight: bold;
+}
+.magenpy-summary tbody th { width: 35%; background-color: #f8f9fa; }
+.magenpy-summary tr:nth-of-type(odd) td { background-color: #f8f9fa; }
+.magenpy-summary tr:hover th, .magenpy-summary tr:hover td {
+  background-color: #e8f0fe;
+}
+</style>
+"""
+        return style + table

@@ -13,7 +13,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "magenpy"
-version = "0.2.1"
+version = "0.2.2"
 description = "Modeling and Analysis of Statistical Genetics data in python"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -48,7 +48,20 @@ opt = [
     "seaborn",
     "statsmodels",
 ]
+http = [
+    "fsspec[http]",
+]
+s3 = [
+    "s3fs",
+]
+gcs = [
+    "gcsfs",
+]
+hf = [
+    "huggingface_hub",
+]
 cloud = [
+    "fsspec[http]",
     "gcsfs",
     "huggingface_hub",
     "s3fs",

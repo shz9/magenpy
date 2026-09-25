@@ -22,7 +22,7 @@ def move_ld_store(z_arr, target_path, overwrite=True):
     :param target_path: The target path where to move the LD store
     :param overwrite: If True, overwrites the target path if it exists.
 
-    :return: A Zaarr array object pointing to the new location of the LD store.
+    :return: A Zarr array object pointing to the new location of the LD store.
     """
 
     source_path = z_arr.store.dir_path()

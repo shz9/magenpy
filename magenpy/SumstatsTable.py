@@ -624,10 +624,17 @@ class SumstatsTable(object):
         """
 
         if 'CHR' in self.table.columns:
-            chrom_tables = self.table.groupby('CHR')
+            chromosomes = self.table['CHR'].dropna().unique()
+
+            # Summary-statistics files are frequently already chromosome-
+            # specific. In that case there is nothing to group, but retain the
+            # method's established copy semantics.
+            if len(chromosomes) == 1 and not self.table['CHR'].isna().any():
+                return {chromosomes[0]: SumstatsTable(self.table.copy())}
+
             return {
-                c: SumstatsTable(chrom_tables.get_group(c).copy())
-                for c in chrom_tables.groups
+                c: SumstatsTable(table.copy())
+                for c, table in self.table.groupby('CHR', sort=True)
             }
         elif snps_per_chrom is not None:
             chrom_dict = {

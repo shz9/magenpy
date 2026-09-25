@@ -1,6 +1,13 @@
-from tqdm import tqdm
 import numpy as np
 import pandas as pd
+
+
+def tqdm(*args, **kwargs):
+    """Import tqdm only for algorithms that display iterative progress."""
+
+    from tqdm import tqdm as _tqdm
+
+    return _tqdm(*args, **kwargs)
 
 
 def match_chromosomes(chrom_1, chrom_2, check_patterns=('chr_', 'chr:', 'chr'), return_both=False):
@@ -166,6 +173,123 @@ def merge_snp_tables(ref_table,
     merged_table.drop(['A1_x', 'A1_y', 'A2_x', 'A2_y'], axis=1, inplace=True)
 
     return merged_table
+
+
+def build_snp_harmonization_plan(
+    snp_ids,
+    reference,
+    alleles=None,
+    allele_reference=None,
+    allele_target=None,
+):
+    """Build one positional alignment plan for several variant data sources.
+
+    The function operates only on arrays that have already been loaded. It finds
+    the shared variants once, orders them according to ``reference``, and returns
+    a positional indexer for every source. Optionally, it also removes variants
+    with incompatible alleles and reports which target alleles need flipping.
+    Missing identifiers and identifiers duplicated within any source are excluded.
+
+    :param snp_ids: Mapping from source name to its one-dimensional SNP ID array.
+    :param reference: Source whose SNP order defines the final canonical order.
+    :param alleles: Optional mapping from source name to an ``(A1, A2)`` pair.
+    :param allele_reference: Source defining the canonical allele orientation.
+    :param allele_target: Source whose alleles are checked against the reference.
+
+    :return: A dictionary with ``indexers`` and ``snps``. When allele sources are
+        provided, it also contains ``flip``, ``a1``, and ``a2`` in canonical order.
+    """
+
+    if not snp_ids:
+        raise ValueError("At least one SNP array is required for harmonization.")
+    if reference not in snp_ids:
+        raise KeyError(f"Reference source '{reference}' is not available.")
+
+    source_indices = {}
+    source_positions = {}
+
+    for source, values in snp_ids.items():
+        values = np.asarray(values)
+        if values.ndim != 1:
+            raise ValueError(f"SNP IDs for source '{source}' must be one-dimensional.")
+
+        valid_positions = np.flatnonzero(~pd.isna(values))
+        index = pd.Index(values[valid_positions])
+        if not index.is_unique:
+            unique = ~index.duplicated(keep=False)
+            valid_positions = valid_positions[unique]
+            index = index[unique]
+
+        source_indices[source] = index
+        source_positions[source] = valid_positions
+
+    canonical_snps = source_indices[reference]
+    indexers = {reference: np.arange(len(canonical_snps), dtype=np.intp)}
+    keep = np.ones(len(canonical_snps), dtype=bool)
+
+    for source, index in source_indices.items():
+        if source == reference:
+            continue
+        positions = index.get_indexer(canonical_snps)
+        keep &= positions >= 0
+        indexers[source] = positions
+
+    canonical_snps = canonical_snps[keep]
+    for source in indexers:
+        indexers[source] = source_positions[source][indexers[source][keep]]
+
+    plan = {
+        "indexers": indexers,
+        "snps": canonical_snps.to_numpy(),
+    }
+
+    if allele_reference is None and allele_target is None:
+        return plan
+    if allele_reference is None or allele_target is None:
+        raise ValueError("Both allele_reference and allele_target must be specified.")
+    if alleles is None:
+        raise ValueError("Allele arrays are required for allele harmonization.")
+    for source in (allele_reference, allele_target):
+        if source not in snp_ids or source not in alleles:
+            raise KeyError(f"Alleles for source '{source}' are not available.")
+
+    ref_a1_all, ref_a2_all = (np.asarray(a) for a in alleles[allele_reference])
+    target_a1_all, target_a2_all = (np.asarray(a) for a in alleles[allele_target])
+    if (
+        len(ref_a1_all) != len(snp_ids[allele_reference])
+        or len(ref_a2_all) != len(ref_a1_all)
+    ):
+        raise ValueError(
+            "Reference allele arrays must match the corresponding SNP array length."
+        )
+    if (
+        len(target_a1_all) != len(snp_ids[allele_target])
+        or len(target_a2_all) != len(target_a1_all)
+    ):
+        raise ValueError(
+            "Target allele arrays must match the corresponding SNP array length."
+        )
+
+    ref_positions = indexers[allele_reference]
+    target_positions = indexers[allele_target]
+    ref_a1 = ref_a1_all[ref_positions]
+    ref_a2 = ref_a2_all[ref_positions]
+    target_a1 = target_a1_all[target_positions]
+    target_a2 = target_a2_all[target_positions]
+
+    matching = (ref_a1 == target_a1) & (ref_a2 == target_a2)
+    flip = (ref_a1 == target_a2) & (ref_a2 == target_a1)
+    compatible = matching | flip
+
+    for source in indexers:
+        indexers[source] = indexers[source][compatible]
+
+    plan["snps"] = plan["snps"][compatible]
+    plan["flip"] = flip[compatible]
+    plan["a1"] = ref_a1[compatible]
+    plan["a2"] = ref_a2[compatible]
+
+    return plan
 
 
 def sumstats_train_test_split(gdl, prop_train=0.9, **kwargs):

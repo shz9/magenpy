@@ -997,6 +997,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fd/3c/6a2bf344106328fd04963664a60b9bb6496fc25df8e962fcdc1367285fb9/fsspec-2026.7.0-py3-none-any.whl", hash = "sha256:b57ddbafedfaef7018c1ecab32aa200a9d7ca26b77965f64e48b70061249d279", size = 206583, upload-time = "2026-07-28T16:34:49.538Z" },
 ]
 
+[package.optional-dependencies]
+http = [
+    { name = "aiohttp" },
+]
+
 [[package]]
 name = "gcsfs"
 version = "2026.8.1"
@@ -1560,7 +1565,7 @@ wheels = [
 
 [[package]]
 name = "magenpy"
-version = "0.2.1"
+version = "0.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "joblib" },
@@ -1578,6 +1583,7 @@ dependencies = [
 
 [package.optional-dependencies]
 cloud = [
+    { name = "fsspec", extra = ["http"] },
     { name = "gcsfs" },
     { name = "huggingface-hub" },
     { name = "s3fs" },
@@ -1588,6 +1594,15 @@ docs = [
     { name = "mkdocs-material-extensions" },
     { name = "mkdocstrings-python" },
 ]
+gcs = [
+    { name = "gcsfs" },
+]
+hf = [
+    { name = "huggingface-hub" },
+]
+http = [
+    { name = "fsspec", extra = ["http"] },
+]
 opt = [
     { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "matplotlib", version = "3.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -1597,14 +1612,21 @@ opt = [
 profiling = [
     { name = "psutil" },
 ]
+s3 = [
+    { name = "s3fs" },
+]
 test = [
     { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "fsspec", extras = ["http"], marker = "extra == 'cloud'" },
+    { name = "fsspec", extras = ["http"], marker = "extra == 'http'" },
     { name = "gcsfs", marker = "extra == 'cloud'" },
+    { name = "gcsfs", marker = "extra == 'gcs'" },
     { name = "huggingface-hub", marker = "extra == 'cloud'" },
+    { name = "huggingface-hub", marker = "extra == 'hf'" },
     { name = "joblib" },
     { name = "matplotlib", marker = "extra == 'opt'" },
     { name = "mkdocs", marker = "extra == 'docs'" },
@@ -1616,13 +1638,14 @@ requires-dist = [
     { name = "psutil", marker = "extra == 'profiling'" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "s3fs", marker = "extra == 'cloud'" },
+    { name = "s3fs", marker = "extra == 's3'" },
     { name = "scipy", specifier = "<1.17" },
     { name = "seaborn", marker = "extra == 'opt'" },
     { name = "statsmodels", marker = "extra == 'opt'" },
     { name = "tqdm" },
     { name = "zarr", specifier = "<3" },
 ]
-provides-extras = ["opt", "cloud", "profiling", "test", "docs"]
+provides-extras = ["opt", "http", "s3", "gcs", "hf", "cloud", "profiling", "test", "docs"]
 
 [[package]]
 name = "markdown"

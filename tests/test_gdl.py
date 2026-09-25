@@ -64,6 +64,38 @@ def test_basic_properties(gdl_object):
     assert np.array_equal(gdl_object.genotype[22].a1, gdl_object.sumstats_table[22].a1)
 
 
+def test_summary_representations(gdl_object):
+    summary = gdl_object.summary()
+
+    assert summary.index.name == "GWADataLoader property"
+    assert list(summary.columns) == ["Value"]
+    assert summary.loc["Backend", "Value"] == gdl_object.backend
+    assert summary.loc["Sample size", "Value"] == gdl_object.n
+    assert summary.loc["Variants", "Value"] == gdl_object.n_snps
+    assert summary.loc["Chromosomes", "Value"] == "22"
+    assert summary.loc["Genotype", "Value"] == "Loaded (1 chromosome)"
+    assert summary.loc["Summary statistics", "Value"] == "Loaded (1 chromosome)"
+    assert summary.loc["LD matrices", "Value"] == "Not loaded"
+
+    assert repr(gdl_object) == summary.to_string()
+    html = gdl_object._repr_html_()
+    assert "<table" in html
+    assert "GWADataLoader property" in html
+
+
+def test_empty_loader_summary(tmp_path):
+    gdl = mgp.GWADataLoader(temp_dir=str(tmp_path / "empty-loader"))
+    summary = gdl.summary()
+
+    assert summary.loc["Sample size", "Value"] == "Not available"
+    assert summary.loc["Variants", "Value"] == 0
+    assert summary.loc["Chromosomes", "Value"] == "None"
+    assert summary.loc["Genotype", "Value"] == "Not loaded"
+    assert summary.loc["Summary statistics", "Value"] == "Not loaded"
+    assert summary.loc["LD matrices", "Value"] == "Not loaded"
+    assert summary.loc["Annotations", "Value"] == "Not loaded"
+
+
 def test_filtering_methods(gdl_object):
     """
     Test the filtering methods of the GWADataLoader object. Primarily,

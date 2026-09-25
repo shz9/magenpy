@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-09-25
+
+### Added
+
+- Added `compute_ld_sumstats_similarity` for comparing GWAS summary statistics
+  against candidate LD reference panels. It supports regional and genome-wide
+  inputs, allele-frequency and regularized LD-likelihood scoring, automatic
+  method selection, block-wise/submatrix LD loading, candidate priors, and
+  temperature-scaled relative probabilities.
+- Added HTTP(S) and Google Cloud Storage support for Zarr-backed LD matrices,
+  including consolidated-metadata fallback, optional in-memory caching, and
+  authenticated/custom storage options. Existing S3 and Hugging Face support
+  now reports actionable installation guidance when dependencies are missing.
+- Added a unified SNP harmonization plan that aligns genotype, summary
+  statistics, LD, and annotation data in one pass while preserving canonical LD
+  ordering and tracking allele flips with positional indexers.
+- Added tabular, string, and notebook HTML summaries for `GWADataLoader`,
+  covering sample and variant counts, chromosomes, genome build, available data
+  sources, and LD in-memory state without loading matrix entries.
+- Added backend-specific optional dependency groups for `http`, `s3`, `gcs`,
+  and `hf`, an aggregate `cloud` extra, and a `profiling` extra for `psutil`.
+- Added `fits_in_memory` for checking an allocation against currently available
+  system memory.
+- Added documentation for LD/reference similarity and optional cloud/profiling
+  dependencies, plus a link to the magenpy LD browser.
+
+### Changed
+
+- Reworked `GWADataLoader.harmonize_data` to materialize source metadata once
+  per chromosome, calculate common variants once, and apply a single final LD
+  mask. The new path handles differently ordered inputs, missing or duplicate
+  identifiers, allele-incompatible variants, and summary-statistic effect/frequency
+  flips consistently with the previous implementation.
+- Improved summary-statistics parsing by assigning safe string dtypes to variant
+  identifiers and alleles, preserving identifiers with leading zeroes, using
+  32-bit or nullable 32-bit positions, respecting caller dtype overrides, and
+  consolidating format-specific post-processing into the shared parse pipeline.
+- Avoided unnecessary `groupby` and copying when parsed summary statistics are
+  already chromosome-specific, both during parsing and when splitting
+  `SumstatsTable` objects.
+- Reduced package startup overhead by deferring Zarr, SciPy linear algebra,
+  SciPy statistics, `tqdm`, and `psutil` until the corresponding functionality
+  is used. Frequency-based LD similarity no longer imports SciPy solely for a
+  softmax calculation.
+- Made process profiling optional: general system utilities now work without
+  `psutil`, and CPU availability uses the standard library.
+- Changed LD-store validation to use direct key lookup instead of directory
+  listing, allowing stores served by HTTP endpoints that do not support listing.
+- Updated dependency metadata and lockfiles, including `aiohttp`, `anyio`,
+  `mkdocs-material`, and `pymdown-extensions`, and synchronized package,
+  container, and AI-declaration metadata for version 0.2.2.
+
+### Fixed
+
+- Fixed harmonization when source SNPs use different orders, including repeated
+  harmonization of already-masked LD matrices and correct propagation of allele
+  flips to signed statistics and allele frequencies.
+- Fixed PLINK 2 reference-allele inference and SAIGE sample-size inference so
+  they occur before missing-value filtering in the common parser pipeline.
+- Fixed parsing of missing, nonessential base-pair positions by using pandas'
+  nullable `Int32` dtype instead of failing during integer conversion.
+- Fixed `AnnotationMatrix.filter_snps` on highly fragmented dataframes by
+  consolidating the filtered table and preventing the old index from becoming
+  an unintended column.
+- Improved type validation for LD masks and corrected minor LD utility
+  documentation.
+
 ## [0.2.1] - 2026-07-04
 
 ### Added
