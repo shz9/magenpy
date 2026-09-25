@@ -223,14 +223,6 @@ class LDMatrix(object):
         :return: An `LDMatrix` object.
         """
 
-        try:
-            import fsspec  # noqa: F401
-        except ImportError as exc:
-            raise ImportError(
-                "HTTP URL support requires the optional 'fsspec' dependency. "
-                "Install it with `pip install \"magenpy[http]\"`."
-            ) from exc
-
         url = str(url)
         if not url.startswith(("http://", "https://")):
             raise ValueError("url must start with 'http://' or 'https://'.")

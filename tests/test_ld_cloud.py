@@ -164,6 +164,35 @@ def test_from_url_rejects_non_http_urls():
         LDMatrix.from_url("s3://bucket/store.zarr")
 
 
+def test_from_url_defers_optional_dependency_check_to_zarr(monkeypatch):
+    """A mocked/custom Zarr store must not require importing fsspec eagerly."""
+
+    ld_group = object()
+
+    class StubLDMatrix(LDMatrix):
+        def __init__(self, zarr_group):
+            self._zg = zarr_group
+
+    real_import = builtins.__import__
+
+    def import_without_fsspec(name, *args, **kwargs):
+        if name == "fsspec" or name.startswith("fsspec."):
+            raise ModuleNotFoundError("No module named 'fsspec'", name="fsspec")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_fsspec)
+    _patch_fs_store(monkeypatch, lambda *args, **kwargs: object())
+
+    monkeypatch.setattr(zarr, "open_group", lambda **kwargs: ld_group)
+
+    assert isinstance(
+        StubLDMatrix.from_url(
+            "https://example.com/store.zarr", consolidated=False
+        ),
+        StubLDMatrix,
+    )
+
+
 def test_from_url_explains_how_to_install_http_dependencies(monkeypatch):
     def unavailable_fs_store(*args, **kwargs):
         raise ImportError("No module named 'aiohttp'")

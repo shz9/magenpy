@@ -31,6 +31,8 @@ The package provides tools for:
 ### Helpful links
 
 - [Documentation](https://shz9.github.io/magenpy/)
+- [Sister package `viprs`](https://github.com/shz9/viprs)
+- [Linkage disequilibrium (LD) browser](https://shz9.github.io/ld_browser/)
 - [Citation / BibTeX records](./CITATION.md)
 - [Report issues/bugs](https://github.com/shz9/magenpy/issues)
 
