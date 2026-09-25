@@ -56,7 +56,11 @@ def _patch_fs_store(monkeypatch, factory):
     class FakeFSStore:
         @staticmethod
         def _fsspec_installed():
-            return True
+            # Zarr consults this class-level capability check while normalizing
+            # every store, including the MemoryStore used for the fake LD group.
+            # Reporting True here makes a minimal environment import fsspec even
+            # though this test double never needs it.
+            return False
 
         def __new__(cls, *args, **kwargs):
             return factory(*args, **kwargs)
