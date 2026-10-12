@@ -237,15 +237,17 @@ def test_from_hf_prefers_consolidated_metadata_for_subgroup(monkeypatch):
     store = object()
     ld_group = _empty_ld_group()
 
-    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace())
+    class StubLDMatrix(LDMatrix):
+        def __init__(self, zarr_group):
+            self._zg = zarr_group
 
-    import fsspec
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace())
 
     def get_mapper(path):
         calls["mapper_path"] = path
         return store
 
-    monkeypatch.setattr(fsspec, "get_mapper", get_mapper)
+    monkeypatch.setitem(sys.modules, "fsspec", SimpleNamespace(get_mapper=get_mapper))
 
     def open_consolidated(*, store, mode, path):
         calls["open_consolidated_args"] = (store, mode, path)
@@ -253,9 +255,9 @@ def test_from_hf_prefers_consolidated_metadata_for_subgroup(monkeypatch):
 
     monkeypatch.setattr(zarr, "open_consolidated", open_consolidated)
 
-    result = LDMatrix.from_hf("hf://datasets/org/repo/store.zarr")
+    result = StubLDMatrix.from_hf("hf://datasets/org/repo/store.zarr")
 
-    assert isinstance(result, LDMatrix)
+    assert isinstance(result, StubLDMatrix)
     assert calls["mapper_path"] == "hf://datasets/org/repo/store.zarr"
     assert calls["open_consolidated_args"] == (store, "r", "store")
 
