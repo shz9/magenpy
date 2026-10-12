@@ -1,12 +1,14 @@
 """Load the built magenpy wheel in real Pyodide and exercise its LD kernels."""
+
 import argparse
 import functools
 import hashlib
 import http.server
 import json
 import os
-from pathlib import Path
 import threading
+from pathlib import Path
+
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,19 +24,26 @@ def main():
     parser.add_argument("--dist", type=Path, default=ROOT / "dist/wasm")
     args = parser.parse_args()
     info = json.loads((args.dist / "magenpy-wasm.json").read_text())
-    assert hashlib.sha256((args.dist / info["wheel"]).read_bytes()).hexdigest() == info["sha256"]
+    assert (
+        hashlib.sha256((args.dist / info["wheel"]).read_bytes()).hexdigest()
+        == info["sha256"]
+    )
     handler = functools.partial(QuietHandler, directory=str(args.dist.resolve()))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(executable_path=os.environ.get("VIPRS_BROWSER_EXECUTABLE"), headless=True)
+            browser = playwright.chromium.launch(
+                executable_path=os.environ.get("VIPRS_BROWSER_EXECUTABLE"),
+                headless=True,
+            )
             page = browser.new_page()
             page.set_default_timeout(180000)
             page.goto(f"http://127.0.0.1:{server.server_port}/")
             await_url = "https://cdn.jsdelivr.net/pyodide/v0.28.3/full/"
             page.add_script_tag(url=await_url + "pyodide.js")
-            report = page.evaluate('''async ({info, indexURL}) => {
+            report = page.evaluate(
+                """async ({info, indexURL}) => {
               const py = await loadPyodide({indexURL});
               await py.loadPackage(["micropip", "numpy", "scipy", "pandas", "joblib", "tqdm", "numcodecs", "asciitree", "statsmodels"]);
               py.globals.set("wheel_url", new URL(info.wheel, location.href).href + "#sha256=" + info.sha256);
@@ -62,8 +71,12 @@ np.testing.assert_allclose(ld.dot(vector), matrix @ vector, rtol=1e-12, atol=1e-
 np.testing.assert_allclose(ld.to_csr(return_symmetric=True).toarray(), matrix, rtol=1e-12, atol=1e-12)
 json.dumps({"version": magenpy.__version__, "extensions": [m.__file__ for m in modules], "ld_roundtrip": True})
 `));
-            }''', {"info": info, "indexURL": await_url})
-            (args.dist / "smoke-report.json").write_text(json.dumps(report, indent=2) + "\n")
+            }""",
+                {"info": info, "indexURL": await_url},
+            )
+            (args.dist / "smoke-report.json").write_text(
+                json.dumps(report, indent=2) + "\n"
+            )
             print(json.dumps(report))
             browser.close()
     finally:
