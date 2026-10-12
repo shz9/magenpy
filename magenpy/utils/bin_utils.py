@@ -3,16 +3,20 @@ import logging
 from .system_utils import setup_logger
 
 
-def print_cli_logo(mgp_module, description, left_padding=10):
+logger = logging.getLogger(__name__)
+
+
+def print_cli_logo(mgp_module, description, left_padding=10, output_logger=None):
     """
-    Print the magenpy ASCII logo for a command-line script.
+    Log the magenpy ASCII logo for a command-line script.
 
     :param mgp_module: The imported ``magenpy`` module.
     :param description: A short description to display below the logo.
     :param left_padding: Number of spaces to use for logo padding.
+    :param output_logger: Logger that should emit the logo.
     """
     logo = mgp_module.make_ascii_logo(desc=description, left_padding=left_padding)
-    print(f"\n{logo}\n", flush=True)
+    (output_logger or logger).info("\n%s\n", logo)
 
 
 def setup_cli_logger(logger, log_level, package_modules=None):

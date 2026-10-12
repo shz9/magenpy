@@ -1,5 +1,5 @@
-
 import numpy as np
+
 from .PhenotypeSimulator import PhenotypeSimulator
 
 
@@ -72,7 +72,7 @@ class AnnotatedPhenotypeSimulator(PhenotypeSimulator):
             try:
                 enr.append(enrichment[annot])
             except KeyError:
-                enr.append(1.)
+                enr.append(1.0)
 
         self.w_pi = np.log(np.array(enr))
 
@@ -87,8 +87,9 @@ class AnnotatedPhenotypeSimulator(PhenotypeSimulator):
         self.per_snp_h2 = {}
 
         for c in self.chromosomes:
-            self.per_snp_h2[c] = np.clip(np.dot(self.annotation[c].values(), self.w_h2),
-                                         a_min=0., a_max=np.inf)
+            self.per_snp_h2[c] = np.clip(
+                np.dot(self.annotation[c].values(), self.w_h2), a_min=0.0, a_max=np.inf
+            )
 
     def set_per_snp_mixture_probability(self):
         """
@@ -101,9 +102,16 @@ class AnnotatedPhenotypeSimulator(PhenotypeSimulator):
         self.per_snp_pi = {}
 
         for c in self.chromosomes:
-            prob = 1./(1. + np.exp(-np.dot(self.annotation[c].values(add_intercept=True),
-                                           np.concatenate([[np.log(self.pi[1])], self.w_pi]))))
-            self.per_snp_pi[c] = np.array([1. - prob, prob]).T
+            prob = 1.0 / (
+                1.0
+                + np.exp(
+                    -np.dot(
+                        self.annotation[c].values(add_intercept=True),
+                        np.concatenate([[np.log(self.pi[1])], self.w_pi]),
+                    )
+                )
+            )
+            self.per_snp_pi[c] = np.array([1.0 - prob, prob]).T
 
     def get_heritability_enrichment(self):
         """
@@ -111,10 +119,11 @@ class AnnotatedPhenotypeSimulator(PhenotypeSimulator):
         """
 
         tabs = self.to_true_beta_table(per_chromosome=True)
-        total_heritability = sum([tab['Heritability'].sum() for c, tab in tabs.items()])
+        total_heritability = sum([tab["Heritability"].sum() for c, tab in tabs.items()])
 
         heritability_per_binary_annot = {
-            bin_annot: 0. for bin_annot in self.annotation[self.chromosomes[0]].binary_annotations
+            bin_annot: 0.0
+            for bin_annot in self.annotation[self.chromosomes[0]].binary_annotations
         }
 
         n_variants_per_binary_annot = {
@@ -124,10 +133,13 @@ class AnnotatedPhenotypeSimulator(PhenotypeSimulator):
         for c, c_size in self.shapes.items():
             for bin_annot in self.annotation[c].binary_annotations:
                 annot_idx = self.annotation[c].get_binary_annotation_index(bin_annot)
-                heritability_per_binary_annot[bin_annot] += tabs[c].iloc[np.array(annot_idx), :]['Heritability'].sum()
+                heritability_per_binary_annot[bin_annot] += (
+                    tabs[c].iloc[np.array(annot_idx), :]["Heritability"].sum()
+                )
                 n_variants_per_binary_annot[bin_annot] += len(annot_idx)
 
         return {
-            bin_annot: (ba_h2/total_heritability) / (n_variants_per_binary_annot[bin_annot] / self.m)
+            bin_annot: (ba_h2 / total_heritability)
+            / (n_variants_per_binary_annot[bin_annot] / self.m)
             for bin_annot, ba_h2 in heritability_per_binary_annot.items()
         }

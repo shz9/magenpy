@@ -45,9 +45,6 @@ logger = logging.getLogger("magenpy.cli.mgp_simulate")
 LOGO_DESCRIPTION = "< Simulate complex quantitative or case-control traits >"
 
 
-print_cli_logo(mgp, LOGO_DESCRIPTION)
-
-
 def format_run_summary(args, bed_files, pi, d):
     """
     Build a compact summary of the requested phenotype simulation.
@@ -234,6 +231,7 @@ parser.add_argument(
 
 args = parser.parse_args()
 setup_cli_logger(logger, args.log_level)
+print_cli_logo(mgp, LOGO_DESCRIPTION, output_logger=logger)
 
 # ------------------------------------------------------
 # Sanity checks on the inputs:

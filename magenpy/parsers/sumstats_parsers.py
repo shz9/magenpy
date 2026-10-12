@@ -1,8 +1,10 @@
-import warnings
+import logging
 from collections.abc import Mapping
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 MAGENPY_SUMSTATS_COLUMNS = (
     "CHR",
@@ -131,7 +133,7 @@ class SumstatsParser(object):
 
         # pandas converters take precedence over dtype. Remove those defaults to
         # avoid warnings and unnecessary dtype bookkeeping.
-        for column in (kwargs.get("converters") or {}):
+        for column in kwargs.get("converters") or {}:
             dtype.pop(column, None)
 
         if isinstance(user_dtype, Mapping):
@@ -195,7 +197,7 @@ class SumstatsParser(object):
         if len(essential_cols) > 0:
             return df.dropna(subset=essential_cols)
 
-        warnings.warn(
+        logger.warning(
             "Could not identify any essential summary statistics columns; "
             "no rows were dropped for missing values."
         )
@@ -351,7 +353,7 @@ class Plink2SSParser(SumstatsParser):
                     df[alt_column],
                 )
             else:
-                warnings.warn(
+                logger.warning(
                     "The reference allele A2 could not be inferred "
                     "from the summary statistics file! Some of the columns needed to infer "
                     "the A2 allele are missing or coded differently than what we expect."

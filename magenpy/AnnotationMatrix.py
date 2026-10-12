@@ -1,7 +1,7 @@
 import numpy as np
 
 
-class AnnotationMatrix(object):
+class AnnotationMatrix:
     """
     A wrapper class for handling annotation matrices, which are essentially tables of
     features for each variant in the genome. These features include information such as

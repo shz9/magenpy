@@ -27,7 +27,7 @@ def tqdm(*args, **kwargs):
     return _tqdm(*args, **kwargs)
 
 
-class GWADataLoader(object):
+class GWADataLoader:
     """
     A class to load and manage multiple data sources for genetic association studies.
     This class is designed to handle genotype matrices, summary statistics, LD matrices,

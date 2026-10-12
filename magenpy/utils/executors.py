@@ -1,5 +1,10 @@
-from .system_utils import is_cmd_tool, run_shell_script
+import logging
+
 from magenpy import get_option
+
+from .system_utils import is_cmd_tool, run_shell_script
+
+logger = logging.getLogger(__name__)
 
 
 class plink2Executor(object):
@@ -13,16 +18,18 @@ class plink2Executor(object):
         :param threads: The number of threads to use for computations. If None, the number of
         threads will be set to 1.
         :type threads: int or str
-        :param verbose: Whether to print the output of the command
+        :param verbose: Whether to log command errors
         :type verbose: bool
         """
 
         self.threads = threads or 1
 
-        self.plink2_path = get_option('plink2_path')
+        self.plink2_path = get_option("plink2_path")
 
         if not is_cmd_tool(self.plink2_path):
-            raise Exception(f"Did not find the executable for plink2 at: {self.plink2_path}")
+            raise Exception(
+                f"Did not find the executable for plink2 at: {self.plink2_path}"
+            )
 
         self.verbose = verbose
 
@@ -34,17 +41,18 @@ class plink2Executor(object):
         :raises CalledProcessError: If the command returns a non-zero exit code
         """
 
-        cmd = [self.plink2_path] + cmd + [f'--threads {self.threads}']
+        cmd = [self.plink2_path] + cmd + [f"--threads {self.threads}"]
 
         from subprocess import CalledProcessError
 
         try:
             run_shell_script(" ".join(cmd))
         except CalledProcessError as e:
-
             if self.verbose:
-                print("Invocation of plink2 returned the following error message:")
-                print(e.stderr.decode())
+                logger.error(
+                    "Invocation of plink2 returned the following error message:\n%s",
+                    e.stderr.decode(),
+                )
 
             raise e
 
@@ -60,16 +68,18 @@ class plink1Executor(object):
         :param threads: The number of threads to use for computations. If None, the number of
         threads will be set to 1.
         :type threads: int or str
-        :param verbose: Whether to print the output of the command
+        :param verbose: Whether to log command errors
         :type verbose: bool
         """
 
         self.threads = threads or 1
 
-        self.plink1_path = get_option('plink1.9_path')
+        self.plink1_path = get_option("plink1.9_path")
 
         if not is_cmd_tool(self.plink1_path):
-            raise Exception(f"Did not find the executable for plink1.9 at: {self.plink1_path}")
+            raise Exception(
+                f"Did not find the executable for plink1.9 at: {self.plink1_path}"
+            )
 
         self.verbose = verbose
 
@@ -81,7 +91,7 @@ class plink1Executor(object):
         :raises: CalledProcessError if the command fails
         """
 
-        cmd = [self.plink1_path] + cmd + [f'--threads {self.threads}']
+        cmd = [self.plink1_path] + cmd + [f"--threads {self.threads}"]
 
         from subprocess import CalledProcessError
 
@@ -89,6 +99,8 @@ class plink1Executor(object):
             run_shell_script(" ".join(cmd))
         except CalledProcessError as e:
             if self.verbose:
-                print("Invocation of plink returned the following error message:")
-                print(e.stderr.decode())
+                logger.error(
+                    "Invocation of plink returned the following error message:\n%s",
+                    e.stderr.decode(),
+                )
             raise e

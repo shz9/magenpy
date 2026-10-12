@@ -260,9 +260,9 @@ def main():
     """
     Parse CLI inputs, LD-prune requested variants, and write retained SNP IDs.
     """
-    print_cli_logo(mgp, LOGO_DESCRIPTION)
     args = parse_args()
     setup_cli_logger(logger, args.log_level)
+    print_cli_logo(mgp, LOGO_DESCRIPTION, output_logger=logger)
 
     if (args.sumstats_file is None) == (args.variants_file is None):
         raise ValueError("Specify exactly one of --sumstats-file or --variants-file.")

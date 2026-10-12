@@ -1,15 +1,18 @@
-from ..LDMatrix import LDMatrix
 import matplotlib.pylab as plt
 import numpy as np
 
+from ..LDMatrix import LDMatrix
 
-def plot_ld_matrix(ldm: LDMatrix,
-                   variant_subset=None,
-                   start_row=None,
-                   end_row=None,
-                   symmetric=False,
-                   cmap='RdBu',
-                   include_colorbar=True):
+
+def plot_ld_matrix(
+    ldm: LDMatrix,
+    variant_subset=None,
+    start_row=None,
+    end_row=None,
+    symmetric=False,
+    cmap="RdBu",
+    include_colorbar=True,
+):
     """
     Plot a heatmap representing the LD matrix or portions of it.
 
@@ -30,14 +33,16 @@ def plot_ld_matrix(ldm: LDMatrix,
         ldm.reset_mask()
         ldm.filter_snps(variant_subset)
 
-    ld_mat = ldm.load_data(start_row=start_row,
-                           end_row=end_row,
-                           return_symmetric=symmetric,
-                           return_square=True,
-                           return_as_csr=True,
-                           dtype=np.float32).todense()
+    ld_mat = ldm.load_data(
+        start_row=start_row,
+        end_row=end_row,
+        return_symmetric=symmetric,
+        return_square=True,
+        return_as_csr=True,
+        dtype=np.float32,
+    ).todense()
 
-    plt.imshow(ld_mat, cmap=cmap, vmin=-1., vmax=1., interpolation='none')
+    plt.imshow(ld_mat, cmap=cmap, vmin=-1.0, vmax=1.0, interpolation="none")
 
     if include_colorbar:
         plt.colorbar()
@@ -46,4 +51,4 @@ def plot_ld_matrix(ldm: LDMatrix,
     if curr_mask is not None:
         ldm.set_mask(curr_mask)
 
-    plt.axis('off')
+    plt.axis("off")

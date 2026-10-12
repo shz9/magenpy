@@ -1,5 +1,6 @@
 import configparser
 import glob
+import logging
 
 from ._version import __release_date__, __version__
 
@@ -15,6 +16,9 @@ from .SumstatsTable import SumstatsTable
 
 # Data utilities:
 from .utils.data_utils import *
+
+
+logger = logging.getLogger(__name__)
 
 
 def make_ascii_logo(desc=None, left_padding=None):
@@ -68,12 +72,12 @@ config.read(glob.glob(osp.join(osp.dirname(__file__), "config/*.ini")))
 
 def print_options():
     """
-    Print the options stored in the configuration file
+    Log the options stored in the configuration file.
     """
     for sec in config.sections() + [config.default_section]:
-        print("-> Section:", sec)
+        logger.info("-> Section: %s", sec)
         for key in config[sec]:
-            print(f"---> {key}: {config[sec][key]}")
+            logger.info("---> %s: %s", key, config[sec][key])
 
 
 def get_option(key):

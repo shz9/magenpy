@@ -1,7 +1,7 @@
 import pandas as pd
 
 
-class AnnotationMatrixParser(object):
+class AnnotationMatrixParser:
     """
     A generic annotation matrix parser class.
     """

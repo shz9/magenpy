@@ -1,9 +1,9 @@
+import glob
 import os
 import os.path as osp
 import subprocess
-import glob
-import time
 import threading
+import time
 
 
 def _require_psutil():
@@ -13,7 +13,7 @@ def _require_psutil():
     except ImportError as exc:
         raise ImportError(
             "This feature requires the optional 'psutil' dependency. "
-            "Install it with `pip install \"magenpy[profiling]\"`."
+            'Install it with `pip install "magenpy[profiling]"`.'
         ) from exc
 
     return psutil
@@ -52,7 +52,9 @@ class PeakMemoryProfiler:
         :param include_children: Whether to include memory usage from child processes. Defaults to True.
         :param unit: The unit in which to report memory usage. Options are 'bytes', 'MB', or 'GB'. Defaults to 'MB'.
         """
-        self.pid = pid or os.getpid()  # Default to current process if no PID is provided
+        self.pid = (
+            pid or os.getpid()
+        )  # Default to current process if no PID is provided
         self.interval = interval
         self.include_children = include_children
         self.unit = unit
@@ -104,9 +106,9 @@ class PeakMemoryProfiler:
                     continue
 
         if self.unit == "MB":
-            return memory / (1024 ** 2)  # Convert to MB
+            return memory / (1024**2)  # Convert to MB
         elif self.unit == "GB":
-            return memory / (1024 ** 3)  # Convert to GB
+            return memory / (1024**3)  # Convert to GB
         else:
             return memory  # Return in bytes if no conversion is requested
 
@@ -138,7 +140,7 @@ class PeakMemoryProfiler:
         return self.max_memory
 
 
-def fits_in_memory(alloc_size, max_prop=.9):
+def fits_in_memory(alloc_size, max_prop=0.9):
     """
     Check whether there's enough memory resources to load an object
     with the given allocation size (in MB).
@@ -147,7 +149,7 @@ def fits_in_memory(alloc_size, max_prop=.9):
     """
 
     psutil = _require_psutil()
-    avail_mem = psutil.virtual_memory().available / (1024.0 ** 2)
+    avail_mem = psutil.virtual_memory().available / (1024.0**2)
 
     if alloc_size / avail_mem > max_prop:
         return False
@@ -170,7 +172,7 @@ def get_memory_usage():
     psutil = _require_psutil()
     process = psutil.Process(os.getpid())
     mem_info = process.memory_info()
-    return mem_info.rss / (1024 ** 2)
+    return mem_info.rss / (1024**2)
 
 
 def valid_url(path):
@@ -184,7 +186,9 @@ def valid_url(path):
 
     try:
         with urllib.request.urlopen(path) as response:
-            v_url = response.getcode() == 200  # Check if the response status is OK (HTTP 200)
+            v_url = (
+                response.getcode() == 200
+            )  # Check if the response status is OK (HTTP 200)
         return v_url
     except Exception:
         return False
@@ -218,12 +222,11 @@ def is_path_writable(path):
     path = osp.abspath(path)
 
     while True:
-
         if osp.exists(path):
             return os.access(path, os.W_OK)
         else:
             path = osp.dirname(path)
-            if path == '/' or len(path) == 0:
+            if path == "/" or len(path) == 0:
                 return False
 
 
@@ -238,7 +241,6 @@ def makedir(dirs):
         dirs = [dirs]
 
     for dir_l in dirs:
-
         if len(dir_l) < 1:
             continue
 
@@ -246,6 +248,7 @@ def makedir(dirs):
             os.makedirs(dir_l)
         except OSError as e:
             import errno
+
             if e.errno != errno.EEXIST:
                 raise
 
@@ -263,7 +266,7 @@ def glob_s3_path(path):
     except ImportError as exc:
         raise ImportError(
             "AWS S3 support requires the optional 's3fs' dependency. "
-            "Install it with `pip install \"magenpy[s3]\"`."
+            'Install it with `pip install "magenpy[s3]"`.'
         ) from exc
 
     s3 = s3fs.S3FileSystem(anon=True)
@@ -281,7 +284,7 @@ def glob_hf_path(path):
     except ImportError as exc:
         raise ImportError(
             "Hugging Face support requires the optional 'huggingface_hub' "
-            "dependency. Install it with `pip install \"magenpy[hf]\"`."
+            'dependency. Install it with `pip install "magenpy[hf]"`.'
         ) from exc
 
     hf_prefix = "hf://"
@@ -305,22 +308,25 @@ def get_filenames(path, extension=None):
             if osp.isfile(osp.join(path, extension)):
                 return [path]
             else:
-                return [f for f in glob.glob(osp.join(path, '*/'))
-                        if extension in f or osp.isfile(osp.join(f, extension))]
+                return [
+                    f
+                    for f in glob.glob(osp.join(path, "*/"))
+                    if extension in f or osp.isfile(osp.join(f, extension))
+                ]
         else:
-            return glob.glob(osp.join(path, '*'))
+            return glob.glob(osp.join(path, "*"))
     else:
         if extension is None:
-            return glob.glob(path + '*')
+            return glob.glob(path + "*")
         elif extension in path:
             return glob.glob(path)
         elif osp.isfile(path + extension):
             return [path + extension]
         else:
             return (
-                    glob.glob(osp.join(path, '*' + extension + '*')) +
-                    glob.glob(osp.join(path, extension + '*')) +
-                    glob.glob(path + '*' + extension + '*')
+                glob.glob(osp.join(path, "*" + extension + "*"))
+                + glob.glob(osp.join(path, extension + "*"))
+                + glob.glob(path + "*" + extension + "*")
             )
 
 
@@ -337,9 +343,7 @@ def run_shell_script(cmd):
 
     if result.stderr:
         raise subprocess.CalledProcessError(
-            returncode=result.returncode,
-            cmd=result.args,
-            stderr=result.stderr
+            returncode=result.returncode, cmd=result.args, stderr=result.stderr
         )
 
     return result
@@ -357,12 +361,14 @@ def delete_temp_files(prefix):
             continue
 
 
-def setup_logger(loggers=None,
-                 modules=None,
-                 log_file=None,
-                 log_format=None,
-                 log_level='WARNING',
-                 clear_file=False):
+def setup_logger(
+    loggers=None,
+    modules=None,
+    log_file=None,
+    log_format=None,
+    log_level="WARNING",
+    clear_file=False,
+):
     """
     Set up the logger with the provided configuration.
 
@@ -376,11 +382,13 @@ def setup_logger(loggers=None,
     """
 
     # ------------------ Sanity checks ------------------
-    assert log_level in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], \
+    assert log_level in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], (
         f"Invalid log level: {log_level}"
+    )
 
-    assert loggers is not None or modules is not None, \
+    assert loggers is not None or modules is not None, (
         "Either `loggers` or `modules` must be provided!"
+    )
 
     loggers = loggers or []
 
@@ -394,7 +402,7 @@ def setup_logger(loggers=None,
     # Create a file handler:
     if log_file is not None:
         assert is_path_writable(log_file), f"Cannot write to {log_file}!"
-        file_handler = logging.FileHandler(log_file, mode='w' if clear_file else 'a')
+        file_handler = logging.FileHandler(log_file, mode="w" if clear_file else "a")
         file_handler.setLevel(logging.getLevelName(log_level))
         handlers.append(file_handler)
 
@@ -404,7 +412,7 @@ def setup_logger(loggers=None,
     handlers.append(console_handler)
 
     # Set up the formatter:
-    log_format = log_format or '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    log_format = log_format or "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     formatter = logging.Formatter(log_format)
 
     # Add the formatter to the handlers and add the handlers to the logger:
@@ -417,6 +425,8 @@ def setup_logger(loggers=None,
 
         if modules is not None:
             for lgr_name, lgr in logging.root.manager.loggerDict.items():
-                if any([m in lgr_name for m in modules]) and isinstance(lgr, logging.Logger):
+                if any([m in lgr_name for m in modules]) and isinstance(
+                    lgr, logging.Logger
+                ):
                     lgr.setLevel(log_level)
                     lgr.addHandler(handler)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from importlib import import_module
 import os.path as osp
+from importlib import import_module
 from typing import Union
 
 import numpy as np
@@ -22,7 +22,7 @@ class _LazyZarr:
 zarr = _LazyZarr()
 
 
-class LDMatrix(object):
+class LDMatrix:
     """
     A class that represents Linkage-Disequilibrium (LD) matrices, which record
     the SNP-by-SNP pairwise correlations in a sample of genetic data. The class
@@ -85,7 +85,9 @@ class LDMatrix(object):
         try:
             matrix_group = zarr_group["matrix"]
         except KeyError as exc:
-            raise AssertionError("The Zarr group must contain a 'matrix' group.") from exc
+            raise AssertionError(
+                "The Zarr group must contain a 'matrix' group."
+            ) from exc
 
         assert isinstance(matrix_group, zarr.hierarchy.Group)
 
@@ -143,6 +145,22 @@ class LDMatrix(object):
                 return LDMatrix._zarr_store_path(nested_store)
         raise TypeError("Could not infer path for LDMatrix store.")
 
+    @staticmethod
+    def _open_store(store, path=None):
+        """Open a Zarr group, preferring consolidated metadata when available."""
+
+        open_kwargs = {"store": store, "mode": "r"}
+        if path is not None:
+            open_kwargs["path"] = path
+
+        try:
+            return zarr.open_consolidated(**open_kwargs)
+        except KeyError as exc:
+            missing_key = exc.args[0] if exc.args else None
+            if not str(missing_key).endswith(".zmetadata"):
+                raise
+            return zarr.open_group(**open_kwargs)
+
     @classmethod
     def from_path(cls, ld_store_path, cache_size=None, store_type=None):
         """
@@ -182,7 +200,6 @@ class LDMatrix(object):
         cls,
         url,
         cache_size=None,
-        consolidated=None,
         **storage_options,
     ):
         """
@@ -196,17 +213,17 @@ class LDMatrix(object):
         GitHub repository should use a raw-content URL rather than a
         `tree` or `blob` webpage URL.
 
-        Consolidated Zarr metadata is preferred because it avoids directory
-        listing and reduces the number of HTTP requests. When `consolidated`
-        is `None`, consolidated metadata is tried first and the loader falls
-        back to ordinary Zarr metadata if `.zmetadata` is absent.
+        Consolidated Zarr metadata is used automatically when present because
+        it avoids directory listing and reduces the number of HTTP requests.
+        The loader falls back to ordinary Zarr metadata when `.zmetadata` is
+        absent.
+
+        Remote ZIP URLs use targeted HTTP range requests and coalesce the
+        small entries needed during initialization.
 
         :param url: HTTP(S) URL to the root of a Zarr v2 store.
         :param cache_size: The size of the in-memory cache for the Zarr store
         (in bytes). Default is `None` (no caching).
-        :param consolidated: If `True`, require consolidated metadata. If
-        `False`, ignore consolidated metadata. If `None`, use it when present
-        and otherwise fall back to ordinary metadata. Default is `None`.
         :param storage_options: Additional options passed to fsspec's HTTP
         filesystem, such as `headers` for authenticated URLs.
 
@@ -227,6 +244,28 @@ class LDMatrix(object):
         if not url.startswith(("http://", "https://")):
             raise ValueError("url must start with 'http://' or 'https://'.")
 
+        from urllib.parse import urlparse
+
+        url_path = urlparse(url).path
+        if url_path.lower().endswith(".zip"):
+            from .utils.remote_zip import ReadOnlyZipStore
+
+            headers = storage_options.pop("headers", None)
+            if storage_options:
+                unsupported = ", ".join(sorted(storage_options))
+                raise TypeError(
+                    f"Unsupported remote ZIP storage options: {unsupported}"
+                )
+            zarr_path = osp.splitext(osp.basename(url_path))[0]
+            store = ReadOnlyZipStore(
+                url,
+                prefix=zarr_path,
+                headers=headers,
+            )
+            if cache_size is not None:
+                store = zarr.LRUStoreCache(store, max_size=cache_size)
+            return cls(cls._open_store(store))
+
         try:
             store = zarr.storage.FSStore(
                 url.rstrip("/"),
@@ -237,20 +276,12 @@ class LDMatrix(object):
         except ImportError as exc:
             raise ImportError(
                 "HTTP URL support requires fsspec's HTTP dependencies. "
-                "Install them with `pip install \"magenpy[http]\"`."
+                'Install them with `pip install "magenpy[http]"`.'
             ) from exc
         if cache_size is not None:
             store = zarr.LRUStoreCache(store, max_size=cache_size)
 
-        if consolidated is True:
-            ld_group = zarr.open_consolidated(store=store, mode="r")
-        elif consolidated is False:
-            ld_group = zarr.open_group(store=store, mode="r")
-        else:
-            try:
-                ld_group = zarr.open_consolidated(store=store, mode="r")
-            except KeyError:
-                ld_group = zarr.open_group(store=store, mode="r")
+        ld_group = cls._open_store(store)
 
         return cls(ld_group)
 
@@ -279,14 +310,14 @@ class LDMatrix(object):
         except ImportError as exc:
             raise ImportError(
                 "AWS S3 support requires the optional 's3fs' dependency. "
-                "Install it with `pip install \"magenpy[s3]\"`."
+                'Install it with `pip install "magenpy[s3]"`.'
             ) from exc
 
         s3 = s3fs.S3FileSystem(anon=True, client_kwargs=dict(region_name="us-east-2"))
         store = s3fs.S3Map(root=s3_path.replace("s3://", ""), s3=s3, check=False)
         if cache_size is not None:
             store = zarr.LRUStoreCache(store, max_size=cache_size)
-        ld_group = zarr.open_group(store=store, mode="r")
+        ld_group = cls._open_store(store)
 
         return cls(ld_group)
 
@@ -323,7 +354,7 @@ class LDMatrix(object):
         except ImportError as exc:
             raise ImportError(
                 "Google Cloud Storage support requires the optional 'gcsfs' "
-                "dependency. Install it with `pip install \"magenpy[gcs]\"`."
+                'dependency. Install it with `pip install "magenpy[gcs]"`.'
             ) from exc
 
         if token is not None:
@@ -333,7 +364,7 @@ class LDMatrix(object):
         store = gcs.get_mapper(gcs_path, check=False)
         if cache_size is not None:
             store = zarr.LRUStoreCache(store, max_size=cache_size)
-        ld_group = zarr.open_group(store=store, mode="r")
+        ld_group = cls._open_store(store)
 
         return cls(ld_group)
 
@@ -341,25 +372,53 @@ class LDMatrix(object):
     def from_hf(cls, hf_path, cache_size=None):
         """
         Initialize an `LDMatrix` object from a Zarr store hosted on Hugging Face.
+
+        ZIP stores are read with targeted HTTP ranges. Initialization entries
+        are cached and coalesced while matrix data chunks remain exact reads.
         """
 
         try:
-            import huggingface_hub  # noqa: F401
+            import huggingface_hub
         except ImportError as exc:
             raise ImportError(
                 "Hugging Face support requires the optional 'huggingface_hub' "
-                "dependency. Install it with `pip install \"magenpy[hf]\"`."
+                'dependency. Install it with `pip install "magenpy[hf]"`.'
             ) from exc
 
-        import fsspec
+        if hf_path.lower().endswith(".zip"):
+            from .utils.remote_zip import ReadOnlyZipStore
 
-        mapper_path = "zip::" + hf_path if hf_path.lower().endswith(".zip") else hf_path
-        store = fsspec.get_mapper(mapper_path)
+            hf_fs = huggingface_hub.HfFileSystem()
+            url = hf_fs.url(hf_path)
+            headers = huggingface_hub.utils.build_hf_headers(token=hf_fs.token)
+            session = huggingface_hub.utils.get_session()
+
+            def request_range(range_header):
+                response = session.get(
+                    url,
+                    headers={**headers, "Range": range_header},
+                    follow_redirects=True,
+                )
+                return response.status_code, dict(response.headers), response.content
+
+            store = ReadOnlyZipStore(
+                url,
+                prefix=osp.splitext(osp.basename(hf_path))[0],
+                headers=headers,
+                request=request_range,
+            )
+        else:
+            import fsspec
+
+            store = fsspec.get_mapper(hf_path)
         if cache_size is not None:
             store = zarr.LRUStoreCache(store, max_size=cache_size)
 
-        zarr_path = osp.splitext(osp.basename(hf_path))[0]
-        ld_group = zarr.open_group(store, mode="r", path=zarr_path)
+        if hf_path.lower().endswith(".zip"):
+            ld_group = cls._open_store(store)
+        else:
+            zarr_path = osp.splitext(osp.basename(hf_path))[0]
+            ld_group = cls._open_store(store, path=zarr_path)
 
         return cls(ld_group)
 
@@ -372,7 +431,7 @@ class LDMatrix(object):
         zip_store = cls._zarr_store(zip_path, mode="r", store_type="zip")
         if cache_size is not None:
             zip_store = zarr.LRUStoreCache(zip_store, max_size=cache_size)
-        ld_group = zarr.open_group(zip_store, mode="r")
+        ld_group = cls._open_store(zip_store)
 
         return cls(ld_group)
 
@@ -395,7 +454,7 @@ class LDMatrix(object):
                 dir_store = cls._zarr_store(dir_path, store_type="directory")
                 if cache_size is not None:
                     dir_store = zarr.LRUStoreCache(dir_store, max_size=cache_size)
-                ld_group = zarr.open_group(dir_store, mode="r")
+                ld_group = cls._open_store(dir_store)
                 return cls(ld_group)
             except zarr.hierarchy.GroupNotFoundError as e:
                 if level < 1:

@@ -1,6 +1,7 @@
 import os
 import os.path as osp
 import copy
+import logging
 from joblib import Parallel, delayed
 
 import pandas as pd
@@ -8,6 +9,9 @@ import numpy as np
 import zarr
 
 from ...LDMatrix import LDMatrix
+
+
+logger = logging.getLogger(__name__)
 
 
 def ld_store_path(output_dir, chromosome, store_type=None):
@@ -44,7 +48,7 @@ def delete_ld_store(ld_mat):
     try:
         ld_mat.store.rmdir()
     except Exception as e:
-        print(e)
+        logger.warning("Failed to delete LD store: %s", e)
 
 
 def combine_ld_matrices(ld_matrices, output_dir, overwrite=True, delete_original=False, store_type=None):
@@ -207,7 +211,7 @@ def expand_snps(seed_snps, ldm, rsq_threshold=0.9):
     snp_seed_idx = np.where(np.isin(seed_snps, ldm_snps))
 
     if len(snp_seed_idx) < 1:
-        print("Warning: None of the seed SNPs are present in the LD matrix object!")
+        logger.warning("None of the seed SNPs are present in the LD matrix object!")
         return seed_snps
 
     final_set = set(seed_snps)

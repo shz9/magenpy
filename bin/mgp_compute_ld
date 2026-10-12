@@ -191,8 +191,6 @@ def set_ld_metadata(ld_matrices, metadata):
             ld_mat.set_store_attr(key, value)
 
 
-print_cli_logo(mgp, LOGO_DESCRIPTION)
-
 # --------- Options ---------
 
 parser = argparse.ArgumentParser(
@@ -381,6 +379,7 @@ parser.add_argument(
 
 args = parser.parse_args()
 setup_cli_logger(logger, args.log_level)
+print_cli_logo(mgp, LOGO_DESCRIPTION, output_logger=logger)
 validate_args(args)
 ld_kwargs = get_ld_kwargs(args)
 metadata = parse_metadata(args.metadata)

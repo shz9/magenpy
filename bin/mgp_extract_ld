@@ -259,9 +259,9 @@ def main():
     """
     Parse CLI inputs, extract requested LD entries, and write the output matrix.
     """
-    print_cli_logo(mgp, LOGO_DESCRIPTION)
     args = parse_args()
     setup_cli_logger(logger, args.log_level)
+    print_cli_logo(mgp, LOGO_DESCRIPTION, output_logger=logger)
 
     selectors = [
         args.snps is not None,

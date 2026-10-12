@@ -1,12 +1,10 @@
 import os.path as osp
+
 import numpy as np
 import pandas as pd
 
 
-def score_plink2(genotype_matrix,
-                 betas,
-                 standardize_genotype=False,
-                 temp_dir='temp'):
+def score_plink2(genotype_matrix, betas, standardize_genotype=False, temp_dir="temp"):
     """
     Perform linear scoring using PLINK2.
     This function takes a genotype matrix object encapsulating and referencing
@@ -52,18 +50,18 @@ def score_plink2(genotype_matrix,
 
     s_table = genotype_matrix.sample_table
 
-    keep_file = osp.join(temp_dir, 'samples.keep')
+    keep_file = osp.join(temp_dir, "samples.keep")
     keep_table = s_table.get_individual_table()
     keep_table.to_csv(keep_file, index=False, header=False, sep="\t")
 
-    eff_file = osp.join(temp_dir, 'variant_effect_size.txt')
-    df = genotype_matrix.get_snp_table(['SNP', 'A1'])
+    eff_file = osp.join(temp_dir, "variant_effect_size.txt")
+    df = genotype_matrix.get_snp_table(["SNP", "A1"])
 
     for i in range(betas_shape):
-        df['BETA' + str(i)] = betas[:, i]
+        df["BETA" + str(i)] = betas[:, i]
 
     # Remove any variants whose effect size is zero for all BETAs:
-    df = df.loc[df[['BETA' + str(i) for i in range(betas_shape)]].sum(axis=1) != 0]
+    df = df.loc[df[["BETA" + str(i) for i in range(betas_shape)]].sum(axis=1) != 0]
 
     # If none of the variants have an effect size, return zeros:
     if len(df) == 0:
@@ -71,13 +69,13 @@ def score_plink2(genotype_matrix,
     else:
         # Standardize the genotype, if requested:
         if standardize_genotype:
-            standardize_text = ' variance-standardize'
+            standardize_text = " variance-standardize"
         else:
-            standardize_text = ''
+            standardize_text = ""
 
         df.to_csv(eff_file, index=False, sep="\t")
 
-        output_file = osp.join(temp_dir, 'samples')
+        output_file = osp.join(temp_dir, "samples")
 
         cmd = [
             f"--bfile {genotype_matrix.bed_file}",
@@ -89,22 +87,24 @@ def score_plink2(genotype_matrix,
 
         plink2.execute(cmd)
 
-        if not osp.isfile(output_file + '.sscore'):
+        if not osp.isfile(output_file + ".sscore"):
             raise FileNotFoundError
 
-        dtypes = {'FID': str, 'IID': str}
+        dtypes = {"FID": str, "IID": str}
         for i in range(betas_shape):
-            dtypes.update({'PRS' + str(i): np.float64})
+            dtypes.update({"PRS" + str(i): np.float64})
 
-        chr_pgs = pd.read_csv(output_file + '.sscore',
-                              sep=r'\s+',
-                              names=['FID', 'IID'] + ['PRS' + str(i) for i in range(betas_shape)],
-                              skiprows=1,
-                              usecols=[0, 1] + [4 + betas_shape + i for i in range(betas_shape)],
-                              dtype=dtypes)
-        chr_pgs = keep_table.astype({'FID': str, 'IID': str}).merge(chr_pgs)
+        chr_pgs = pd.read_csv(
+            output_file + ".sscore",
+            sep=r"\s+",
+            names=["FID", "IID"] + ["PRS" + str(i) for i in range(betas_shape)],
+            skiprows=1,
+            usecols=[0, 1] + [4 + betas_shape + i for i in range(betas_shape)],
+            dtype=dtypes,
+        )
+        chr_pgs = keep_table.astype({"FID": str, "IID": str}).merge(chr_pgs)
 
-        pgs = chr_pgs[['PRS' + str(i) for i in range(betas_shape)]].values
+        pgs = chr_pgs[["PRS" + str(i) for i in range(betas_shape)]].values
 
     if betas_shape == 1:
         pgs = pgs.flatten()

@@ -158,9 +158,9 @@ def main():
     """
     Parse CLI inputs, expand focal SNPs to LD neighbors, and write SNP IDs.
     """
-    print_cli_logo(mgp, LOGO_DESCRIPTION)
     args = parse_args()
     setup_cli_logger(logger, args.log_level)
+    print_cli_logo(mgp, LOGO_DESCRIPTION, output_logger=logger)
 
     if not 0.0 < args.r2_threshold <= 1.0:
         raise ValueError("--r2-threshold must be in (0, 1].")

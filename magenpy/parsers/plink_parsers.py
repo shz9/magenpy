@@ -1,5 +1,5 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 
 def parse_bim_file(plink_bfile):
@@ -20,23 +20,25 @@ def parse_bim_file(plink_bfile):
     :type plink_bfile: str
     """
 
-    if '.bim' not in plink_bfile:
-        if '.bed' in plink_bfile:
-            plink_bfile = plink_bfile.replace('.bed', '.bim')
+    if ".bim" not in plink_bfile:
+        if ".bed" in plink_bfile:
+            plink_bfile = plink_bfile.replace(".bed", ".bim")
         else:
-            plink_bfile = plink_bfile + '.bim'
+            plink_bfile = plink_bfile + ".bim"
 
-    bim_df = pd.read_csv(plink_bfile,
-                         sep=r'\s+',
-                         names=['CHR', 'SNP', 'cM', 'POS', 'A1', 'A2'],
-                         dtype={
-                             'CHR': int,
-                             'SNP': str,
-                             'cM': np.float32,
-                             'POS': np.int32,
-                             'A1': str,
-                             'A2': str
-                         })
+    bim_df = pd.read_csv(
+        plink_bfile,
+        sep=r"\s+",
+        names=["CHR", "SNP", "cM", "POS", "A1", "A2"],
+        dtype={
+            "CHR": int,
+            "SNP": str,
+            "cM": np.float32,
+            "POS": np.int32,
+            "A1": str,
+            "A2": str,
+        },
+    )
 
     return bim_df
 
@@ -59,34 +61,34 @@ def parse_fam_file(plink_bfile):
     :type plink_bfile: str
     """
 
-    if '.fam' not in plink_bfile:
-        if '.bed' in plink_bfile:
-            plink_bfile = plink_bfile.replace('.bed', '.fam')
+    if ".fam" not in plink_bfile:
+        if ".bed" in plink_bfile:
+            plink_bfile = plink_bfile.replace(".bed", ".fam")
         else:
-            plink_bfile = plink_bfile + '.fam'
+            plink_bfile = plink_bfile + ".fam"
 
-    fam_df = pd.read_csv(plink_bfile,
-                         sep=r'\s+',
-                         usecols=list(range(6)),
-                         names=['FID', 'IID', 'fatherID', 'motherID', 'sex', 'phenotype'],
-                         dtype={'FID': str,
-                                'IID': str,
-                                'fatherID': str,
-                                'motherID': str,
-                                'sex': np.float32,
-                                'phenotype': np.float32
-                                },
-                         na_values={
-                             'phenotype': [-9.],
-                             'sex': [0]
-                         })
+    fam_df = pd.read_csv(
+        plink_bfile,
+        sep=r"\s+",
+        usecols=list(range(6)),
+        names=["FID", "IID", "fatherID", "motherID", "sex", "phenotype"],
+        dtype={
+            "FID": str,
+            "IID": str,
+            "fatherID": str,
+            "motherID": str,
+            "sex": np.float32,
+            "phenotype": np.float32,
+        },
+        na_values={"phenotype": [-9.0], "sex": [0]},
+    )
 
     # If the phenotype is all null or unknown, drop the column:
-    if fam_df['phenotype'].isnull().all():
-        fam_df.drop('phenotype', axis=1, inplace=True)
+    if fam_df["phenotype"].isnull().all():
+        fam_df.drop("phenotype", axis=1, inplace=True)
 
     # If the sex column is all null or unknown, drop the column:
-    if fam_df['sex'].isnull().all():
-        fam_df.drop('sex', axis=1, inplace=True)
+    if fam_df["sex"].isnull().all():
+        fam_df.drop("sex", axis=1, inplace=True)
 
     return fam_df

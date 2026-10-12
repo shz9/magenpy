@@ -137,30 +137,20 @@ def test_from_url_falls_back_when_consolidated_metadata_is_absent(monkeypatch):
     assert calls["open_group_args"] == (store, "r")
 
 
-def test_from_url_can_skip_consolidated_metadata(monkeypatch):
-    calls = {}
-    store = object()
-    ld_group = _empty_ld_group()
-
-    _patch_fs_store(monkeypatch, lambda *args, **kwargs: store)
-
-    def open_group(*, store, mode):
-        calls["open_group_args"] = (store, mode)
-        return ld_group
-
-    monkeypatch.setattr(zarr, "open_group", open_group)
+def test_open_store_does_not_hide_invalid_consolidated_metadata(monkeypatch):
     monkeypatch.setattr(
         zarr,
         "open_consolidated",
-        lambda **kwargs: pytest.fail("consolidated metadata should be skipped"),
+        lambda **kwargs: (_ for _ in ()).throw(KeyError("matrix/.zarray")),
+    )
+    monkeypatch.setattr(
+        zarr,
+        "open_group",
+        lambda **kwargs: pytest.fail("ordinary metadata should not be used"),
     )
 
-    result = LDMatrix.from_url(
-        "https://example.com/store.zarr", consolidated=False
-    )
-
-    assert isinstance(result, LDMatrix)
-    assert calls["open_group_args"] == (store, "r")
+    with pytest.raises(KeyError, match="matrix/.zarray"):
+        LDMatrix._open_store(object())
 
 
 def test_from_url_rejects_non_http_urls():
@@ -187,12 +177,10 @@ def test_from_url_defers_optional_dependency_check_to_zarr(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", import_without_fsspec)
     _patch_fs_store(monkeypatch, lambda *args, **kwargs: object())
 
-    monkeypatch.setattr(zarr, "open_group", lambda **kwargs: ld_group)
+    monkeypatch.setattr(zarr, "open_consolidated", lambda **kwargs: ld_group)
 
     assert isinstance(
-        StubLDMatrix.from_url(
-            "https://example.com/store.zarr", consolidated=False
-        ),
+        StubLDMatrix.from_url("https://example.com/store.zarr"),
         StubLDMatrix,
     )
 
@@ -205,6 +193,122 @@ def test_from_url_explains_how_to_install_http_dependencies(monkeypatch):
 
     with pytest.raises(ImportError, match=r"magenpy\[http\]"):
         LDMatrix.from_url("https://example.com/store.zarr")
+
+
+def test_from_s3_prefers_consolidated_metadata(monkeypatch):
+    calls = {}
+    store = object()
+    ld_group = _empty_ld_group()
+
+    class FakeS3FileSystem:
+        def __init__(self, **kwargs):
+            calls["filesystem_kwargs"] = kwargs
+
+    def s3_map(*, root, s3, check):
+        calls["mapper_args"] = (root, s3, check)
+        return store
+
+    fake_s3fs = SimpleNamespace(
+        S3FileSystem=FakeS3FileSystem,
+        S3Map=s3_map,
+    )
+    monkeypatch.setitem(sys.modules, "s3fs", fake_s3fs)
+
+    def open_consolidated(*, store, mode):
+        calls["open_consolidated_args"] = (store, mode)
+        return ld_group
+
+    monkeypatch.setattr(zarr, "open_consolidated", open_consolidated)
+
+    result = LDMatrix.from_s3("s3://bucket/path/to/store.zarr")
+
+    assert isinstance(result, LDMatrix)
+    assert calls["filesystem_kwargs"] == {
+        "anon": True,
+        "client_kwargs": {"region_name": "us-east-2"},
+    }
+    assert calls["mapper_args"][0] == "bucket/path/to/store.zarr"
+    assert calls["mapper_args"][2] is False
+    assert calls["open_consolidated_args"] == (store, "r")
+
+
+def test_from_hf_prefers_consolidated_metadata_for_subgroup(monkeypatch):
+    calls = {}
+    store = object()
+    ld_group = _empty_ld_group()
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace())
+
+    import fsspec
+
+    def get_mapper(path):
+        calls["mapper_path"] = path
+        return store
+
+    monkeypatch.setattr(fsspec, "get_mapper", get_mapper)
+
+    def open_consolidated(*, store, mode, path):
+        calls["open_consolidated_args"] = (store, mode, path)
+        return ld_group
+
+    monkeypatch.setattr(zarr, "open_consolidated", open_consolidated)
+
+    result = LDMatrix.from_hf("hf://datasets/org/repo/store.zarr")
+
+    assert isinstance(result, LDMatrix)
+    assert calls["mapper_path"] == "hf://datasets/org/repo/store.zarr"
+    assert calls["open_consolidated_args"] == (store, "r", "store")
+
+
+def test_from_hf_uses_read_only_store_for_remote_zip(monkeypatch):
+    calls = {}
+    store = object()
+    ld_group = _empty_ld_group()
+
+    class FakeHfFileSystem:
+        token = "token"
+
+        def url(self, path):
+            calls["hf_path"] = path
+            return "https://example.com/chr_1.zip"
+
+    class FakeResponse:
+        status_code = 206
+        headers = {"content-range": "bytes 0-0/1"}
+        content = b"x"
+
+    class FakeSession:
+        def get(self, *args, **kwargs):
+            calls["request_args"] = (args, kwargs)
+            return FakeResponse()
+
+    fake_hub = SimpleNamespace(
+        HfFileSystem=FakeHfFileSystem,
+        utils=SimpleNamespace(
+            build_hf_headers=lambda token: {"Authorization": f"Bearer {token}"},
+            get_session=lambda: FakeSession(),
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+
+    import magenpy.utils.remote_zip as remote_zip
+
+    def read_only_zip_store(url, **kwargs):
+        calls["store_args"] = (url, kwargs)
+        return store
+
+    monkeypatch.setattr(remote_zip, "ReadOnlyZipStore", read_only_zip_store)
+    monkeypatch.setattr(LDMatrix, "_open_store", lambda input_store: ld_group)
+
+    result = LDMatrix.from_hf("hf://datasets/org/repo/EUR/chr_1.zip")
+
+    assert isinstance(result, LDMatrix)
+    assert calls["hf_path"] == "hf://datasets/org/repo/EUR/chr_1.zip"
+    assert calls["store_args"][0] == "https://example.com/chr_1.zip"
+    assert calls["store_args"][1]["prefix"] == "chr_1"
+    assert calls["store_args"][1]["headers"] == {
+        "Authorization": "Bearer token"
+    }
 
 
 def test_ld_matrix_validation_does_not_require_store_listing(monkeypatch):
@@ -250,11 +354,11 @@ def test_from_gcs_opens_mapper_with_credentials_and_cache(monkeypatch):
     matrix_group.zeros("data", shape=1)
     matrix_group.zeros("indptr", shape=2)
 
-    def open_group(*, store, mode):
-        calls["open_group_args"] = (store, mode)
+    def open_consolidated(*, store, mode):
+        calls["open_consolidated_args"] = (store, mode)
         return ld_group
 
-    monkeypatch.setattr(zarr, "open_group", open_group)
+    monkeypatch.setattr(zarr, "open_consolidated", open_consolidated)
 
     result = LDMatrix.from_gcs(
         "gs://bucket/path/to/store.zarr",
@@ -275,7 +379,7 @@ def test_from_gcs_opens_mapper_with_credentials_and_cache(monkeypatch):
         False,
     )
     assert calls["cache_args"] == (mapper, 2048)
-    assert calls["open_group_args"] == (cached_mapper, "r")
+    assert calls["open_consolidated_args"] == (cached_mapper, "r")
 
 
 def test_from_gcs_explains_how_to_install_dependency(monkeypatch):

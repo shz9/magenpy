@@ -1,3 +1,4 @@
+import logging
 import tempfile
 from typing import Union
 
@@ -6,6 +7,8 @@ import pandas as pd
 
 from .SampleTable import SampleTable
 from .utils.system_utils import makedir
+
+logger = logging.getLogger(__name__)
 
 
 class GenotypeMatrix(object):
@@ -689,14 +692,12 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
 
         from pandas_plink import read_plink1_bin
 
-        warnings.warn(
+        logger.warning(
             "The xarray genotype backend is likely broken with the current "
             "NumPy 2 compatibility stack and may be deprecated in a future "
             "magenpy release unless upstream pandas-plink/xarray support is "
             "restored. Prefer backend='magenpy' or backend='bed-reader' for "
-            "new workflows.",
-            UserWarning,
-            stacklevel=2,
+            "new workflows."
         )
 
         def convert_string_python_to_numpy(ds):
@@ -725,7 +726,7 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
                                 coord.attrs,
                             )
                         except Exception as e:
-                            print(f"Failed to convert {coord_name}: {e}")
+                            logger.warning("Failed to convert %s: %s", coord_name, e)
 
             if coord_updates:
                 return ds.assign_coords(coord_updates)

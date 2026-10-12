@@ -1,5 +1,5 @@
-from scipy.sparse.linalg import LinearOperator
 import numpy as np
+from scipy.sparse.linalg import LinearOperator
 
 
 class LDLinearOperator(LinearOperator):
@@ -31,18 +31,21 @@ class LDLinearOperator(LinearOperator):
     :ivar threads: The number of threads to use for the computation (experimental).
 
     """
-    def __init__(self,
-                 ld_indptr,
-                 ld_data,
-                 leftmost_idx,
-                 shape=None,
-                 symmetric=False,
-                 diag_shift=None,
-                 dtype='float32',
-                 include_diag=True,
-                 lower_triangle=True,
-                 upper_triangle=True,
-                 threads=1):
+
+    def __init__(
+        self,
+        ld_indptr,
+        ld_data,
+        leftmost_idx,
+        shape=None,
+        symmetric=False,
+        diag_shift=None,
+        dtype="float32",
+        include_diag=True,
+        lower_triangle=True,
+        upper_triangle=True,
+        threads=1,
+    ):
         """
         Initialize an LDLinearOperator object by passing the index pointer array and data array.
 
@@ -59,7 +62,10 @@ class LDLinearOperator(LinearOperator):
 
         """
 
-        super().__init__(dtype=np.dtype(dtype), shape=(ld_indptr.shape[0] - 1, ld_indptr.shape[0] - 1))
+        super().__init__(
+            dtype=np.dtype(dtype),
+            shape=(ld_indptr.shape[0] - 1, ld_indptr.shape[0] - 1),
+        )
 
         self.ld_indptr = ld_indptr
         self.ld_data = ld_data
@@ -100,9 +106,9 @@ class LDLinearOperator(LinearOperator):
         If the data is not quantized, returns 1.
         """
         if np.issubdtype(self.ld_data_type, np.integer):
-            return 1./np.iinfo(self.ld_data.dtype).max
+            return 1.0 / np.iinfo(self.ld_data.dtype).max
         else:
-            return 1.
+            return 1.0
 
     @property
     def is_square(self) -> bool:
@@ -135,7 +141,9 @@ class LDLinearOperator(LinearOperator):
         :return: A numpy array representing the result of the matrix-vector multiplication.
         """
 
-        assert self.is_square or self.symmetric, "Only square or symmetric matrices are supported for now."
+        assert self.is_square or self.symmetric, (
+            "Only square or symmetric matrices are supported for now."
+        )
         assert x.shape[0] == self.shape[1]
 
         from .stats.ld.c_utils import ld_dot, ut_ld_dot
@@ -143,24 +151,28 @@ class LDLinearOperator(LinearOperator):
         flatten = len(x.shape) > 1
 
         if self.symmetric:
-            out_vec = ld_dot(self.leftmost_idx,
-                             self.ld_indptr,
-                             self.ld_data,
-                             x.flatten() if flatten else x,
-                             x.dtype.type(self.dequantization_scale),
-                             self.threads)
+            out_vec = ld_dot(
+                self.leftmost_idx,
+                self.ld_indptr,
+                self.ld_data,
+                x.flatten() if flatten else x,
+                x.dtype.type(self.dequantization_scale),
+                self.threads,
+            )
         else:
-            out_vec = ut_ld_dot(self.ld_indptr,
-                                self.ld_data,
-                                x.flatten() if flatten else x,
-                                x.dtype.type(self.dequantization_scale),
-                                self.lower_triangle,
-                                self.upper_triangle,
-                                self.include_diag,
-                                self.threads)
+            out_vec = ut_ld_dot(
+                self.ld_indptr,
+                self.ld_data,
+                x.flatten() if flatten else x,
+                x.dtype.type(self.dequantization_scale),
+                self.lower_triangle,
+                self.upper_triangle,
+                self.include_diag,
+                self.threads,
+            )
 
         if self.diag_shift is not None:
-            out_vec += x*self.diag_shift
+            out_vec += x * self.diag_shift
 
         if flatten:
             return out_vec.reshape(-1, 1)
@@ -206,7 +218,7 @@ class LDLinearOperator(LinearOperator):
         else:
             out = np.zeros_like(self.ld_data, dtype=x.dtype)
 
-        alpha = alpha or 1.
+        alpha = alpha or 1.0
 
         from .stats.ld.c_utils import rank_one_update
 
@@ -218,7 +230,7 @@ class LDLinearOperator(LinearOperator):
             out,
             alpha,
             self.dequantization_scale,
-            self.threads
+            self.threads,
         )
 
         # Adjustment to the diagonal:
@@ -237,7 +249,7 @@ class LDLinearOperator(LinearOperator):
                 include_diag=self.include_diag,
                 lower_triangle=self.lower_triangle,
                 upper_triangle=self.upper_triangle,
-                threads=self.threads
+                threads=self.threads,
             )
 
             new_ld_lop.set_diag_shift(diag_shift)
@@ -262,9 +274,11 @@ class LDLinearOperator(LinearOperator):
             if np.issubdtype(self.ld_data_type, np.integer):
                 fill_val = np.iinfo(self.ld_data_type).max
             else:
-                fill_val = 1.
+                fill_val = 1.0
 
-            data, indptr, leftmost_idx = symmetrize_ut_csr_matrix(self.ld_indptr, self.ld_data, fill_val)
+            data, indptr, leftmost_idx = symmetrize_ut_csr_matrix(
+                self.ld_indptr, self.ld_data, fill_val
+            )
         else:
             data = self.ld_data
             indptr = self.ld_indptr
@@ -276,6 +290,7 @@ class LDLinearOperator(LinearOperator):
             dtype = self.dtype
             if np.issubdtype(self.ld_data_type, np.integer):
                 from .utils.model_utils import dequantize
+
                 data = dequantize(data, float_dtype=self.dtype)
             else:
                 data = data.astype(self.dtype, copy=False)
@@ -284,32 +299,29 @@ class LDLinearOperator(LinearOperator):
 
         # ---------------------------
         # Step 3: Prepare indices for the CSR data structure:
+        from scipy.sparse import csr_matrix, diags, identity
+
         from .stats.ld.c_utils import expand_ranges
-        from scipy.sparse import csr_matrix, identity, diags
 
-        indices = expand_ranges(leftmost_idx,
-                                (np.diff(indptr) + leftmost_idx).astype(np.int32),
-                                data.shape[0])
-
-        mat = csr_matrix(
-            (
-                data,
-                indices,
-                indptr
-            ),
-            shape=self.shape,
-            dtype=dtype
+        indices = expand_ranges(
+            leftmost_idx,
+            (np.diff(indptr) + leftmost_idx).astype(np.int32),
+            data.shape[0],
         )
+
+        mat = csr_matrix((data, indices, indptr), shape=self.shape, dtype=dtype)
 
         # ---------------------------
         # Step 4: Add the diagonal shift (if instantiated):
 
         if not keep_sparse and self.diag_shift is not None:
-
             if np.isscalar(self.diag_shift):
-                mat += identity(self.shape[0], format='csr', dtype=self.dtype) * self.diag_shift
+                mat += (
+                    identity(self.shape[0], format="csr", dtype=self.dtype)
+                    * self.diag_shift
+                )
             else:
-                mat += diags(self.diag_shift, format='csr', dtype=self.dtype)
+                mat += diags(self.diag_shift, format="csr", dtype=self.dtype)
 
         return mat
 
@@ -332,10 +344,16 @@ class LDLinearOperator(LinearOperator):
 
         def check_normalize_slice(in_slice, dim=0):
             # Check that the slice is with step 1:
-            assert in_slice.step is None or in_slice.step == 1, "Slice with step is not supported."
+            assert in_slice.step is None or in_slice.step == 1, (
+                "Slice with step is not supported."
+            )
             # Check that the start/end are within bounds:
-            assert in_slice.start is None or 0 <= in_slice.start < self.shape[dim], "Index out of bounds."
-            assert in_slice.stop is None or 0 < in_slice.stop <= self.shape[dim], "Index out of bounds."
+            assert in_slice.start is None or 0 <= in_slice.start < self.shape[dim], (
+                "Index out of bounds."
+            )
+            assert in_slice.stop is None or 0 < in_slice.stop <= self.shape[dim], (
+                "Index out of bounds."
+            )
 
             return in_slice.start or 0, in_slice.stop or self.shape[dim]
 
@@ -344,7 +362,6 @@ class LDLinearOperator(LinearOperator):
             return index, index + 1
 
         if isinstance(item, tuple):
-
             # --- Row slicing ---
             if isinstance(item[0], slice):
                 start_row, end_row = check_normalize_slice(item[0])
@@ -381,7 +398,7 @@ class LDLinearOperator(LinearOperator):
             start_row,
             end_row,
             start_col,
-            end_col
+            end_col,
         )
 
         return LDLinearOperator(
@@ -395,7 +412,7 @@ class LDLinearOperator(LinearOperator):
             include_diag=self.include_diag,
             lower_triangle=self.lower_triangle,
             upper_triangle=self.upper_triangle,
-            threads=self.threads
+            threads=self.threads,
         )
 
     def to_numpy(self, block_start=None, block_end=None):
@@ -428,7 +445,7 @@ class LDLinearOperator(LinearOperator):
             self.ld_data,
             block_start,
             block_end,
-            self.dequantization_scale
+            self.dequantization_scale,
         )
 
     def getrow(self, row_idx, symmetric=False, return_indices=False):
@@ -444,19 +461,29 @@ class LDLinearOperator(LinearOperator):
 
         if symmetric:
             if self.symmetric:
-                data = self.ld_data[self.ld_indptr[row_idx]:self.ld_indptr[row_idx + 1]]
+                data = self.ld_data[
+                    self.ld_indptr[row_idx] : self.ld_indptr[row_idx + 1]
+                ]
             else:
-                raise NotImplementedError("Symmetric extraction is only supported for symmetric matrices for now.")
+                raise NotImplementedError(
+                    "Symmetric extraction is only supported for symmetric matrices for now."
+                )
         else:
             if self.symmetric:
                 offset = row_idx - self.leftmost_idx[row_idx] + 1
-                data = self.ld_data[self.ld_indptr[row_idx] + offset:self.ld_indptr[row_idx + 1]]
+                data = self.ld_data[
+                    self.ld_indptr[row_idx] + offset : self.ld_indptr[row_idx + 1]
+                ]
             else:
-                data = self.ld_data[self.ld_indptr[row_idx]:self.ld_indptr[row_idx + 1]]
+                data = self.ld_data[
+                    self.ld_indptr[row_idx] : self.ld_indptr[row_idx + 1]
+                ]
 
         if return_indices:
             if symmetric:
-                indices = np.arange(self.leftmost_idx[row_idx], self.leftmost_idx[row_idx] + len(data))
+                indices = np.arange(
+                    self.leftmost_idx[row_idx], self.leftmost_idx[row_idx] + len(data)
+                )
             else:
                 indices = np.arange(row_idx + 1, row_idx + len(data))
             return data, indices

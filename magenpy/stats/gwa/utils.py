@@ -1,11 +1,15 @@
-from typing import Union
+import logging
 import os.path as osp
-import pandas as pd
+from typing import Union
+
 import numpy as np
-import warnings
+import pandas as pd
+
 from ...GWADataLoader import GWADataLoader
 from ...SumstatsTable import SumstatsTable
 from ..transforms.phenotype import chained_transform
+
+logger = logging.getLogger(__name__)
 
 
 def inflation_factor(sumstats_input: Union[GWADataLoader, SumstatsTable, np.array]):
@@ -22,7 +26,9 @@ def inflation_factor(sumstats_input: Union[GWADataLoader, SumstatsTable, np.arra
     """
 
     if isinstance(sumstats_input, GWADataLoader):
-        chisq = np.concatenate([ss.get_chisq_statistic() for ss in sumstats_input.sumstats_table.values()])
+        chisq = np.concatenate(
+            [ss.get_chisq_statistic() for ss in sumstats_input.sumstats_table.values()]
+        )
     elif isinstance(sumstats_input, SumstatsTable):
         chisq = sumstats_input.get_chisq_statistic()
     else:
@@ -33,9 +39,7 @@ def inflation_factor(sumstats_input: Union[GWADataLoader, SumstatsTable, np.arra
     return np.median(chisq) / chi2.median(1)
 
 
-def perform_gwa_plink2(genotype_matrix,
-                       temp_dir='temp',
-                       **phenotype_transform_kwargs):
+def perform_gwa_plink2(genotype_matrix, temp_dir="temp", **phenotype_transform_kwargs):
     """
 
     Perform genome-wide association testing using plink 2.0
@@ -63,14 +67,16 @@ def perform_gwa_plink2(genotype_matrix,
     s_table = genotype_matrix.sample_table
 
     if s_table.phenotype_likelihood is None:
-        warnings.warn("The phenotype likelihood is not specified! "
-                      "Assuming that the phenotype is continuous...")
+        logger.warning(
+            "The phenotype likelihood is not specified! "
+            "Assuming that the phenotype is continuous..."
+        )
 
     # It can happen sometimes that some interfaces call this function
     # with the `standardize_genotype` flag set to True. We remove this
     # flag from the phenotype transformation kwargs to avoid errors:
-    if 'standardize_genotype' in phenotype_transform_kwargs:
-        del phenotype_transform_kwargs['standardize_genotype']
+    if "standardize_genotype" in phenotype_transform_kwargs:
+        del phenotype_transform_kwargs["standardize_genotype"]
 
     # Transform the phenotype:
     phenotype, mask = chained_transform(s_table, **phenotype_transform_kwargs)
@@ -80,34 +86,36 @@ def perform_gwa_plink2(genotype_matrix,
 
     # If the likelihood is binomial, transform the phenotype into
     # plink's coding for case/control (1/2) rather than (0/1).
-    if s_table.phenotype_likelihood == 'binomial':
-        phe_table['phenotype'] += 1
+    if s_table.phenotype_likelihood == "binomial":
+        phe_table["phenotype"] += 1
     else:
         phe_table = phe_table.loc[mask, :]
-        phe_table['phenotype'] = phenotype
+        phe_table["phenotype"] = phenotype
 
     # Output phenotype table:
     phe_fname = osp.join(temp_dir, "pheno.txt")
     phe_table.to_csv(phe_fname, sep="\t", index=False, header=False)
 
     # Process covariates:
-    if s_table.phenotype_likelihood == 'binomial' and 'adjust_covariates' in phenotype_transform_kwargs and \
-            phenotype_transform_kwargs['adjust_covariates']:
-
+    if (
+        s_table.phenotype_likelihood == "binomial"
+        and "adjust_covariates" in phenotype_transform_kwargs
+        and phenotype_transform_kwargs["adjust_covariates"]
+    ):
         covar_fname = osp.join(temp_dir, "covar.txt")
         covar = s_table.get_covariates_table().loc[mask, :]
         covar.to_csv(covar_fname, sep="\t", index=False, header=False)
-        covar_modifier = ''
+        covar_modifier = ""
     else:
         covar_fname = None
-        covar_modifier = ' allow-no-covars'
+        covar_modifier = " allow-no-covars"
 
     # Determine regression type based on phenotype likelihood:
-    plink_reg_type = ['linear', 'logistic'][s_table.phenotype_likelihood == 'binomial']
+    plink_reg_type = ["linear", "logistic"][s_table.phenotype_likelihood == "binomial"]
 
     # Output subset of SNPs to perform association tests on:
     snp_keepfile = osp.join(temp_dir, "variants.keep")
-    pd.DataFrame({'SNP': genotype_matrix.snps}).to_csv(
+    pd.DataFrame({"SNP": genotype_matrix.snps}).to_csv(
         snp_keepfile, index=False, header=False
     )
 
@@ -119,33 +127,33 @@ def perform_gwa_plink2(genotype_matrix,
         f"--extract {snp_keepfile}",
         f"--{plink_reg_type} hide-covar{covar_modifier} cols=chrom,pos,alt1,ref,a1freq,nobs,beta,se,tz,p",
         f"--pheno {phe_fname}",
-        f"--out {plink_output}"
+        f"--out {plink_output}",
     ]
 
     if covar_fname is not None:
-        cmd.append(f'--covar {covar_fname}')
+        cmd.append(f"--covar {covar_fname}")
 
     plink2.execute(cmd)
 
     output_fname = plink_output + f".PHENO1.glm.{plink_reg_type}"
 
     if not osp.isfile(output_fname):
-        if plink_reg_type == 'logistic' and osp.isfile(output_fname + ".hybrid"):
+        if plink_reg_type == "logistic" and osp.isfile(output_fname + ".hybrid"):
             output_fname += ".hybrid"
         else:
             raise FileNotFoundError
 
     # Read the summary statistics file from plink:
-    ss_table = SumstatsTable.from_file(output_fname, sumstats_format='plink2')
+    ss_table = SumstatsTable.from_file(output_fname, sumstats_format="plink2")
     # Make sure that the effect allele is encoded properly:
     ss_table.match(genotype_matrix.snp_table, correct_flips=True)
 
     return ss_table
 
 
-def perform_gwa_plink1p9(genotype_matrix,
-                         temp_dir='temp',
-                         **phenotype_transform_kwargs):
+def perform_gwa_plink1p9(
+    genotype_matrix, temp_dir="temp", **phenotype_transform_kwargs
+):
     """
     Perform genome-wide association testing using plink 1.9
     This function takes a GenotypeMatrix object and gwas-related flags and
@@ -172,8 +180,10 @@ def perform_gwa_plink1p9(genotype_matrix,
     s_table = genotype_matrix.sample_table
 
     if s_table.phenotype_likelihood is None:
-        warnings.warn("The phenotype likelihood is not specified! "
-                      "Assuming that the phenotype is continuous...")
+        logger.warning(
+            "The phenotype likelihood is not specified! "
+            "Assuming that the phenotype is continuous..."
+        )
 
     # Transform the phenotype:
     phenotype, mask = chained_transform(s_table, **phenotype_transform_kwargs)
@@ -183,20 +193,22 @@ def perform_gwa_plink1p9(genotype_matrix,
 
     # If the likelihood is binomial, transform the phenotype into
     # plink's coding for case/control (1/2) rather than (0/1).
-    if s_table.phenotype_likelihood == 'binomial':
-        phe_table['phenotype'] += 1
+    if s_table.phenotype_likelihood == "binomial":
+        phe_table["phenotype"] += 1
     else:
         phe_table = phe_table.loc[mask, :]
-        phe_table['phenotype'] = phenotype
+        phe_table["phenotype"] = phenotype
 
     # Output phenotype table:
     phe_fname = osp.join(temp_dir, "pheno.txt")
     phe_table.to_csv(phe_fname, sep="\t", index=False, header=False)
 
     # Process covariates:
-    if s_table.phenotype_likelihood == 'binomial' and 'adjust_covariates' in phenotype_transform_kwargs and \
-            phenotype_transform_kwargs['adjust_covariates']:
-
+    if (
+        s_table.phenotype_likelihood == "binomial"
+        and "adjust_covariates" in phenotype_transform_kwargs
+        and phenotype_transform_kwargs["adjust_covariates"]
+    ):
         covar_fname = osp.join(temp_dir, "covar.txt")
         covar = s_table.get_covariates_table().loc[mask, :]
         covar.to_csv(covar_fname, sep="\t", index=False, header=False)
@@ -204,11 +216,11 @@ def perform_gwa_plink1p9(genotype_matrix,
         covar_fname = None
 
     # Determine regression type based on phenotype likelihood:
-    plink_reg_type = ['linear', 'logistic'][s_table.phenotype_likelihood == 'binomial']
+    plink_reg_type = ["linear", "logistic"][s_table.phenotype_likelihood == "binomial"]
 
     # Output subset of SNPs to perform association tests on:
     snp_keepfile = osp.join(temp_dir, "variants.keep")
-    pd.DataFrame({'SNP': genotype_matrix.snps}).to_csv(
+    pd.DataFrame({"SNP": genotype_matrix.snps}).to_csv(
         snp_keepfile, index=False, header=False
     )
 
@@ -220,24 +232,24 @@ def perform_gwa_plink1p9(genotype_matrix,
         f"--extract {snp_keepfile}",
         f"--{plink_reg_type} hide-covar",
         f"--pheno {phe_fname}",
-        f"--out {plink_output}"
+        f"--out {plink_output}",
     ]
 
     if covar_fname is not None:
-        cmd.append(f'--covar {covar_fname}')
+        cmd.append(f"--covar {covar_fname}")
 
     plink1.execute(cmd)
 
     output_fname = plink_output + f".PHENO1.assoc.{plink_reg_type}"
 
     if not osp.isfile(output_fname):
-        if plink_reg_type == 'logistic' and osp.isfile(output_fname + ".hybrid"):
+        if plink_reg_type == "logistic" and osp.isfile(output_fname + ".hybrid"):
             output_fname += ".hybrid"
         else:
             raise FileNotFoundError
 
     # Read the summary statistics file from plink:
-    ss_table = SumstatsTable.from_file(output_fname, sumstats_format='plink1.9')
+    ss_table = SumstatsTable.from_file(output_fname, sumstats_format="plink1.9")
     # Infer the reference allele:
     ss_table.infer_a2(genotype_matrix.snp_table)
 
@@ -247,9 +259,9 @@ def perform_gwa_plink1p9(genotype_matrix,
     return ss_table
 
 
-def perform_gwa_xarray(genotype_matrix,
-                       standardize_genotype=False,
-                       **phenotype_transform_kwargs):
+def perform_gwa_xarray(
+    genotype_matrix, standardize_genotype=False, **phenotype_transform_kwargs
+):
     """
     Perform genome-wide association testing using xarray and the PyData ecosystem.
     This function takes a GenotypeMatrix object and gwas-related flags and
@@ -273,28 +285,33 @@ def perform_gwa_xarray(genotype_matrix,
 
     # Check that the genotype matrix is an xarrayGenotypeMatrix object.
     from ...GenotypeMatrix import xarrayGenotypeMatrix
+
     assert isinstance(genotype_matrix, xarrayGenotypeMatrix)
 
     # Check that the phenotype likelihood is set correctly and that the phenotype is continuous.
     if genotype_matrix.sample_table.phenotype_likelihood is None:
-        warnings.warn("The phenotype likelihood is not specified! "
-                      "Assuming that the phenotype is continuous...")
-    elif genotype_matrix.sample_table.phenotype_likelihood == 'binomial':
-        raise ValueError("The xarray backend currently does not support performing association "
-                         "testing on binary (case-control) phenotypes! Try setting the backend to `plink` or "
-                         "use external software (e.g. GCTA or REGENIE) for performing GWAS.")
+        logger.warning(
+            "The phenotype likelihood is not specified! "
+            "Assuming that the phenotype is continuous..."
+        )
+    elif genotype_matrix.sample_table.phenotype_likelihood == "binomial":
+        raise ValueError(
+            "The xarray backend currently does not support performing association "
+            "testing on binary (case-control) phenotypes! Try setting the backend to `plink` or "
+            "use external software (e.g. GCTA or REGENIE) for performing GWAS."
+        )
 
     # -----------------------------------------------------------
 
     # Get the SNP table from the genotype_matrix object:
-    sumstats_table = genotype_matrix.get_snp_table(
-        ['CHR', 'SNP', 'POS', 'A1', 'A2']
-    )
+    sumstats_table = genotype_matrix.get_snp_table(["CHR", "SNP", "POS", "A1", "A2"])
 
     # -----------------------------------------------------------
 
     # Transform the phenotype:
-    phenotype, mask = chained_transform(genotype_matrix.sample_table, **phenotype_transform_kwargs)
+    phenotype, mask = chained_transform(
+        genotype_matrix.sample_table, **phenotype_transform_kwargs
+    )
 
     # -----------------------------------------------------------
     # Prepare the genotype data for association testing:
@@ -311,11 +328,12 @@ def perform_gwa_xarray(genotype_matrix,
     # Standardize or center the genotype matrix (account for missing values):
     if standardize_genotype:
         from ..transforms.genotype import standardize
+
         xr_mat = standardize(xr_mat)
     else:
-        xr_mat = (xr_mat - 2.*maf)
+        xr_mat = xr_mat - 2.0 * maf
 
-    xr_mat = xr_mat.fillna(0.)
+    xr_mat = xr_mat.fillna(0.0)
 
     # Compute the sum of squares per SNP:
     sum_x_sq = (xr_mat**2).sum(axis=0).compute().values
@@ -326,19 +344,19 @@ def perform_gwa_xarray(genotype_matrix,
     slope = np.dot(xr_mat.T, phenotype - phenotype.mean()) / sum_x_sq
     intercept = phenotype.mean()
 
-    y_hat = xr_mat*slope + intercept
+    y_hat = xr_mat * slope + intercept
 
-    s2 = ((phenotype.reshape(-1, 1) - y_hat)**2).sum(axis=0) / (n_per_snp - 2)
+    s2 = ((phenotype.reshape(-1, 1) - y_hat) ** 2).sum(axis=0) / (n_per_snp - 2)
 
     se = np.sqrt(s2 / sum_x_sq)
 
     # -----------------------------------------------------------
     # Populate the data in the summary statistics table:
 
-    sumstats_table['MAF'] = maf
-    sumstats_table['N'] = n_per_snp
-    sumstats_table['BETA'] = slope
-    sumstats_table['SE'] = se
+    sumstats_table["MAF"] = maf
+    sumstats_table["N"] = n_per_snp
+    sumstats_table["BETA"] = slope
+    sumstats_table["SE"] = se
 
     ss_table = SumstatsTable(sumstats_table)
     # Trigger computing z-score and p-values from the BETA and SE columns:
@@ -347,9 +365,9 @@ def perform_gwa_xarray(genotype_matrix,
     return ss_table
 
 
-def perform_gwa_bed_reader(genotype_matrix,
-                           standardize_genotype=False,
-                           **phenotype_transform_kwargs):
+def perform_gwa_bed_reader(
+    genotype_matrix, standardize_genotype=False, **phenotype_transform_kwargs
+):
     """
     Perform genome-wide association testing using the bed-reader backend.
 
@@ -372,19 +390,22 @@ def perform_gwa_bed_reader(genotype_matrix,
     assert isinstance(genotype_matrix, bedReaderGenotypeMatrix)
 
     if genotype_matrix.sample_table.phenotype_likelihood is None:
-        warnings.warn("The phenotype likelihood is not specified! "
-                      "Assuming that the phenotype is continuous...")
-    elif genotype_matrix.sample_table.phenotype_likelihood == 'binomial':
-        raise ValueError("The bed-reader backend currently does not support performing association "
-                         "testing on binary (case-control) phenotypes! Try setting the backend to `plink` or "
-                         "use external software (e.g. GCTA or REGENIE) for performing GWAS.")
+        logger.warning(
+            "The phenotype likelihood is not specified! "
+            "Assuming that the phenotype is continuous..."
+        )
+    elif genotype_matrix.sample_table.phenotype_likelihood == "binomial":
+        raise ValueError(
+            "The bed-reader backend currently does not support performing association "
+            "testing on binary (case-control) phenotypes! Try setting the backend to `plink` or "
+            "use external software (e.g. GCTA or REGENIE) for performing GWAS."
+        )
 
-    sumstats_table = genotype_matrix.get_snp_table(
-        ['CHR', 'SNP', 'POS', 'A1', 'A2']
+    sumstats_table = genotype_matrix.get_snp_table(["CHR", "SNP", "POS", "A1", "A2"])
+
+    phenotype, mask = chained_transform(
+        genotype_matrix.sample_table, **phenotype_transform_kwargs
     )
-
-    phenotype, mask = chained_transform(genotype_matrix.sample_table,
-                                        **phenotype_transform_kwargs)
     phenotype = np.asarray(phenotype, dtype=np.float64)
     centered_phenotype = phenotype - phenotype.mean()
     sample_index = genotype_matrix.sample_index[mask]
@@ -414,12 +435,14 @@ def perform_gwa_bed_reader(genotype_matrix,
         x = np.where(observed, chunk - mean, 0.0)
 
         if standardize_genotype:
-            sd = np.sqrt(np.divide(
-                np.square(x).sum(axis=0),
-                n_obs,
-                out=np.full(end - start, np.nan, dtype=np.float64),
-                where=n_obs > 0,
-            ))
+            sd = np.sqrt(
+                np.divide(
+                    np.square(x).sum(axis=0),
+                    n_obs,
+                    out=np.full(end - start, np.nan, dtype=np.float64),
+                    where=n_obs > 0,
+                )
+            )
             x = np.divide(
                 x,
                 sd,
@@ -445,8 +468,8 @@ def perform_gwa_bed_reader(genotype_matrix,
     )
 
     y_centered_sum_sq = np.dot(centered_phenotype, centered_phenotype)
-    residual_sum_sq = y_centered_sum_sq - slope*x_dot_y
-    residual_sum_sq = np.maximum(residual_sum_sq, 0.)
+    residual_sum_sq = y_centered_sum_sq - slope * x_dot_y
+    residual_sum_sq = np.maximum(residual_sum_sq, 0.0)
 
     s2 = np.divide(
         residual_sum_sq,
@@ -455,17 +478,19 @@ def perform_gwa_bed_reader(genotype_matrix,
         where=n_per_snp > 2,
     )
 
-    se = np.sqrt(np.divide(
-        s2,
-        sum_x_sq,
-        out=np.full(genotype_matrix.n_snps, np.nan, dtype=np.float64),
-        where=sum_x_sq > 0,
-    ))
+    se = np.sqrt(
+        np.divide(
+            s2,
+            sum_x_sq,
+            out=np.full(genotype_matrix.n_snps, np.nan, dtype=np.float64),
+            where=sum_x_sq > 0,
+        )
+    )
 
-    sumstats_table['MAF'] = maf
-    sumstats_table['N'] = n_per_snp
-    sumstats_table['BETA'] = slope
-    sumstats_table['SE'] = se
+    sumstats_table["MAF"] = maf
+    sumstats_table["N"] = n_per_snp
+    sumstats_table["BETA"] = slope
+    sumstats_table["SE"] = se
 
     ss_table = SumstatsTable(sumstats_table)
     _, _ = ss_table.z_score, ss_table.pval
@@ -473,10 +498,12 @@ def perform_gwa_bed_reader(genotype_matrix,
     return ss_table
 
 
-def perform_gwa_magenpy(genotype_matrix,
-                        temp_dir=None,
-                        standardize_genotype=False,
-                        **phenotype_transform_kwargs):
+def perform_gwa_magenpy(
+    genotype_matrix,
+    temp_dir=None,
+    standardize_genotype=False,
+    **phenotype_transform_kwargs,
+):
     """
     Perform genome-wide association testing using the native magenpy BED
     backend. This implementation streams genotypes from the BED file and
@@ -506,24 +533,29 @@ def perform_gwa_magenpy(genotype_matrix,
     genotype_matrix._validate_cpp_indices()
 
     if genotype_matrix.sample_table.phenotype_likelihood is None:
-        warnings.warn("The phenotype likelihood is not specified! "
-                      "Assuming that the phenotype is continuous...")
-    elif genotype_matrix.sample_table.phenotype_likelihood == 'binomial':
-        raise ValueError("The magenpy backend currently does not support performing association "
-                         "testing on binary (case-control) phenotypes! Try setting the backend to `plink` or "
-                         "use external software (e.g. GCTA or REGENIE) for performing GWAS.")
+        logger.warning(
+            "The phenotype likelihood is not specified! "
+            "Assuming that the phenotype is continuous..."
+        )
+    elif genotype_matrix.sample_table.phenotype_likelihood == "binomial":
+        raise ValueError(
+            "The magenpy backend currently does not support performing association "
+            "testing on binary (case-control) phenotypes! Try setting the backend to `plink` or "
+            "use external software (e.g. GCTA or REGENIE) for performing GWAS."
+        )
 
-    sumstats_table = genotype_matrix.get_snp_table(
-        ['CHR', 'SNP', 'POS', 'A1', 'A2']
+    sumstats_table = genotype_matrix.get_snp_table(["CHR", "SNP", "POS", "A1", "A2"])
+
+    phenotype, mask = chained_transform(
+        genotype_matrix.sample_table, **phenotype_transform_kwargs
     )
-
-    phenotype, mask = chained_transform(genotype_matrix.sample_table,
-                                        **phenotype_transform_kwargs)
     phenotype = np.ascontiguousarray(phenotype, dtype=np.float64)
-    centered_phenotype = np.ascontiguousarray(phenotype - phenotype.mean(),
-                                             dtype=np.float64)
-    sample_indices = np.ascontiguousarray(genotype_matrix.sample_index[mask],
-                                          dtype=np.int32)
+    centered_phenotype = np.ascontiguousarray(
+        phenotype - phenotype.mean(), dtype=np.float64
+    )
+    sample_indices = np.ascontiguousarray(
+        genotype_matrix.sample_index[mask], dtype=np.int32
+    )
 
     maf, n_per_snp, x_dot_y, sum_x_sq = compute_gwa_linear_stats(
         genotype_matrix.bed_filename,
@@ -532,38 +564,40 @@ def perform_gwa_magenpy(genotype_matrix,
         genotype_matrix.total_samples,
         centered_phenotype,
         standardize_genotype=standardize_genotype,
-        threads=genotype_matrix.threads
+        threads=genotype_matrix.threads,
     )
 
     slope = np.divide(
         x_dot_y,
         sum_x_sq,
         out=np.full(genotype_matrix.n_snps, np.nan, dtype=np.float64),
-        where=sum_x_sq > 0
+        where=sum_x_sq > 0,
     )
 
     y_centered_sum_sq = np.dot(centered_phenotype, centered_phenotype)
-    residual_sum_sq = y_centered_sum_sq - slope*x_dot_y
-    residual_sum_sq = np.maximum(residual_sum_sq, 0.)
+    residual_sum_sq = y_centered_sum_sq - slope * x_dot_y
+    residual_sum_sq = np.maximum(residual_sum_sq, 0.0)
 
     s2 = np.divide(
         residual_sum_sq,
         n_per_snp - 2,
         out=np.full(genotype_matrix.n_snps, np.nan, dtype=np.float64),
-        where=n_per_snp > 2
+        where=n_per_snp > 2,
     )
 
-    se = np.sqrt(np.divide(
-        s2,
-        sum_x_sq,
-        out=np.full(genotype_matrix.n_snps, np.nan, dtype=np.float64),
-        where=sum_x_sq > 0
-    ))
+    se = np.sqrt(
+        np.divide(
+            s2,
+            sum_x_sq,
+            out=np.full(genotype_matrix.n_snps, np.nan, dtype=np.float64),
+            where=sum_x_sq > 0,
+        )
+    )
 
-    sumstats_table['MAF'] = maf
-    sumstats_table['N'] = n_per_snp
-    sumstats_table['BETA'] = slope
-    sumstats_table['SE'] = se
+    sumstats_table["MAF"] = maf
+    sumstats_table["N"] = n_per_snp
+    sumstats_table["BETA"] = slope
+    sumstats_table["SE"] = se
 
     ss_table = SumstatsTable(sumstats_table)
     _, _ = ss_table.z_score, ss_table.pval

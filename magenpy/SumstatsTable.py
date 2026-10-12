@@ -1,11 +1,14 @@
+import logging
 
-import warnings
-import pandas as pd
 import numpy as np
+import pandas as pd
+
 from .utils.compute_utils import intersect_arrays
 
+logger = logging.getLogger(__name__)
 
-class SumstatsTable(object):
+
+class SumstatsTable:
     """
     A wrapper class for representing the summary statistics obtained from
     Genome-wide Association Studies (GWAS). GWAS software tools publish their
@@ -37,9 +40,11 @@ class SumstatsTable(object):
         # Check that the table contains some of the required columns (non-exhaustive):
 
         # Either has SNP or CHR+POS:
-        assert 'SNP' in self.table.columns or all([col in self.table.columns for col in ('CHR', 'POS')])
+        assert "SNP" in self.table.columns or all(
+            [col in self.table.columns for col in ("CHR", "POS")]
+        )
         # Assert that the table has at least one of the alleles:
-        assert any([col in self.table.columns for col in ('A1', 'A2')])
+        assert any([col in self.table.columns for col in ("A1", "A2")])
         # TODO: Add other assertions?
 
     @property
@@ -70,8 +75,8 @@ class SumstatsTable(object):
         """
         :return: The unique chromosomes in the summary statistics table.
         """
-        if 'CHR' in self.table.columns:
-            return sorted(self.table['CHR'].unique())
+        if "CHR" in self.table.columns:
+            return sorted(self.table["CHR"].unique())
 
     @property
     def m(self):
@@ -85,10 +90,10 @@ class SumstatsTable(object):
 
     @property
     def identifier_cols(self):
-        if 'SNP' in self.table.columns:
-            return ['SNP']
+        if "SNP" in self.table.columns:
+            return ["SNP"]
         else:
-            return ['CHR', 'POS']
+            return ["CHR", "POS"]
 
     @property
     def n_snps(self):
@@ -105,7 +110,7 @@ class SumstatsTable(object):
         """
         :return: The rsIDs associated with each variant in the summary statistics table.
         """
-        return self.table['SNP'].values
+        return self.table["SNP"].values
 
     @property
     def a1(self):
@@ -117,7 +122,7 @@ class SumstatsTable(object):
         :return: The alternative or effect allele for each variant in the summary statistics table.
 
         """
-        return self.table['A1'].values
+        return self.table["A1"].values
 
     @property
     def a2(self):
@@ -127,7 +132,7 @@ class SumstatsTable(object):
 
         :return: The reference allele for each variant in the summary statistics table.
         """
-        return self.get_col('A2')
+        return self.get_col("A2")
 
     @property
     def ref_allele(self):
@@ -166,21 +171,21 @@ class SumstatsTable(object):
         """
         :return: The base pair position for each variant in the summary statistics table.
         """
-        return self.get_col('POS')
+        return self.get_col("POS")
 
     @property
     def maf(self):
         """
         :return: The minor allele frequency for each variant in the summary statistics table.
         """
-        return self.get_col('MAF')
+        return self.get_col("MAF")
 
     @property
     def maf_var(self):
         """
         :return: The variance of the minor allele frequency for each variant in the summary statistics table.
         """
-        return 2.*self.maf*(1. - self.maf)
+        return 2.0 * self.maf * (1.0 - self.maf)
 
     @property
     def n(self):
@@ -190,7 +195,7 @@ class SumstatsTable(object):
 
         :return: The sample size for the association test of each variant in the summary statistics table.
         """
-        return self.get_col('N')
+        return self.get_col("N")
 
     @property
     def n_per_snp(self):
@@ -202,7 +207,7 @@ class SumstatsTable(object):
 
         :return: The sample size for the association test of each variant in the summary statistics table.
         """
-        return self.get_col('N')
+        return self.get_col("N")
 
     @property
     def beta_hat(self):
@@ -213,13 +218,13 @@ class SumstatsTable(object):
         :return: The marginal beta from the association test of each variant on the phenotype.
         """
 
-        beta = self.get_col('BETA')
+        beta = self.get_col("BETA")
 
         if beta is None:
             odds_ratio = self.odds_ratio
             if odds_ratio is not None:
-                self.table['BETA'] = np.log(odds_ratio)
-                return self.table['BETA'].values
+                self.table["BETA"] = np.log(odds_ratio)
+                return self.table["BETA"].values
         else:
             return beta
 
@@ -238,7 +243,7 @@ class SumstatsTable(object):
         """
         :return: The odds ratio from the association test of each variant on case-control phenotypes.
         """
-        return self.get_col('OR')
+        return self.get_col("OR")
 
     @property
     def standardized_marginal_beta(self):
@@ -262,7 +267,7 @@ class SumstatsTable(object):
         :raises KeyError: If the Z-score statistic is not available and could not be inferred from available data.
         """
 
-        z = self.get_col('Z')
+        z = self.get_col("Z")
         if z is not None:
             return z
         else:
@@ -270,10 +275,12 @@ class SumstatsTable(object):
             se = self.se
 
             if beta is not None and se is not None:
-                self.table['Z'] = beta / se
-                return self.table['Z'].values
+                self.table["Z"] = beta / se
+                return self.table["Z"].values
 
-        raise KeyError("Z-score statistic is not available and could not be inferred from available data!")
+        raise KeyError(
+            "Z-score statistic is not available and could not be inferred from available data!"
+        )
 
     @property
     def standard_error(self):
@@ -284,7 +291,7 @@ class SumstatsTable(object):
         :return: The standard error from the association test of each variant on the phenotype.
 
         """
-        return self.get_col('SE')
+        return self.get_col("SE")
 
     @property
     def se(self):
@@ -304,14 +311,15 @@ class SumstatsTable(object):
 
         :return: The p-value from the association test of each variant on the phenotype.
         """
-        p = self.get_col('PVAL')
+        p = self.get_col("PVAL")
 
         if p is not None:
             return p
         else:
             from scipy import stats
-            self.table['PVAL'] = 2.*stats.norm.sf(np.abs(self.z_score))
-            return self.table['PVAL'].values
+
+            self.table["PVAL"] = 2.0 * stats.norm.sf(np.abs(self.z_score))
+            return self.table["PVAL"].values
 
     @property
     def p_value(self):
@@ -340,12 +348,12 @@ class SumstatsTable(object):
         :raises KeyError: If the sign could not be inferred from available data.
         """
 
-        signed_statistics = ['BETA', 'Z', 'OR']
+        signed_statistics = ["BETA", "Z", "OR"]
 
         for ss in signed_statistics:
             ss_value = self.get_col(ss)
             if ss_value is not None:
-                if ss == 'OR':
+                if ss == "OR":
                     return np.sign(np.log(ss_value))
                 else:
                     return np.sign(ss_value)
@@ -370,25 +378,27 @@ class SumstatsTable(object):
         id_cols = self.identifier_cols
 
         # Sanity checks:
-        assert all([col in reference_table.columns for col in id_cols + ['A1', 'A2']])
+        assert all([col in reference_table.columns for col in id_cols + ["A1", "A2"]])
 
         # Merge the summary statistics table with the reference table on unique ID:
-        merged_table = self.table[id_cols + ['A1']].merge(
-            reference_table[id_cols + ['A1', 'A2']],
-            how='left',
-            on=id_cols
+        merged_table = self.table[id_cols + ["A1"]].merge(
+            reference_table[id_cols + ["A1", "A2"]], how="left", on=id_cols
         )
         # If `A1_x` agrees with `A1_y`, then `A2` is indeed the reference allele.
         # Otherwise, they are flipped and `A1_y` should be the reference allele:
-        merged_table['A2'] = np.where(merged_table['A1_x'] == merged_table['A1_y'],
-                                      merged_table['A2'],
-                                      merged_table['A1_y'])
+        merged_table["A2"] = np.where(
+            merged_table["A1_x"] == merged_table["A1_y"],
+            merged_table["A2"],
+            merged_table["A1_y"],
+        )
 
         # Check that the reference allele could be inferred for all SNPs:
-        if not allow_na and merged_table['A2'].isna().any():
-            raise ValueError("The reference allele could not be inferred for some SNPs!")
+        if not allow_na and merged_table["A2"].isna().any():
+            raise ValueError(
+                "The reference allele could not be inferred for some SNPs!"
+            )
         else:
-            self.table['A2'] = merged_table['A2']
+            self.table["A2"] = merged_table["A2"]
 
     def infer_snp_id(self, reference_table, allow_na=False):
         """
@@ -401,13 +411,15 @@ class SumstatsTable(object):
         """
 
         # Merge the summary statistics table with the reference table:
-        merged_table = self.table[['CHR', 'POS']].merge(reference_table[['SNP', 'CHR', 'POS']], how='left')
+        merged_table = self.table[["CHR", "POS"]].merge(
+            reference_table[["SNP", "CHR", "POS"]], how="left"
+        )
 
         # Check that the SNP ID could be inferred for all SNPs:
-        if not allow_na and merged_table['SNP'].isna().any():
+        if not allow_na and merged_table["SNP"].isna().any():
             raise ValueError("The SNP ID could not be inferred for some SNPs!")
         else:
-            self.table['SNP'] = merged_table['SNP'].values
+            self.table["SNP"] = merged_table["SNP"].values
 
     def set_sample_size(self, n):
         """
@@ -417,7 +429,7 @@ class SumstatsTable(object):
 
         :param n: A scalar or array of sample sizes for each variant.
         """
-        self.table['N'] = n
+        self.table["N"] = n
 
     def run_quality_control(self, reference_table=None):
         """
@@ -443,10 +455,12 @@ class SumstatsTable(object):
 
         from .utils.model_utils import merge_snp_tables
 
-        self.table = merge_snp_tables(ref_table=reference_table[self.identifier_cols + ['A1', 'A2']],
-                                      alt_table=self.table,
-                                      how='inner',
-                                      correct_flips=correct_flips)
+        self.table = merge_snp_tables(
+            ref_table=reference_table[self.identifier_cols + ["A1", "A2"]],
+            alt_table=self.table,
+            how="inner",
+            correct_flips=correct_flips,
+        )
 
     def filter_by_allele_frequency(self, min_maf=None, min_mac=None):
         """
@@ -464,12 +478,11 @@ class SumstatsTable(object):
         keep_flag = None
 
         if min_mac and n and maf:
-            mac = (2*maf*n).astype(np.int64)
-            keep_flag = (mac >= min_mac) & ((2*n - mac) >= min_mac)
+            mac = (2 * maf * n).astype(np.int64)
+            keep_flag = (mac >= min_mac) & ((2 * n - mac) >= min_mac)
 
         if min_maf and maf:
-
-            maf_cond = (maf >= min_maf) & (1. - maf >= min_maf)
+            maf_cond = (maf >= min_maf) & (1.0 - maf >= min_maf)
             if keep_flag is not None:
                 keep_flag = keep_flag & maf_cond
             else:
@@ -486,21 +499,28 @@ class SumstatsTable(object):
         :param extract_index: A list or array of the indices of SNPs to retain.
         """
 
-        assert extract_snps is not None or extract_file is not None or extract_index is not None
+        assert (
+            extract_snps is not None
+            or extract_file is not None
+            or extract_index is not None
+        )
 
         if extract_file:
             from .parsers.misc_parsers import read_snp_filter_file
+
             extract_snps = read_snp_filter_file(extract_file)
 
         if extract_snps is not None:
             extract_index = intersect_arrays(self.snps, extract_snps, return_index=True)
 
         if extract_index is not None:
-            self.table = self.table.iloc[extract_index, ].reset_index(drop=True)
+            self.table = self.table.iloc[extract_index,].reset_index(drop=True)
         else:
-            raise Exception("To filter a summary statistics table, you must provide "
-                            "the list of SNPs, a file containing the list of SNPs, "
-                            "or a list of indices to retain.")
+            raise Exception(
+                "To filter a summary statistics table, you must provide "
+                "the list of SNPs, a file containing the list of SNPs, "
+                "or a list of indices to retain."
+            )
 
     def drop_duplicates(self):
         """
@@ -523,24 +543,24 @@ class SumstatsTable(object):
         :return: The Chi-Squared statistic from the association test of each variant on the phenotype.
         :raises KeyError: If the Chi-Squared statistic is not available and could not be inferred from available data.
         """
-        chisq = self.get_col('CHISQ')
+        chisq = self.get_col("CHISQ")
 
         if chisq is not None:
             return chisq
         else:
             z = self.z_score
             if z is not None:
-                self.table['CHISQ'] = z**2
+                self.table["CHISQ"] = z**2
             else:
                 p_val = self.p_value
                 if p_val is not None:
                     from scipy.stats import chi2
 
-                    self.table['CHISQ'] = chi2.ppf(1. - p_val, 1)
+                    self.table["CHISQ"] = chi2.ppf(1.0 - p_val, 1)
                 else:
                     raise KeyError("Chi-Squared statistic is not available!")
 
-        return self.table['CHISQ'].values
+        return self.table["CHISQ"].values
 
     def get_snp_pseudo_corr(self):
         """
@@ -574,7 +594,7 @@ class SumstatsTable(object):
                 raise KeyError("Sample size is not available!")
         else:
             raise KeyError("Z-scores are not available!")
-        
+
     def get_yy_per_snp(self):
         """
         Computes the quantity (y'y)_j/n_j following SBayesR (Lloyd-Jones 2019) and Yang et al. (2012).
@@ -597,7 +617,7 @@ class SumstatsTable(object):
         :raises KeyError: If the marginal betas, standard errors or sample sizes are not available.
 
         """
-        
+
         b = self.beta_hat
         se = self.standard_error
         n = self.n
@@ -605,7 +625,7 @@ class SumstatsTable(object):
         if n is not None:
             if b is not None:
                 if se is not None:
-                    return (n - 2)*se**2 + b**2
+                    return (n - 2) * se**2 + b**2
                 else:
                     raise KeyError("Standard errors are not available!")
             else:
@@ -617,39 +637,41 @@ class SumstatsTable(object):
         """
         Split the summary statistics table by chromosome, so that we would
         have a separate `SumstatsTable` object for each chromosome.
-        :param snps_per_chrom: A dictionary where the keys are the chromosome number 
+        :param snps_per_chrom: A dictionary where the keys are the chromosome number
         and the value is an array or list of SNPs on that chromosome.
 
         :return: A dictionary where the keys are the chromosome number and the value is a `SumstatsTable` object.
         """
 
-        if 'CHR' in self.table.columns:
-            chromosomes = self.table['CHR'].dropna().unique()
+        if "CHR" in self.table.columns:
+            chromosomes = self.table["CHR"].dropna().unique()
 
             # Summary-statistics files are frequently already chromosome-
             # specific. In that case there is nothing to group, but retain the
             # method's established copy semantics.
-            if len(chromosomes) == 1 and not self.table['CHR'].isna().any():
+            if len(chromosomes) == 1 and not self.table["CHR"].isna().any():
                 return {chromosomes[0]: SumstatsTable(self.table.copy())}
 
             return {
                 c: SumstatsTable(table.copy())
-                for c, table in self.table.groupby('CHR', sort=True)
+                for c, table in self.table.groupby("CHR", sort=True)
             }
         elif snps_per_chrom is not None:
             chrom_dict = {
-                c: SumstatsTable(pd.DataFrame({'SNP': snps}).merge(self.table))
+                c: SumstatsTable(pd.DataFrame({"SNP": snps}).merge(self.table))
                 for c, snps in snps_per_chrom.items()
             }
 
             for c, ss_tab in chrom_dict.items():
-                ss_tab.table['CHR'] = c
+                ss_tab.table["CHR"] = c
 
             return chrom_dict
         else:
-            raise Exception("To split the summary statistics table by chromosome, "
-                            "you must provide the a dictionary mapping chromosome number "
-                            "to an array of SNPs `snps_per_chrom`.")
+            raise Exception(
+                "To split the summary statistics table by chromosome, "
+                "you must provide the a dictionary mapping chromosome number "
+                "to an array of SNPs `snps_per_chrom`."
+            )
 
     def to_table(self, col_subset=None):
         """
@@ -660,8 +682,19 @@ class SumstatsTable(object):
         :return: A pandas DataFrame containing the summary statistics with the requested column subset.
         """
 
-        col_subset = col_subset or ['CHR', 'SNP', 'POS', 'A1', 'A2', 'MAF',
-                                    'N', 'BETA', 'Z', 'SE', 'PVAL']
+        col_subset = col_subset or [
+            "CHR",
+            "SNP",
+            "POS",
+            "A1",
+            "A2",
+            "MAF",
+            "N",
+            "BETA",
+            "Z",
+            "SE",
+            "PVAL",
+        ]
 
         # Because some of the quantities that the user needs may be need to be
         # computed, we separate the column subset into those that are already
@@ -677,25 +710,28 @@ class SumstatsTable(object):
             table = pd.DataFrame({c: [] for c in non_present_cols})
 
         for col in non_present_cols:
-
-            if col == 'Z':
-                table['Z'] = self.z_score
-            elif col == 'PVAL':
-                table['PVAL'] = self.p_value
-            elif col == 'LOG10_PVAL':
-                table['NLOG10_PVAL'] = self.negative_log10_p_value
-            elif col == 'CHISQ':
-                table['CHISQ'] = self.get_chisq_statistic()
-            elif col == 'MAF_VAR':
-                table['MAF_VAR'] = self.maf_var
-            elif col == 'STD_BETA':
-                table['STD_BETA'] = self.get_snp_pseudo_corr()
+            if col == "Z":
+                table["Z"] = self.z_score
+            elif col == "PVAL":
+                table["PVAL"] = self.p_value
+            elif col == "LOG10_PVAL":
+                table["NLOG10_PVAL"] = self.negative_log10_p_value
+            elif col == "CHISQ":
+                table["CHISQ"] = self.get_chisq_statistic()
+            elif col == "MAF_VAR":
+                table["MAF_VAR"] = self.maf_var
+            elif col == "STD_BETA":
+                table["STD_BETA"] = self.get_snp_pseudo_corr()
             else:
-                warnings.warn(f"Column '{col}' is not available in the summary statistics table!")
+                logger.warning(
+                    "Column '%s' is not available in the summary statistics table!", col
+                )
 
         return table[list(col_subset)]
 
-    def to_file(self, output_file, col_subset=None, sumstats_format='magenpy', **to_csv_kwargs):
+    def to_file(
+        self, output_file, col_subset=None, sumstats_format="magenpy", **to_csv_kwargs
+    ):
         """
         A convenience method to write the summary statistics table to file.
 
@@ -710,11 +746,11 @@ class SumstatsTable(object):
 
         parser_cls = get_sumstats_parser(sumstats_format)
 
-        if 'sep' not in to_csv_kwargs and 'delimiter' not in to_csv_kwargs:
-            to_csv_kwargs['sep'] = '\t'
+        if "sep" not in to_csv_kwargs and "delimiter" not in to_csv_kwargs:
+            to_csv_kwargs["sep"] = "\t"
 
-        if 'index' not in to_csv_kwargs:
-            to_csv_kwargs['index'] = False
+        if "index" not in to_csv_kwargs:
+            to_csv_kwargs["index"] = False
 
         if col_subset is None:
             col_subset = parser_cls.get_standard_cols()
@@ -724,7 +760,9 @@ class SumstatsTable(object):
         table.to_csv(output_file, **to_csv_kwargs)
 
     @classmethod
-    def from_file(cls, sumstats_file, sumstats_format=None, parser=None, **parse_kwargs):
+    def from_file(
+        cls, sumstats_file, sumstats_format=None, parser=None, **parse_kwargs
+    ):
         """
         Initialize a summary statistics table from file. The user must provide either
         the format for the summary statistics file or the parser object

@@ -1,8 +1,11 @@
+import logging
 
-import warnings
 import numpy as np
 import pandas as pd
+
 from ..GWADataLoader import GWADataLoader
+
+logger = logging.getLogger(__name__)
 
 
 class PhenotypeSimulator(GWADataLoader):
@@ -34,13 +37,9 @@ class PhenotypeSimulator(GWADataLoader):
 
     """
 
-    def __init__(self,
-                 bed_files,
-                 h2=0.2,
-                 pi=0.1,
-                 d=(0., 1.),
-                 prevalence=0.15,
-                 **kwargs):
+    def __init__(
+        self, bed_files, h2=0.2, pi=0.1, d=(0.0, 1.0), prevalence=0.15, **kwargs
+    ):
         """
         Initialize the PhenotypeSimulator object with the necessary parameters.
 
@@ -57,16 +56,16 @@ class PhenotypeSimulator(GWADataLoader):
 
         # If pi is float, convert it to a tuple:
         if isinstance(pi, float):
-            pi = (1. - pi, pi)
+            pi = (1.0 - pi, pi)
 
         self.pi = pi
         self.h2 = h2
         self.prevalence = prevalence
 
         # Sanity checks:
-        assert 0. <= self.h2 <= 1.
-        assert round(sum(self.pi), 1) == 1.
-        assert 0. < self.prevalence < 1.
+        assert 0.0 <= self.h2 <= 1.0
+        assert round(sum(self.pi), 1) == 1.0
+        assert 0.0 < self.prevalence < 1.0
 
         self.d = np.array(d)
 
@@ -120,14 +119,18 @@ class PhenotypeSimulator(GWADataLoader):
         # pre-specified heritability, the mixture proportions `pi`,
         # and the prior multipliers `d`.
 
-        combined_assignments = np.concatenate([self.mixture_assignment[c] for c in self.chromosomes])
+        combined_assignments = np.concatenate(
+            [self.mixture_assignment[c] for c in self.chromosomes]
+        )
 
-        sigma_beta_sq = self.h2 / (combined_assignments*self.d).sum()
+        sigma_beta_sq = self.h2 / (combined_assignments * self.d).sum()
 
         self.per_snp_h2 = {}
 
         for c, c_size in self.shapes.items():
-            self.per_snp_h2[c] = sigma_beta_sq*self.d[np.where(self.mixture_assignment[c])[1]]
+            self.per_snp_h2[c] = (
+                sigma_beta_sq * self.d[np.where(self.mixture_assignment[c])[1]]
+            )
 
     def get_causal_status(self):
         """
@@ -169,40 +172,49 @@ class PhenotypeSimulator(GWADataLoader):
         try:
             zero_index = list(self.d).index(0)
         except ValueError:
-            raise ValueError("Cannot set causal variants when all mixture components are causal. Modify "
-                             "the mixture multipliers `d` to enable this functionality.")
+            raise ValueError(
+                "Cannot set causal variants when all mixture components are causal. Modify "
+                "the mixture multipliers `d` to enable this functionality."
+            )
 
         # Get the indices of the non-null mixture components:
-        nonzero_indices = [i for i, d in enumerate(self.d) if d != 0.]
+        nonzero_indices = [i for i, d in enumerate(self.d) if d != 0.0]
 
         # Get the mixture proportions for the non-null components and normalize them so they sum to 1:
         pis = np.array(self.pi)[nonzero_indices]
         pis /= pis.sum()
 
         # Initialize new mixture assignment object:
-        new_assignment = {c: np.zeros((s, self.n_components)) for c, s in self.shapes.items()}
+        new_assignment = {
+            c: np.zeros((s, self.n_components)) for c, s in self.shapes.items()
+        }
 
         from ..utils.compute_utils import intersect_arrays
 
         n_causal_set = 0
 
         for c, snps in self.snps.items():
-
             # Intersect the list of causal SNPs with the SNPs on chromosome `c`:
             snp_idx = intersect_arrays(snps, causal_snps, return_index=True)
 
             if len(snp_idx) > 0:
                 n_causal_set += len(snp_idx)
                 # For the causal SNPs, assign them randomly to the causal components
-                new_assignment[c][snp_idx, np.random.choice(nonzero_indices,
-                                                            size=len(snp_idx),
-                                                            p=pis)] = 1
+                new_assignment[c][
+                    snp_idx, np.random.choice(nonzero_indices, size=len(snp_idx), p=pis)
+                ] = 1
                 # For the remaining SNPs, assign them to the null component:
-                new_assignment[c][:, zero_index] = np.abs(new_assignment[c].sum(axis=1) - 1)
+                new_assignment[c][:, zero_index] = np.abs(
+                    new_assignment[c].sum(axis=1) - 1
+                )
 
         if n_causal_set < len(causal_snps):
-            warnings.warn("Not all causal SNPs are represented in the genotype matrix! "
-                          f"User passed a list of {len(causal_snps)} SNPs, only matched {n_causal_set}.")
+            logger.warning(
+                "Not all causal SNPs are represented in the genotype matrix! "
+                "User passed a list of %s SNPs, only matched %s.",
+                len(causal_snps),
+                n_causal_set,
+            )
 
         self.set_mixture_assignment(new_assignment)
 
@@ -235,7 +247,6 @@ class PhenotypeSimulator(GWADataLoader):
         from ..utils.model_utils import multinomial_rvs
 
         for c, c_size in self.shapes.items():
-
             self.mixture_assignment[c] = multinomial_rvs(1, self.per_snp_pi[c])
 
         return self.mixture_assignment
@@ -268,10 +279,9 @@ class PhenotypeSimulator(GWADataLoader):
         self.beta = {}
 
         for c, c_size in self.shapes.items():
-
-            self.beta[c] = np.random.normal(loc=0.0,
-                                            scale=np.sqrt(self.per_snp_h2[c]),
-                                            size=c_size)
+            self.beta[c] = np.random.normal(
+                loc=0.0, scale=np.sqrt(self.per_snp_h2[c]), size=c_size
+            )
 
         return self.beta
 
@@ -295,51 +305,52 @@ class PhenotypeSimulator(GWADataLoader):
         pgs = self.score(self.beta, standardize_genotype=True)
 
         # Sample the environmental/residual component:
-        e = np.random.normal(loc=0., scale=np.sqrt(1. - self.h2), size=self.sample_size)
+        e = np.random.normal(
+            loc=0.0, scale=np.sqrt(1.0 - self.h2), size=self.sample_size
+        )
 
         # The final simulated phenotype is a combination of
         # the polygenic score + the residual component:
         y = pgs + e
 
-        if self.phenotype_likelihood == 'binomial':
+        if self.phenotype_likelihood == "binomial":
             # If the simulated phenotype is to be binary,
             # use the threshold model to determine positives/negatives
             # based on the prevalence of the phenotype in the population:
-            
+
             from ..stats.transforms.phenotype import standardize
-            
+
             y = standardize(y)
 
             from scipy.stats import norm
-            
-            cutoff = norm.ppf(1. - self.prevalence)
+
+            cutoff = norm.ppf(1.0 - self.prevalence)
             new_y = np.zeros_like(y, dtype=int)
             new_y[y > cutoff] = 1
         else:
             new_y = y
 
         self.set_phenotype(new_y)
-        
+
         return new_y
 
-    def simulate(self,
-                 reset_beta=True,
-                 reset_mixture_assignment=True,
-                 perform_gwas=False):
+    def simulate(
+        self, reset_beta=True, reset_mixture_assignment=True, perform_gwas=False
+    ):
         """
         A convenience method to simulate all the components of the generative model.
-        Specifically, the simulation follows the standard linear model, where the phenotype is 
+        Specifically, the simulation follows the standard linear model, where the phenotype is
         dependent on the genotype + environmental components that are assumed to be uncorrelated:
-        
+
         `Y = XB + e`
-        
-        Where `Y` is the vector of phenotypes, `X` is the genotype matrix, `B` is the vector of effect sizes, 
+
+        Where `Y` is the vector of phenotypes, `X` is the genotype matrix, `B` is the vector of effect sizes,
         and `e` represents the residual effects. The generative model proceeds by:
-         
+
          1) Drawing the effect sizes `beta` from a Gaussian mixture density.
          2) Drawing the residual effect from an isotropic Gaussian density.
-         3) Setting the phenotype according to the equation above. 
-        
+         3) Setting the phenotype according to the equation above.
+
         :param reset_beta: If True, reset the effect sizes by drawing new ones from the prior density.
         :param reset_mixture_assignment: If True, reset the assignment of SNPs to mixture components. Set to False
         if you'd like to keep the same configuration of causal SNPs.
@@ -378,17 +389,18 @@ class PhenotypeSimulator(GWADataLoader):
         causal_status = self.get_causal_status()
 
         for c in self.chromosomes:
-
-            eff_tables[c] = pd.DataFrame({
-                'CHR': c,
-                'SNP': self.genotype[c].snps,
-                'A1': self.genotype[c].a1,
-                'A2': self.genotype[c].a2,
-                'MixtureComponent': np.where(self.mixture_assignment[c] == 1)[1],
-                'Heritability': self.per_snp_h2[c],
-                'BETA': self.beta[c].flatten(),
-                'Causal': causal_status[c],
-            })
+            eff_tables[c] = pd.DataFrame(
+                {
+                    "CHR": c,
+                    "SNP": self.genotype[c].snps,
+                    "A1": self.genotype[c].a1,
+                    "A2": self.genotype[c].a2,
+                    "MixtureComponent": np.where(self.mixture_assignment[c] == 1)[1],
+                    "Heritability": self.per_snp_h2[c],
+                    "BETA": self.beta[c].flatten(),
+                    "Causal": causal_status[c],
+                }
+            )
 
         if per_chromosome:
             return eff_tables

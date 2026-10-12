@@ -1,4 +1,5 @@
 import numpy as np
+
 from ...GWADataLoader import GWADataLoader
 
 
@@ -32,7 +33,7 @@ def simple_ldsc(gdl: GWADataLoader):
     chi_sq = np.concatenate(chi_sq)
     sample_size = max(sample_size)
 
-    return (chi_sq.mean() - 1.) * len(ld_score) / (ld_score.mean() * sample_size)
+    return (chi_sq.mean() - 1.0) * len(ld_score) / (ld_score.mean() * sample_size)
 
 
 class LDSCRegression(object):
@@ -60,4 +61,3 @@ class LDSCRegression(object):
         """
 
         raise NotImplementedError
-
