@@ -10,6 +10,7 @@ from magenpy.SumstatsTable import SumstatsTable
 from magenpy.utils.compute_utils import intersect_arrays, intersect_multiple_arrays
 from magenpy.utils.model_utils import (
     build_snp_harmonization_plan,
+    is_identity_indexer,
     merge_snp_tables,
 )
 
@@ -152,6 +153,27 @@ def test_build_harmonization_plan_excludes_missing_and_duplicate_ids():
     np.testing.assert_array_equal(plan["snps"], ["rs1", "rs3"])
     np.testing.assert_array_equal(plan["indexers"]["reference"], [0, 4])
     np.testing.assert_array_equal(plan["indexers"]["other"], [1, 0])
+
+
+def test_identity_indexer_handles_aligned_and_reordered_positions():
+    assert is_identity_indexer(np.arange(200_000, dtype=np.int32), 200_000)
+    assert is_identity_indexer(np.arange(200_000, dtype=np.int64), 200_000)
+    assert is_identity_indexer(np.array([], dtype=int), 0)
+    assert not is_identity_indexer(np.array([0, 2, 1]), 3)
+    assert not is_identity_indexer(np.array([0, 1]), 3)
+    assert not is_identity_indexer(np.arange(10)[::2], 5)
+
+
+def test_native_identity_indexer_checks_int32_and_int64_arrays():
+    variant_cpp = pytest.importorskip("magenpy.stats.variant.variant_cpp")
+    if not hasattr(variant_cpp, "is_identity_indexer_native"):
+        pytest.skip("The variant extension must be rebuilt from Cython.")
+
+    for dtype in (np.int32, np.int64):
+        indexer = np.arange(100_000, dtype=dtype)
+        assert variant_cpp.is_identity_indexer_native(indexer, len(indexer))
+        indexer[-1] = 0
+        assert not variant_cpp.is_identity_indexer_native(indexer, len(indexer))
 
 
 @pytest.mark.parametrize(
@@ -320,3 +342,31 @@ def test_harmonize_data_reads_each_ld_allele_once_when_ld_is_reference():
     np.testing.assert_array_equal(sumstats.table["BETA"], [-2.0, 1.0])
     assert ld.metadata_reads == {"snps": 1, "a1": 1, "a2": 1}
     assert ld.set_mask_calls == 1
+
+
+def test_harmonize_data_reuses_aligned_sumstats_dataframe():
+    genotype = InMemoryGenotype(
+        pd.DataFrame(
+            {
+                "SNP": ["rs1", "rs2"],
+                "A1": ["A", "C"],
+                "A2": ["G", "T"],
+            }
+        )
+    )
+    sumstats = SumstatsTable(
+        pd.DataFrame(
+            {
+                "CHR": [1, 1],
+                "SNP": ["rs1", "rs2"],
+                "A1": ["A", "C"],
+                "A2": ["G", "T"],
+                "BETA": [1.0, 2.0],
+            }
+        )
+    )
+    original_table = sumstats.table
+
+    make_loader(genotype=genotype, sumstats=sumstats).harmonize_data()
+
+    assert sumstats.table is original_table

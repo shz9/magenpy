@@ -39,7 +39,7 @@ DEFAULT_ESSENTIAL_COL_GROUPS = (
 )
 
 
-class SumstatsParser(object):
+class SumstatsParser:
     """
     A wrapper class for parsing summary statistics files that are written by statistical genetics software
     for Genome-wide Association testing. A common challenge is the fact that different software tools
@@ -67,8 +67,25 @@ class SumstatsParser(object):
     standard_cols = MAGENPY_SUMSTATS_COLUMNS
     essential_col_groups = DEFAULT_ESSENTIAL_COL_GROUPS
     output_col_name_converter = {}
-    string_columns = ("SNP", "A1", "A2")
-    raw_string_columns = ()
+    column_dtypes = {
+        "SNP": str,
+        # Parse through NumPy's fast numeric path, then downcast to int32 (or
+        # nullable Int32 when missing positions remain) in post-processing.
+        "POS": np.float64,
+        "A1": str,
+        "A2": str,
+        "MAF": np.float64,
+        "MAC": np.float64,
+        "N": np.float64,
+        "BETA": np.float64,
+        "STD_BETA": np.float64,
+        "OR": np.float64,
+        "Z": np.float64,
+        "SE": np.float64,
+        "PVAL": np.float64,
+        "CHISQ": np.float64,
+    }
+    raw_column_dtypes = {}
 
     def __init__(self, col_name_converter=None, **read_csv_kwargs):
         """
@@ -100,14 +117,13 @@ class SumstatsParser(object):
             "sep" not in self.read_csv_kwargs
             and "delimiter" not in self.read_csv_kwargs
         ):
-            self.read_csv_kwargs["sep"] = r"\s+"
+            self.read_csv_kwargs["sep"] = "\t"
 
     def _get_read_csv_kwargs(self):
-        """Return read options with safe identifier and allele dtypes.
+        """Return read options with format-aware column dtypes.
 
-        Dtypes supplied by the caller always take precedence. Numeric columns are
-        left to pandas' optimized inference because missing values and format-
-        specific encodings make a universal numeric dtype unsafe.
+        Dtypes supplied by the caller always take precedence. Chromosomes remain
+        inferred because real files mix integers with labels such as X, Y, and MT.
         """
 
         kwargs = self.read_csv_kwargs.copy()
@@ -118,18 +134,15 @@ class SumstatsParser(object):
         if user_dtype is not None and not isinstance(user_dtype, Mapping):
             return kwargs
 
-        dtype = {}
+        dtype = dict(self.column_dtypes)
         converters = self.col_name_converter or {}
 
         # Files may already use magenpy names, or may use raw names that are
         # renamed after reading. pandas ignores dtype entries absent from a file.
-        for column in self.string_columns:
-            dtype[column] = str
         for raw_column, output_column in converters.items():
-            if output_column in self.string_columns:
-                dtype[raw_column] = str
-        for column in self.raw_string_columns:
-            dtype[column] = str
+            if output_column in self.column_dtypes:
+                dtype[raw_column] = self.column_dtypes[output_column]
+        dtype.update(self.raw_column_dtypes)
 
         # pandas converters take precedence over dtype. Remove those defaults to
         # avoid warnings and unnecessary dtype bookkeeping.
@@ -227,6 +240,11 @@ class SumstatsParser(object):
             return df
 
         position = df["POS"]
+        if str(position.dtype) == "Int32":
+            if not position.isna().any():
+                df["POS"] = position.astype(np.int32)
+            return df
+
         if pd.api.types.is_integer_dtype(position.dtype):
             if position.dtype != np.dtype(np.int32):
                 df["POS"] = position.astype(np.int32)
@@ -304,7 +322,7 @@ class Plink2SSParser(SumstatsParser):
         "Z": "Z_STAT",
         "PVAL": "P",
     }
-    raw_string_columns = ("REF", "ALT", "ALT1")
+    raw_column_dtypes = {"REF": str, "ALT": str, "ALT1": str}
 
     def __init__(self, col_name_converter=None, **read_csv_kwargs):
         """
@@ -624,6 +642,143 @@ class SaigeSSParser(SumstatsParser):
         return df
 
 
+class RegenieSSParser(SumstatsParser):
+    """Parse REGENIE step-2 association results.
+
+    REGENIE reports effects for ``ALLELE1`` and reports association p-values
+    as ``-log10(p)`` in ``LOG10P``. These are converted to magenpy's ``A1``
+    and ``PVAL`` conventions, respectively.
+    """
+
+    format_name = "regenie"
+    aliases = ("regenie",)
+    standard_cols = (
+        "CHR",
+        "POS",
+        "SNP",
+        "A1",
+        "A2",
+        "MAF",
+        "N",
+        "BETA",
+        "SE",
+        "CHISQ",
+        "PVAL",
+    )
+    output_col_name_converter = {
+        "CHR": "CHROM",
+        "POS": "GENPOS",
+        "SNP": "ID",
+        "A1": "ALLELE1",
+        "A2": "ALLELE0",
+        "MAF": "A1FREQ",
+        "PVAL": "LOG10P",
+    }
+    raw_column_dtypes = {
+        "INFO": np.float64,
+        "TEST": str,
+        "LOG10P": np.float64,
+    }
+
+    def __init__(self, col_name_converter=None, **read_csv_kwargs):
+        if "sep" not in read_csv_kwargs and "delimiter" not in read_csv_kwargs:
+            read_csv_kwargs["sep"] = r"\s+"
+
+        super().__init__(col_name_converter, **read_csv_kwargs)
+
+        self.col_name_converter = self.col_name_converter or {}
+        self.col_name_converter.update(
+            {
+                "CHROM": "CHR",
+                "GENPOS": "POS",
+                "ID": "SNP",
+                "ALLELE0": "A2",
+                "ALLELE1": "A1",
+                "A1FREQ": "MAF",
+            }
+        )
+
+    def post_process(self, df):
+        if "LOG10P" in df.columns:
+            df["PVAL"] = np.power(10.0, -df["LOG10P"].to_numpy())
+        return df
+
+    @classmethod
+    def format_table(cls, df):
+        formatted = super().format_table(df)
+        if "LOG10P" in formatted.columns:
+            with np.errstate(divide="ignore"):
+                formatted["LOG10P"] = -np.log10(
+                    formatted["LOG10P"].to_numpy()
+                )
+        return formatted
+
+
+class LDAKSSParser(SumstatsParser):
+    """Parse LDAK association and SumHer/MegaPRS summary statistics.
+
+    LDAK accepts four statistic layouts: ``Z``; ``BETA`` and ``SE``;
+    ``Stat`` and ``Direction``; or ``P`` and ``Direction``. The latter two
+    layouts are normalized to a signed Z-score during parsing.
+    """
+
+    format_name = "ldak"
+    aliases = ("ldak", "sumher", "megaprs")
+    standard_cols = ("SNP", "A1", "A2", "Z", "N", "MAF")
+    output_col_name_converter = {
+        "SNP": "Predictor",
+        "N": "n",
+        "MAF": "A1Freq",
+    }
+    raw_column_dtypes = {
+        "Stat": np.float64,
+        "Direction": np.float64,
+        "A1_mean": np.float64,
+    }
+
+    def __init__(self, col_name_converter=None, **read_csv_kwargs):
+        if "sep" not in read_csv_kwargs and "delimiter" not in read_csv_kwargs:
+            read_csv_kwargs["sep"] = r"\s+"
+
+        super().__init__(col_name_converter, **read_csv_kwargs)
+
+        self.col_name_converter = self.col_name_converter or {}
+        self.col_name_converter.update(
+            {
+                "Predictor": "SNP",
+                "Chromosome": "CHR",
+                "Basepair": "POS",
+                "n": "N",
+                "A1Freq": "MAF",
+                "Stat": "CHISQ",
+                "P": "PVAL",
+                "Wald_Stat": "Z",
+                "Wald_P": "PVAL",
+                "Effect": "BETA",
+                "SD": "SE",
+            }
+        )
+
+    def post_process(self, df):
+        # LDAK .assoc files report the mean A1 allele count (0..2), whereas
+        # SumHer files report A1 frequency directly (0..1).
+        if "A1_mean" in df.columns:
+            df["MAF"] = 0.5 * df["A1_mean"].to_numpy()
+
+        if "Z" in df.columns or "Direction" not in df.columns:
+            return df
+
+        direction = np.sign(df["Direction"].to_numpy())
+        if "CHISQ" in df.columns:
+            df["Z"] = direction * np.sqrt(df["CHISQ"].to_numpy())
+        elif "PVAL" in df.columns:
+            from scipy.special import ndtri
+
+            df["Z"] = direction * -ndtri(0.5 * df["PVAL"].to_numpy())
+
+        return df
+
+
 SUMSTATS_PARSER_CLASSES = (
     SumstatsParser,
     Plink2SSParser,
@@ -632,6 +787,8 @@ SUMSTATS_PARSER_CLASSES = (
     FastGWASSParser,
     SSFParser,
     SaigeSSParser,
+    RegenieSSParser,
+    LDAKSSParser,
 )
 
 SUMSTATS_PARSER_REGISTRY = {
@@ -639,6 +796,17 @@ SUMSTATS_PARSER_REGISTRY = {
     for parser_cls in SUMSTATS_PARSER_CLASSES
     for alias in parser_cls.aliases
 }
+
+
+def get_supported_sumstats_formats(include_aliases=False):
+    """Return registered summary-statistics format names.
+
+    :param include_aliases: Include every accepted alias instead of only each
+        parser's canonical format name.
+    """
+    if include_aliases:
+        return tuple(SUMSTATS_PARSER_REGISTRY)
+    return tuple(parser_cls.format_name for parser_cls in SUMSTATS_PARSER_CLASSES)
 
 
 def get_sumstats_parser(sumstats_format):
@@ -651,7 +819,9 @@ def get_sumstats_parser(sumstats_format):
     """
     try:
         return SUMSTATS_PARSER_REGISTRY[sumstats_format.lower()]
-    except KeyError:
+    except (AttributeError, KeyError):
+        supported = ", ".join(get_supported_sumstats_formats())
         raise KeyError(
-            f"Parsers for summary statistics format {sumstats_format} are not implemented!"
-        )
+            f"Parsers for summary statistics format {sumstats_format} are not "
+            f"implemented. Supported formats: {supported}."
+        ) from None

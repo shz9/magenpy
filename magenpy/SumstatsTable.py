@@ -57,6 +57,13 @@ class SumstatsTable:
     def __len__(self):
         return len(self.table)
 
+    @staticmethod
+    def supported_sumstats_formats(include_aliases=False):
+        """Return formats registered with the summary-statistics parsers."""
+        from .parsers.sumstats_parsers import get_supported_sumstats_formats
+
+        return get_supported_sumstats_formats(include_aliases=include_aliases)
+
     @property
     def chromosome(self):
         """
@@ -769,9 +776,9 @@ class SumstatsTable:
         (see `parsers.sumstats_parsers`).
 
         :param sumstats_file: The path to the summary statistics file.
-        :param sumstats_format: The format for the summary statistics file. Currently,
-        we support the following summary statistics formats: `magenpy`, `plink1.9`, `plink` or `plink2`,
-        `COJO`, `fastGWA`, `SAIGE`, `GWASCatalog` (also denoted as `GWAS-SSF` and `SSF`).
+        :param sumstats_format: A format registered in
+        `sumstats_parsers`. Use `supported_sumstats_formats()` to inspect the
+        available formats and aliases.
         :param parser: An instance of SumstatsParser parser, implements basic parsing/conversion
         functionalities.
         :param parse_kwargs: arguments for the pandas `read_csv` function, such as the delimiter.

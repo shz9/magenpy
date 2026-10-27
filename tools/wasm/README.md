@@ -31,7 +31,7 @@ Once this workflow and its helpers have been committed to the default branch,
 backfill the current release with:
 
 ```sh
-gh workflow run wasm.yml --repo shz9/magenpy --ref master -f release_tag=v0.2.2 -f publish=true
+gh workflow run wasm.yml --repo shz9/magenpy --ref master -f release_tag=v0.2.3 -f publish=true
 ```
 
 Adjust the branch/tag as appropriate. The existing tag is checked out separately;
@@ -57,7 +57,7 @@ uv run --no-project --with playwright python tools/wasm/smoke.py
 ```
 
 Skip cloning an existing SDK. `--prepare-only` stages without compiling.
-`--source /path/to/checkout --release-tag v0.2.2` builds another checkout and verifies
+`--source /path/to/checkout --release-tag v0.2.3` builds another checkout and verifies
 its package version. For an extracted archive without `.git`, also provide
 `--source-commit COMMIT` to record its provenance. Local builds include any local
 source edits; release builds should use clean tagged checkouts.

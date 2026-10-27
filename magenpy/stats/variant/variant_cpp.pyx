@@ -1,10 +1,41 @@
 # distutils: language = c++
 # sources: stats/variant/variant_utils.hpp
 
-from libc.stdint cimport int8_t, int16_t, int32_t
+from libc.stdint cimport int8_t, int16_t, int32_t, int64_t
 from libcpp.string cimport string
 from libcpp cimport bool as cpp_bool
+import cython
 import numpy as np
+
+
+ctypedef fused index_dtype:
+    int32_t
+    int64_t
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cpdef bint is_identity_indexer_native(const index_dtype[::1] indexer,
+                                      Py_ssize_t size=-1):
+    """Check in one native pass whether ``indexer[i] == i`` for every row."""
+
+    cdef:
+        Py_ssize_t i
+        Py_ssize_t n = indexer.shape[0]
+        bint identity = True
+
+    if size < 0:
+        size = n
+    if n != size:
+        return False
+
+    with nogil:
+        for i in range(n):
+            if indexer[i] != i:
+                identity = False
+                break
+
+    return identity
 
 
 cdef extern from "variant_utils.hpp" nogil:

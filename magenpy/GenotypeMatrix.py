@@ -11,7 +11,7 @@ from .utils.system_utils import makedir
 logger = logging.getLogger(__name__)
 
 
-class GenotypeMatrix(object):
+class GenotypeMatrix:
     """
     A class to represent a genotype matrix. The genotype matrix is a matrix of
     where the rows represent samples and the columns represent genetic variants.
@@ -428,7 +428,7 @@ class GenotypeMatrix(object):
         elif isinstance(sample_table, pd.DataFrame):
             self.sample_table = SampleTable(sample_table)
         else:
-            raise ValueError(
+            raise TypeError(
                 "The sample table is invalid! "
                 "Has to be either an instance of "
                 "SampleTable or pandas DataFrame."

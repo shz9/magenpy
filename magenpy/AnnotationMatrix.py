@@ -31,15 +31,12 @@ class AnnotationMatrix:
         self.table = annotation_table
         self._annotations = annotations
 
-        if self.table is not None:
-            if self._annotations is None:
-                self._annotations = [
-                    ann
-                    for ann in self.table.columns
-                    if ann not in ("CHR", "SNP", "POS")
-                ]
-                if len(self._annotations) < 1:
-                    self._annotations = None
+        if self.table is not None and self._annotations is None:
+            self._annotations = [
+                ann for ann in self.table.columns if ann not in ("CHR", "SNP", "POS")
+            ]
+            if len(self._annotations) < 1:
+                self._annotations = None
 
     @classmethod
     def from_file(
@@ -101,9 +98,8 @@ class AnnotationMatrix:
         :return: The chromosome number if there is only one chromosome in the annotation matrix. Otherwise, None.
         """
         chrom = self.chromosomes
-        if chrom is not None:
-            if len(chrom) == 1:
-                return chrom[0]
+        if chrom is not None and len(chrom) == 1:
+            return chrom[0]
 
     @property
     def chromosomes(self):

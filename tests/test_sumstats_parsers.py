@@ -1,13 +1,19 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from magenpy.SumstatsTable import SumstatsTable
+from magenpy.GWADataLoader import GWADataLoader
 from magenpy.parsers.sumstats_parsers import (
     COJOSSParser,
     FastGWASSParser,
+    LDAKSSParser,
     Plink2SSParser,
+    RegenieSSParser,
     SaigeSSParser,
     SumstatsParser,
+    get_sumstats_parser,
+    get_supported_sumstats_formats,
 )
 
 
@@ -95,6 +101,31 @@ def test_identifier_dtypes_preserve_leading_zeroes(tmp_path):
     assert parsed['POS'].dtype == np.dtype(np.int32)
 
 
+def test_known_sumstats_columns_use_explicit_dtypes(tmp_path):
+    sumstats_file = tmp_path / 'fastgwa.tsv'
+    pd.DataFrame({
+        'CHR': [22],
+        'SNP': ['rs1'],
+        'POS': [12345],
+        'A1': ['A'],
+        'A2': ['G'],
+        'N': [1000],
+        'AF1': [0.2],
+        'BETA': [0.1],
+        'SE': [0.01],
+        'P': [0.05],
+    }).to_csv(sumstats_file, sep='\t', index=False)
+
+    parsed = FastGWASSParser(sep='\t').parse(sumstats_file)
+
+    assert str(parsed['SNP'].dtype) in ('str', 'string')
+    assert str(parsed['A1'].dtype) in ('str', 'string')
+    assert parsed['POS'].dtype == np.dtype(np.int32)
+    assert parsed['N'].dtype == np.dtype(np.float64)
+    for column in ('MAF', 'BETA', 'SE', 'PVAL'):
+        assert parsed[column].dtype == np.dtype(np.float64)
+
+
 def test_missing_nonessential_position_uses_nullable_int32(tmp_path):
     sumstats_file = tmp_path / 'sumstats.tsv'
     pd.DataFrame({
@@ -174,3 +205,87 @@ def test_single_chromosome_split_skips_grouping_but_preserves_copy_semantics():
     assert list(split) == [22]
     assert split[22] is not sumstats
     pd.testing.assert_frame_equal(split[22].table, sumstats.table)
+
+
+def test_regenie_parser_maps_effect_allele_and_log_pvalue(tmp_path):
+    sumstats_file = tmp_path / 'trait.regenie'
+    sumstats_file.write_text(
+        'CHROM GENPOS ID ALLELE0 ALLELE1 A1FREQ INFO N TEST BETA SE CHISQ LOG10P EXTRA\n'
+        '1 12345 rs1 G A 0.2 0.99 1000 ADD 0.1 0.01 100 12.5 NA\n'
+    )
+
+    parsed = RegenieSSParser().parse(sumstats_file)
+
+    assert parsed.loc[0, 'CHR'] == 1
+    assert parsed.loc[0, 'POS'] == 12345
+    assert parsed.loc[0, 'SNP'] == 'rs1'
+    assert parsed.loc[0, 'A1'] == 'A'
+    assert parsed.loc[0, 'A2'] == 'G'
+    assert parsed.loc[0, 'MAF'] == 0.2
+    assert parsed.loc[0, 'PVAL'] == pytest.approx(10 ** -12.5)
+
+
+@pytest.mark.parametrize(
+    ('stat_columns', 'expected_z'),
+    [
+        ({'Z': -2.5}, -2.5),
+        ({'BETA': -0.5, 'SE': 0.2}, None),
+        ({'Stat': 6.25, 'Direction': -1}, -2.5),
+        ({'P': 0.012419330651552265, 'Direction': -1}, -2.5),
+    ],
+)
+def test_ldak_parser_supports_all_statistic_layouts(
+    tmp_path, stat_columns, expected_z
+):
+    sumstats_file = tmp_path / 'trait.summaries'
+    row = {
+        'Predictor': 'rs1',
+        'A1': 'A',
+        'A2': 'G',
+        'n': 1000,
+        'A1Freq': 0.2,
+        **stat_columns,
+    }
+    pd.DataFrame([row]).to_csv(sumstats_file, sep=' ', index=False)
+
+    parsed = LDAKSSParser().parse(sumstats_file)
+
+    assert parsed.loc[0, 'SNP'] == 'rs1'
+    assert parsed.loc[0, 'N'] == 1000
+    assert parsed.loc[0, 'MAF'] == 0.2
+    if expected_z is None:
+        assert parsed.loc[0, 'BETA'] == -0.5
+        assert parsed.loc[0, 'SE'] == 0.2
+    else:
+        assert parsed.loc[0, 'Z'] == pytest.approx(expected_z)
+
+
+def test_ldak_parser_supports_assoc_output(tmp_path):
+    sumstats_file = tmp_path / 'trait.assoc'
+    sumstats_file.write_text(
+        'Chromosome Predictor Basepair A1 A2 Wald_Stat Wald_P Effect SD A1_mean MAF\n'
+        '1 rs1 12345 A G -2.5 0.0124 -0.5 0.2 0.4 0.2\n'
+    )
+
+    parsed = LDAKSSParser().parse(sumstats_file)
+
+    assert parsed.loc[0, 'CHR'] == 1
+    assert parsed.loc[0, 'POS'] == 12345
+    assert parsed.loc[0, 'SNP'] == 'rs1'
+    assert parsed.loc[0, 'Z'] == -2.5
+    assert parsed.loc[0, 'PVAL'] == 0.0124
+    assert parsed.loc[0, 'BETA'] == -0.5
+    assert parsed.loc[0, 'SE'] == 0.2
+    assert parsed.loc[0, 'MAF'] == 0.2
+
+
+def test_registered_formats_propagate_to_public_entry_points():
+    canonical = get_supported_sumstats_formats()
+    aliases = get_supported_sumstats_formats(include_aliases=True)
+
+    assert {'regenie', 'ldak'} <= set(canonical)
+    assert {'regenie', 'ldak', 'sumher', 'megaprs'} <= set(aliases)
+    assert get_sumstats_parser('REGENIE') is RegenieSSParser
+    assert get_sumstats_parser('SumHer') is LDAKSSParser
+    assert SumstatsTable.supported_sumstats_formats() == canonical
+    assert GWADataLoader.supported_sumstats_formats(True) == aliases

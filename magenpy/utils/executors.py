@@ -7,7 +7,7 @@ from .system_utils import is_cmd_tool, run_shell_script
 logger = logging.getLogger(__name__)
 
 
-class plink2Executor(object):
+class plink2Executor:
     """
     A wrapper class for interfacing with the `plink2` command line tool.
     """
@@ -57,7 +57,7 @@ class plink2Executor(object):
             raise e
 
 
-class plink1Executor(object):
+class plink1Executor:
     """
     A wrapper class for interfacing with the `plink1.9` command line tool.
     """

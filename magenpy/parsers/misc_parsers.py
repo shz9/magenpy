@@ -1,5 +1,9 @@
+import logging
+
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def read_snp_filter_file(filename, snp_id_col=0):
@@ -16,8 +20,14 @@ def read_snp_filter_file(filename, snp_id_col=0):
     """
 
     try:
-        keep_list = pd.read_csv(filename, sep="\t", header=None).values[:, snp_id_col]
+        keep_list = pd.read_csv(filename, sep="\t", header=None, dtype=str).values[
+            :, snp_id_col
+        ]
     except Exception as e:
+        logger.error(
+            "Failed to parse the SNP filter file:\n%s",
+            e.stderr.decode(),
+        )
         raise e
 
     return keep_list
@@ -36,7 +46,7 @@ def read_sample_filter_file(filename):
     :return: A numpy array with the sample IDs
     """
 
-    keep_list = pd.read_csv(filename, sep="\t", header=None).values
+    keep_list = pd.read_csv(filename, sep="\t", header=None, dtype=str).values
 
     if keep_list.shape[1] == 1:
         return keep_list[:, 0]
@@ -61,7 +71,11 @@ def parse_ld_block_data(ldb_file_path):
 
     ld_blocks = {}
 
-    df = pd.read_csv(ldb_file_path, sep=r'\s+')
+    df = pd.read_csv(
+        ldb_file_path,
+        sep=r"\s+",
+        dtype={"chr": str, "start": str, "stop": str},
+    )
 
     # Drop rows with missing values:
     df.dropna(inplace=True)
@@ -91,9 +105,13 @@ def parse_cluster_assignment_file(cluster_assignment_file):
     :return: A pandas dataframe with the cluster assignments.
     """
     try:
-        clusters = pd.read_csv(cluster_assignment_file, sep=r'\s+')
+        clusters = pd.read_csv(cluster_assignment_file, sep=r"\s+", dtype=str)
         clusters.columns = ['FID', 'IID', 'Cluster']
     except Exception as e:
+        logger.error(
+            "Failed to parse the sample cluster assignment file:\n%s",
+            e.stderr.decode(),
+        )
         raise e
 
     return clusters

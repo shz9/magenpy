@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-10-27
+
+### Added
+
+- Added parsers for REGENIE step-2 association results and LDAK summary
+  statistics. The LDAK parser supports SumHer/MegaPRS files, full `.assoc`
+  output, and all four documented statistic layouts (`Z`, `BETA`/`SE`,
+  `Stat`/`Direction`, and `P`/`Direction`).
+- Added a central summary-statistics parser registry with dynamic format and
+  alias discovery through `SumstatsTable` and `GWADataLoader`. New formats no
+  longer require duplicated supported-format lists in those classes.
+- Added a native C++/Cython identity-indexer check for contiguous 32-bit and
+  64-bit integer arrays, with a bounded-memory Python fallback for other array
+  representations.
+
+### Changed
+
+- Expanded parser dtype declarations across summary statistics, annotations,
+  variant filters, sample filters, LD blocks, and cluster assignments. Known
+  numeric columns now avoid pandas dtype inference, identifiers retain leading
+  zeroes, positions use compact 32-bit representations, and caller-provided
+  dtype overrides remain authoritative.
+- Reduced harmonization allocations by checking identity indexers in one native
+  pass instead of constructing full `arange` arrays, retaining an existing
+  summary-statistics dataframe when its ordering is already correct, and
+  updating signed statistics and allele frequencies only at flipped positions.
+- Improved parser defaults and diagnostics for tabular inputs while preserving
+  whitespace-delimited defaults for native REGENIE and LDAK files.
+
+### Fixed
+
+- Preserved textual SNP and sample identifiers when reading filter and cluster
+  files, preventing numeric coercion from changing identifiers with leading
+  zeroes.
+- Correctly converted REGENIE `LOG10P` values to p-values and LDAK `.assoc`
+  mean A1 allele counts to effect-allele frequencies.
+
 ## [0.2.2] - 2026-09-25
 
 ### Added

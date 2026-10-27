@@ -1,6 +1,13 @@
 import numpy as np
 import pandas as pd
 
+try:
+    from ..stats.variant.variant_cpp import (
+        is_identity_indexer_native as _is_identity_indexer_native,
+    )
+except (ImportError, AttributeError):
+    _is_identity_indexer_native = None
+
 
 def tqdm(*args, **kwargs):
     """Import tqdm only for algorithms that display iterative progress."""
@@ -53,6 +60,43 @@ def match_chromosomes(chrom_1, chrom_2, check_patterns=('chr_', 'chr:', 'chr'), 
             return chrom_1[chr1_idx], chrom_2[chr2_idx]
         else:
             return chrom_1[chr1_idx]
+
+
+def is_identity_indexer(indexer, size=None, chunk_size=65536):
+    """Return whether an integer indexer selects every row in its current order.
+
+    Contiguous int32 and int64 arrays use a one-pass native implementation. The
+    comparison is chunked as a fallback when the extension is unavailable or the
+    input has another representation.
+
+    :param indexer: One-dimensional positional indexer.
+    :param size: Expected source size. Defaults to the indexer length.
+    :param chunk_size: Maximum number of expected positions allocated per check.
+    """
+
+    indexer = np.asarray(indexer)
+    if indexer.ndim != 1:
+        return False
+    if size is None:
+        size = len(indexer)
+    if len(indexer) != size:
+        return False
+    if size == 0:
+        return True
+
+    if (
+        _is_identity_indexer_native is not None
+        and indexer.flags.c_contiguous
+        and indexer.dtype in (np.dtype(np.int32), np.dtype(np.int64))
+    ):
+        return bool(_is_identity_indexer_native(indexer, size))
+
+    for start in range(0, size, chunk_size):
+        stop = min(start + chunk_size, size)
+        expected = np.arange(start, stop, dtype=np.intp)
+        if not np.array_equal(indexer[start:stop], expected):
+            return False
+    return True
 
 
 def merge_snp_tables(ref_table,

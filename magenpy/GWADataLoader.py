@@ -1,6 +1,4 @@
 import copy
-
-# Set up the logger:
 import logging
 from typing import Dict, Union
 
@@ -13,7 +11,11 @@ from .LDMatrix import LDMatrix
 from .SampleTable import SampleTable
 from .SumstatsTable import SumstatsTable
 from .utils.compute_utils import iterable
-from .utils.model_utils import build_snp_harmonization_plan, match_chromosomes
+from .utils.model_utils import (
+    build_snp_harmonization_plan,
+    is_identity_indexer,
+    match_chromosomes,
+)
 from .utils.system_utils import get_filenames, makedir
 
 logger = logging.getLogger(__name__)
@@ -94,9 +96,8 @@ class GWADataLoader:
         :param drop_duplicated: If True, drop SNPs with duplicated rsID.
         :param phenotype_likelihood: The likelihood of the phenotype (e.g. `gaussian`, `binomial`).
         :param sumstats_files: The path to the summary statistics file(s). The path may be a wildcard.
-        :param sumstats_format: The format for the summary statistics. Currently, supports the following
-        formats: `plink1.9`, `plink2`, `magenpy`, `fastGWA`, `COJO`, `SAIGE`, or `GWASCatalog` for the standard
-        summary statistics format (also known as `ssf` or `gwas-ssf`).
+        :param sumstats_format: A format registered in `sumstats_parsers`. Use
+        `supported_sumstats_formats()` to inspect the available formats and aliases.
         :param ld_store_files: The path to the LD matrices. This may be a wildcard to accommodate reading data
         for multiple chromosomes.
         :param annotation_files: The path to the annotation file(s). The path may contain a wildcard.
@@ -163,6 +164,13 @@ class GWADataLoader:
         # ------- Harmonize data sources -------
 
         self.harmonize_data()
+
+    @staticmethod
+    def supported_sumstats_formats(include_aliases=False):
+        """Return formats registered with the summary-statistics parsers."""
+        return SumstatsTable.supported_sumstats_formats(
+            include_aliases=include_aliases
+        )
 
     @property
     def samples(self):
@@ -534,9 +542,8 @@ class GWADataLoader:
         Read GWAS summary statistics file(s) and parse them to `SumstatsTable` objects.
 
         :param sumstats_path: The path to the summary statistics file(s). The path may be a wildcard.
-        :param sumstats_format: The format for the summary statistics. Currently supports the following
-         formats: `plink1.9`, `plink2`, `magenpy`, `fastGWA`, `COJO`, `SAIGE`, or `GWASCatalog` for the standard
-         summary statistics format (also known as `ssf` or `gwas-ssf`).
+        :param sumstats_format: A format registered in `sumstats_parsers`. Use
+        `supported_sumstats_formats()` to inspect the available formats and aliases.
         :param parser: If the summary statistics file does not follow any of the formats above, you can create
         your own parser by inheriting from the base `SumstatsParser` class and passing it here as an argument.
         :param drop_duplicated: Drop SNPs with duplicated rsIDs.
@@ -764,7 +771,8 @@ class GWADataLoader:
             "annotation": self.annotation,
         }
         initialized_data_sources = {
-            name: source for name, source in named_data_sources.items()
+            name: source
+            for name, source in named_data_sources.items()
             if source is not None
         }
 
@@ -811,8 +819,7 @@ class GWADataLoader:
                     snp_ids["sumstats"] = sumstats.snps
                     if self.genotype is not None or self.ld is not None:
                         if not all(
-                            column in sumstats.table.columns
-                            for column in ("A1", "A2")
+                            column in sumstats.table.columns for column in ("A1", "A2")
                         ):
                             raise ValueError(
                                 "To harmonize summary statistics, both `A1` and "
@@ -825,7 +832,9 @@ class GWADataLoader:
                     stored_snps = ld.get_metadata("snps", apply_mask=False)
                     ld_current_mask = ld.get_mask()
                     if ld_current_mask is None:
-                        ld_original_positions = np.arange(len(stored_snps), dtype=np.intp)
+                        ld_original_positions = np.arange(
+                            len(stored_snps), dtype=np.intp
+                        )
                         snp_ids["ld"] = stored_snps
                     else:
                         ld_original_positions = np.flatnonzero(ld_current_mask)
@@ -847,7 +856,8 @@ class GWADataLoader:
                 # columns, so its stored order is canonical whenever it is present.
                 # Otherwise retain genotype, summary-statistic, then annotation order.
                 reference = next(
-                    source for source in ("ld", "genotype", "sumstats", "annotation")
+                    source
+                    for source in ("ld", "genotype", "sumstats", "annotation")
                     if source in snp_ids
                 )
 
@@ -877,7 +887,7 @@ class GWADataLoader:
 
                 if self.genotype is not None:
                     indexer = indexers["genotype"]
-                    if not np.array_equal(indexer, np.arange(len(genotype.snp_table))):
+                    if not is_identity_indexer(indexer, len(genotype.snp_table)):
                         genotype.snp_table = (
                             genotype.snp_table.iloc[indexer]
                             .copy()
@@ -887,33 +897,41 @@ class GWADataLoader:
                 if self.annotation is not None:
                     annotation = self.annotation[c]
                     indexer = indexers["annotation"]
-                    if not np.array_equal(indexer, np.arange(len(annotation.table))):
+                    if not is_identity_indexer(indexer, len(annotation.table)):
                         annotation.table = (
-                            annotation.table.iloc[indexer]
-                            .copy()
-                            .reset_index(drop=True)
+                            annotation.table.iloc[indexer].copy().reset_index(drop=True)
                         )
 
                 if self.sumstats_table is not None:
                     indexer = indexers["sumstats"]
-                    sumstats.table = (
-                        sumstats.table.iloc[indexer]
-                        .copy()
-                        .reset_index(drop=True)
-                    )
+                    if not is_identity_indexer(indexer, len(sumstats.table)):
+                        sumstats.table = (
+                            sumstats.table.iloc[indexer].copy().reset_index(drop=True)
+                        )
+                    elif not sumstats.table.index.equals(
+                        pd.RangeIndex(len(sumstats.table))
+                    ):
+                        sumstats.table.reset_index(drop=True, inplace=True)
 
                     if allele_reference is not None:
-                        flip = plan["flip"].astype(int)
+                        flip = plan["flip"]
                         if np.any(flip):
-                            multiplier = 1. - 2. * flip
+                            flip_positions = np.flatnonzero(flip)
                             for statistic in ("BETA", "STD_BETA", "Z"):
                                 if statistic in sumstats.table:
-                                    sumstats.table[statistic] = (
-                                        multiplier * sumstats.table[statistic]
+                                    column = sumstats.table.columns.get_loc(statistic)
+                                    sumstats.table.iloc[flip_positions, column] = (
+                                        -sumstats.table.iloc[
+                                            flip_positions, column
+                                        ].to_numpy()
                                     )
                             if "MAF" in sumstats.table:
-                                sumstats.table["MAF"] = np.abs(
-                                    flip - sumstats.table["MAF"]
+                                column = sumstats.table.columns.get_loc("MAF")
+                                sumstats.table.iloc[flip_positions, column] = (
+                                    1.0
+                                    - sumstats.table.iloc[
+                                        flip_positions, column
+                                    ].to_numpy()
                                 )
 
                         sumstats.table["A1"] = plan["a1"]
@@ -1329,8 +1347,7 @@ class GWADataLoader:
             variant_counts = {c: ld.n_snps for c, ld in self.ld.items()}
         elif self.annotation:
             variant_counts = {
-                c: annotation.shape[0]
-                for c, annotation in self.annotation.items()
+                c: annotation.shape[0] for c, annotation in self.annotation.items()
             }
 
         chromosomes = list(variant_counts)
@@ -1368,12 +1385,14 @@ class GWADataLoader:
         genome_builds = set()
         if self.genotype:
             genome_builds.update(
-                g.genome_build for g in self.genotype.values()
+                g.genome_build
+                for g in self.genotype.values()
                 if g.genome_build is not None
             )
         if self.ld:
             genome_builds.update(
-                ld.genome_build for ld in self.ld.values()
+                ld.genome_build
+                for ld in self.ld.values()
                 if ld.genome_build is not None
             )
         genome_build = (
