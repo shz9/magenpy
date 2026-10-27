@@ -118,8 +118,8 @@ def test_known_sumstats_columns_use_explicit_dtypes(tmp_path):
 
     parsed = FastGWASSParser(sep='\t').parse(sumstats_file)
 
-    assert str(parsed['SNP'].dtype) in ('str', 'string')
-    assert str(parsed['A1'].dtype) in ('str', 'string')
+    assert pd.api.types.is_string_dtype(parsed['SNP'])
+    assert pd.api.types.is_string_dtype(parsed['A1'])
     assert parsed['POS'].dtype == np.dtype(np.int32)
     assert parsed['N'].dtype == np.dtype(np.float64)
     for column in ('MAF', 'BETA', 'SE', 'PVAL'):
