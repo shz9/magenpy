@@ -24,18 +24,23 @@ class SumstatsTable:
     phenotype, the Chi-squared statistics, etc.
 
     :ivar table: A pandas DataFrame containing the summary statistics.
+    :ivar genome_build: The genome build under which variant coordinates are
+    defined, if known.
     """
 
-    def __init__(self, ss_table: pd.DataFrame):
+    def __init__(self, ss_table: pd.DataFrame, genome_build=None):
         """
         Initialize the summary statistics table.
 
         :param ss_table: A pandas DataFrame containing the summary statistics.
+        :param genome_build: The genome build or assembly under which the variant
+        coordinates are defined.
 
         !!! seealso "See Also"
             * [from_file][magenpy.SumstatsTable.SumstatsTable.from_file]
         """
         self.table: pd.DataFrame = ss_table
+        self.genome_build = genome_build
 
         # Check that the table contains some of the required columns (non-exhaustive):
 
@@ -97,10 +102,9 @@ class SumstatsTable:
 
     @property
     def identifier_cols(self):
-        if "SNP" in self.table.columns:
-            return ["SNP"]
-        else:
+        if all(col in self.table.columns for col in ("CHR", "POS")):
             return ["CHR", "POS"]
+        return ["SNP"]
 
     @property
     def n_snps(self):
@@ -531,7 +535,7 @@ class SumstatsTable:
 
     def drop_duplicates(self):
         """
-        Drop variants with duplicated rsIDs from the summary statistics table.
+        Drop variants whose preferred identifiers are duplicated.
         """
 
         self.table = self.table.drop_duplicates(subset=self.identifier_cols, keep=False)
@@ -657,15 +661,22 @@ class SumstatsTable:
             # specific. In that case there is nothing to group, but retain the
             # method's established copy semantics.
             if len(chromosomes) == 1 and not self.table["CHR"].isna().any():
-                return {chromosomes[0]: SumstatsTable(self.table.copy())}
+                return {
+                    chromosomes[0]: SumstatsTable(
+                        self.table.copy(), genome_build=self.genome_build
+                    )
+                }
 
             return {
-                c: SumstatsTable(table.copy())
+                c: SumstatsTable(table.copy(), genome_build=self.genome_build)
                 for c, table in self.table.groupby("CHR", sort=True)
             }
         elif snps_per_chrom is not None:
             chrom_dict = {
-                c: SumstatsTable(pd.DataFrame({"SNP": snps}).merge(self.table))
+                c: SumstatsTable(
+                    pd.DataFrame({"SNP": snps}).merge(self.table),
+                    genome_build=self.genome_build,
+                )
                 for c, snps in snps_per_chrom.items()
             }
 
@@ -703,7 +714,7 @@ class SumstatsTable:
             "PVAL",
         ]
 
-        # Because some of the quantities that the user needs may be need to be
+        # Because some of the quantities that the user needs may need to be
         # computed, we separate the column subset into those that are already
         # present in the table and those that are not (but can still be computed
         # from other summary statistics):
@@ -768,23 +779,56 @@ class SumstatsTable:
 
     @classmethod
     def from_file(
-        cls, sumstats_file, sumstats_format=None, parser=None, **parse_kwargs
+        cls,
+        sumstats_file,
+        sumstats_format=None,
+        parser=None,
+        genome_build=None,
+        col_subset=None,
+        **parse_kwargs,
     ):
         """
-        Initialize a summary statistics table from file. The user must provide either
-        the format for the summary statistics file or the parser object
-        (see `parsers.sumstats_parsers`).
+        Initialize a summary statistics table from file. For local files and URLs,
+        the user must provide either the format or a parser object
+        (see `parsers.sumstats_parsers`). GWAS Catalog accessions infer the format.
 
-        :param sumstats_file: The path to the summary statistics file.
+        :param sumstats_file: The path to the summary statistics file or a GWAS
+        Catalog study accession.
         :param sumstats_format: A format registered in
         `sumstats_parsers`. Use `supported_sumstats_formats()` to inspect the
-        available formats and aliases.
+        available formats and aliases. Inferred as `ssf` for GWAS Catalog
+        accessions.
         :param parser: An instance of SumstatsParser parser, implements basic parsing/conversion
         functionalities.
+        :param genome_build: The genome build or assembly under which the variant
+        coordinates are defined.
+        :param col_subset: Summary-statistic columns to read in addition to the
+        variant-identification columns. Filtering happens while reading the file.
         :param parse_kwargs: arguments for the pandas `read_csv` function, such as the delimiter.
 
         :return: A `SumstatsTable` object initialized from the summary statistics file.
         """
+        from .utils.gwas_catalog import (
+            is_gwas_catalog_accession,
+            resolve_gwas_catalog,
+        )
+
+        if is_gwas_catalog_accession(sumstats_file):
+            sumstats_file = resolve_gwas_catalog(sumstats_file)
+            if parser is None:
+                sumstats_format = "ssf"
+            from .utils.model_utils import normalize_genome_build
+
+            if (
+                genome_build is not None
+                and normalize_genome_build(genome_build) != "GRCh37"
+            ):
+                raise ValueError(
+                    "The requested genome build conflicts with the GRCh37 GWAS "
+                    "Catalog summary statistics."
+                )
+            genome_build = "GRCh37"
+
         assert sumstats_format is not None or parser is not None
 
         from .parsers.sumstats_parsers import get_sumstats_parser
@@ -792,5 +836,5 @@ class SumstatsTable:
         if parser is None:
             parser = get_sumstats_parser(sumstats_format)(None, **parse_kwargs)
 
-        sumstats_table = parser.parse(sumstats_file)
-        return cls(sumstats_table)
+        sumstats_table = parser.parse(sumstats_file, col_subset=col_subset)
+        return cls(sumstats_table, genome_build=genome_build)

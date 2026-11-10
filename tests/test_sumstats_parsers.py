@@ -119,11 +119,12 @@ def test_known_sumstats_columns_use_explicit_dtypes(tmp_path):
     parsed = FastGWASSParser(sep='\t').parse(sumstats_file)
 
     assert pd.api.types.is_string_dtype(parsed['SNP'])
-    assert pd.api.types.is_string_dtype(parsed['A1'])
+    assert isinstance(parsed['A1'].dtype, pd.CategoricalDtype)
     assert parsed['POS'].dtype == np.dtype(np.int32)
-    assert parsed['N'].dtype == np.dtype(np.float64)
+    assert parsed['N'].dtype == np.dtype(np.float32)
     for column in ('MAF', 'BETA', 'SE', 'PVAL'):
-        assert parsed[column].dtype == np.dtype(np.float64)
+        expected = np.float64 if column == 'PVAL' else np.float32
+        assert parsed[column].dtype == np.dtype(expected)
 
 
 def test_missing_nonessential_position_uses_nullable_int32(tmp_path):
@@ -155,6 +156,69 @@ def test_user_dtype_overrides_parser_default(tmp_path):
     parsed = SumstatsParser(sep='\t', dtype={'SNP': 'category'}).parse(sumstats_file)
 
     assert isinstance(parsed['SNP'].dtype, pd.CategoricalDtype)
+
+
+def test_col_subset_reads_requested_statistics_and_identifiers(tmp_path):
+    sumstats_file = tmp_path / 'sumstats.tsv'
+    pd.DataFrame({
+        'CHR': [1],
+        'SNP': ['rs1'],
+        'POS': [100],
+        'A1': ['A'],
+        'A2': ['G'],
+        'BETA': [0.1],
+        'SE': [0.01],
+        'PVAL': [0.05],
+        'UNUSED': ['large payload'],
+    }).to_csv(sumstats_file, sep='\t', index=False)
+
+    parsed = SumstatsParser(col_subset=['BETA']).parse(sumstats_file)
+
+    assert parsed.columns.tolist() == ['CHR', 'SNP', 'POS', 'A1', 'A2', 'BETA']
+
+
+def test_col_subset_uses_format_names_and_discards_derived_dependencies(tmp_path):
+    sumstats_file = tmp_path / 'saige.tsv'
+    pd.DataFrame({
+        'MarkerID': ['rs1'],
+        'Allele1': ['G'],
+        'Allele2': ['A'],
+        'AF_Allele2': [0.25],
+        'AC_Allele2': [500],
+        'Tstat': [2.0],
+        'p.value': [0.05],
+    }).to_csv(sumstats_file, sep='\t', index=False)
+
+    parsed = SaigeSSParser(col_subset=['N']).parse(sumstats_file)
+
+    assert parsed.columns.tolist() == ['SNP', 'A2', 'A1', 'N']
+    assert parsed.loc[0, 'N'] == 1000
+
+
+def test_col_subset_accepts_input_format_column_names(tmp_path):
+    sumstats_file = tmp_path / 'saige.tsv'
+    pd.DataFrame({
+        'MarkerID': ['rs1'], 'Allele1': ['G'], 'Allele2': ['A'],
+        'Tstat': [2.0], 'p.value': [0.05],
+    }).to_csv(sumstats_file, sep='\t', index=False)
+
+    parsed = SaigeSSParser(col_subset=['Tstat']).parse(sumstats_file)
+
+    assert parsed.columns.tolist() == ['SNP', 'A2', 'A1', 'Z']
+
+
+def test_sumstats_table_propagates_col_subset(tmp_path):
+    sumstats_file = tmp_path / 'sumstats.tsv'
+    pd.DataFrame({
+        'SNP': ['rs1'], 'A1': ['A'], 'A2': ['G'],
+        'BETA': [0.1], 'SE': [0.01], 'PVAL': [0.05],
+    }).to_csv(sumstats_file, sep='\t', index=False)
+
+    sumstats = SumstatsTable.from_file(
+        sumstats_file, sumstats_format='magenpy', col_subset=['BETA']
+    )
+
+    assert sumstats.table.columns.tolist() == ['SNP', 'A1', 'A2', 'BETA']
 
 
 def test_plink2_postprocessing_precedes_missing_value_filter(tmp_path):

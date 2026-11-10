@@ -172,6 +172,12 @@ class GenotypeMatrix:
         return self._genome_build
 
     @property
+    def identifier_cols(self):
+        if all(col in self.snp_table.columns for col in ("CHR", "POS")):
+            return ["CHR", "POS"]
+        return ["SNP"]
+
+    @property
     def chromosome(self):
         """
         ..note::
@@ -479,17 +485,22 @@ class GenotypeMatrix:
                     keep_flag = maf_cond
 
             if keep_flag is not None:
-                self.filter_snps(extract_snps=self.snps[keep_flag])
+                self.snp_table = (
+                    self.snp_table.iloc[np.flatnonzero(keep_flag)]
+                    .copy()
+                    .reset_index(drop=True)
+                )
 
     def drop_duplicated_snps(self):
         """
-        A convenience method to drop variants with duplicated SNP rsIDs.
+        Drop variants whose preferred identifiers are duplicated.
         """
 
-        u_snps, counts = np.unique(self.snps, return_counts=True)
-        if len(u_snps) < self.n_snps:
-            # Keep only SNPs which occur once in the sequence:
-            self.filter_snps(u_snps[counts == 1])
+        duplicated = self.snp_table.duplicated(
+            subset=self.identifier_cols, keep=False
+        )
+        if duplicated.any():
+            self.snp_table = self.snp_table.loc[~duplicated].copy()
 
     def filter_samples(self, keep_samples=None, keep_file=None):
         """

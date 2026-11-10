@@ -52,4 +52,5 @@ mgp_simulate \
   --output-file output/case_control
 ```
 
-Use `--log-level` to control command-line logging.
+Package `INFO` messages are hidden by default so they do not duplicate progress-bar
+updates. Use `--log-level INFO` to show them.

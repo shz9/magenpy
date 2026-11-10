@@ -18,6 +18,7 @@ jobs:
       - name: Set up miniconda
         uses: conda-incubator/setup-miniconda@v3
         with:
+          miniforge-version: "latest"
           channels: conda-forge
           python-version: ${{ matrix.python-version }}
 

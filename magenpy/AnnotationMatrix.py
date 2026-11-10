@@ -17,19 +17,24 @@ class AnnotationMatrix:
     :ivar table: A pandas dataframe containing the annotation information.
     :ivar _annotations: A list or array of column namees to consider as annotations. If not provided,
     will be inferred heuristically, though we recommend that the user specify this information.
+    :ivar genome_build: The genome build under which variant coordinates are
+    defined, if known.
     """
 
-    def __init__(self, annotation_table=None, annotations=None):
+    def __init__(self, annotation_table=None, annotations=None, genome_build=None):
         """
         Initialize an AnnotationMatrix object
 
         :param annotation_table: A pandas dataframe containing the annotation information.
         :param annotations: A list of array of columns to consider as annotations. If not provided, will be
         inferred heuristically, though we recommend that the user specify this information.
+        :param genome_build: The genome build or assembly under which the variant
+        coordinates are defined.
         """
 
         self.table = annotation_table
         self._annotations = annotations
+        self.genome_build = genome_build
 
         if self.table is not None and self._annotations is None:
             self._annotations = [
@@ -40,7 +45,12 @@ class AnnotationMatrix:
 
     @classmethod
     def from_file(
-        cls, annot_file, annot_format="magenpy", annot_parser=None, **parse_kwargs
+        cls,
+        annot_file,
+        annot_format="magenpy",
+        annot_parser=None,
+        genome_build=None,
+        **parse_kwargs,
     ):
         """
         Initialize an AnnotationMatrix object from a file.
@@ -50,6 +60,8 @@ class AnnotationMatrix:
         annotation files in the `magenpy` and `ldsc` formats.
         :param annot_parser: An `AnnotationMatrixParser` derived object, which can be tailored to
         specific annotation formats that the user has.
+        :param genome_build: The genome build or assembly under which the variant
+        coordinates are defined.
         :param parse_kwargs: arguments for the pandas `read_csv` function, such as the delimiter.
 
         :return: An instance of the `AnnotationMatrix` class.
@@ -72,7 +84,11 @@ class AnnotationMatrix:
 
         annot_table, annotations = annot_parser.parse(annot_file)
 
-        annot_mat = cls(annotation_table=annot_table, annotations=annotations)
+        annot_mat = cls(
+            annotation_table=annot_table,
+            annotations=annotations,
+            genome_build=genome_build,
+        )
 
         return annot_mat
 
@@ -115,6 +131,12 @@ class AnnotationMatrix:
         :return: The list of SNP rsIDs in the annotation matrix.
         """
         return self.table["SNP"].values
+
+    @property
+    def identifier_cols(self):
+        if all(col in self.table.columns for col in ("CHR", "POS")):
+            return ["CHR", "POS"]
+        return ["SNP"]
 
     @property
     def n_annotations(self):
@@ -197,7 +219,10 @@ class AnnotationMatrix:
         self._annotations = [
             annot for annot in self._annotations if annot in keep_annotations
         ]
-        self.table = self.table[["CHR", "SNP", "POS"] + self._annotations]
+        identifier_cols = [
+            column for column in ("CHR", "SNP", "POS") if column in self.table
+        ]
+        self.table = self.table[identifier_cols + self._annotations]
 
     def add_annotation(self, annot_vec, annotation_name):
         """
@@ -293,6 +318,7 @@ class AnnotationMatrix:
                 c: AnnotationMatrix(
                     annotation_table=chrom_tables.get_group(c),
                     annotations=self.annotations,
+                    genome_build=self.genome_build,
                 )
                 for c in chrom_tables.groups
             }

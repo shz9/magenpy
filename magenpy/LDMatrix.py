@@ -109,6 +109,7 @@ class LDMatrix:
         # To support dynamically filtering the LD matrix:
         self._mask = None
         self._n_masked = 0
+        self._genome_build = None
 
         # To support iteration over the LD matrix:
         self.index: int = 0
@@ -1146,7 +1147,16 @@ class LDMatrix:
         """
         :return: The genome build based on which the base pair coordinates are defined.
         """
-        return self.get_store_attr("Genome build")
+        if self._genome_build is not None:
+            return self._genome_build
+        try:
+            return self.get_store_attr("Genome build")
+        except KeyError:
+            return None
+
+    @genome_build.setter
+    def genome_build(self, value):
+        self._genome_build = value
 
     @property
     def snps(self):

@@ -23,23 +23,40 @@ def setup_cli_logger(logger, log_level, package_modules=None):
     """
     Configure logging for command-line scripts.
 
-    Package loggers emit warnings and errors by default, while the active CLI
-    logger emits clean user-facing messages at INFO level unless DEBUG is requested.
+    Apply the requested level to package and CLI messages. Package logger
+    propagation is disabled to prevent duplicate output from parent handlers.
 
     :param logger: The logger for the active CLI script.
     :param log_level: Requested logging level for the active CLI script.
     :param package_modules: Package logger module-name filters.
     """
     package_modules = package_modules or ["magenpy"]
-    setup_logger(modules=package_modules, log_level="WARNING")
 
-    logger.handlers.clear()
+    package_loggers = [
+        lgr
+        for lgr_name, lgr in logging.root.manager.loggerDict.items()
+        if any(module in lgr_name for module in package_modules)
+        and isinstance(lgr, logging.Logger)
+    ]
+    old_package_handlers = set()
+    for package_logger in package_loggers:
+        for handler in package_logger.handlers[:]:
+            package_logger.removeHandler(handler)
+            old_package_handlers.add(handler)
+        package_logger.propagate = False
+    for handler in old_package_handlers:
+        handler.close()
+
+    setup_logger(modules=package_modules, log_level=log_level)
+
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
     logger.propagate = False
 
     setup_logger(
         loggers=[logger],
         log_format="%(message)s",
-        log_level=["INFO", log_level][logging.getLevelName(log_level) < logging.INFO],
+        log_level=log_level,
     )
 
 

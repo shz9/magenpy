@@ -15,6 +15,7 @@ from .utils.model_utils import (
     build_snp_harmonization_plan,
     is_identity_indexer,
     match_chromosomes,
+    normalize_genome_build,
 )
 from .utils.system_utils import get_filenames, makedir
 
@@ -76,6 +77,7 @@ class GWADataLoader:
         temp_dir="temp",
         genome_build=None,
         threads=1,
+        sumstats_col_subset=None,
     ):
         """
         Initialize the `GWADataLoader` object with the data sources required for
@@ -95,7 +97,8 @@ class GWADataLoader:
         :param min_mac: The minimum minor allele count cutoff.
         :param drop_duplicated: If True, drop SNPs with duplicated rsID.
         :param phenotype_likelihood: The likelihood of the phenotype (e.g. `gaussian`, `binomial`).
-        :param sumstats_files: The path to the summary statistics file(s). The path may be a wildcard.
+        :param sumstats_files: The path to the summary statistics file(s), or a
+        GWAS Catalog study accession. The path may be a wildcard.
         :param sumstats_format: A format registered in `sumstats_parsers`. Use
         `supported_sumstats_formats()` to inspect the available formats and aliases.
         :param ld_store_files: The path to the LD matrices. This may be a wildcard to accommodate reading data
@@ -108,6 +111,8 @@ class GWADataLoader:
         :param temp_dir: The temporary directory where to store intermediate files.
         :param genome_build: The genome build or assembly under which the SNP coordinates are defined.
         :param threads: The number of threads to use for computations.
+        :param sumstats_col_subset: Summary-statistic columns to read in addition
+        to the variant-identification columns. Filtering happens while reading.
         """
 
         # ------- Sanity checks -------
@@ -147,10 +152,18 @@ class GWADataLoader:
         )
         self.read_phenotype(phenotype_file)
         self.read_covariates(covariates_file)
-        self.read_ld(ld_store_files)
-        self.read_annotations(annotation_files, annot_format=annotation_format)
+        self.read_ld(ld_store_files, genome_build=genome_build)
+        self.read_annotations(
+            annotation_files,
+            annot_format=annotation_format,
+            genome_build=genome_build,
+        )
         self.read_summary_statistics(
-            sumstats_files, sumstats_format, drop_duplicated=drop_duplicated
+            sumstats_files,
+            sumstats_format,
+            drop_duplicated=drop_duplicated,
+            genome_build=genome_build,
+            col_subset=sumstats_col_subset,
         )
 
         # ------- Filter samples or SNPs -------
@@ -343,7 +356,12 @@ class GWADataLoader:
         self.sync_sample_tables()
 
     def read_annotations(
-        self, annot_path, annot_format="magenpy", parser=None, **parse_kwargs
+        self,
+        annot_path,
+        annot_format="magenpy",
+        parser=None,
+        genome_build=None,
+        **parse_kwargs,
     ):
         """
         Read the annotation matrix from file. Annotations are a set of features associated
@@ -355,6 +373,8 @@ class GWADataLoader:
          formats: `magenpy`, `ldsc`.
         :param parser: If the annotation file does not follow any of the formats above, you can create
         your own parser by inheriting from the base `AnnotationMatrixParser` class and passing it here as an argument.
+        :param genome_build: The genome build or assembly under which the variant
+        coordinates are defined.
         :param parse_kwargs: keyword arguments for the parser. These are mainly parameters that will be passed to
         `pandas.read_csv` function, such as the delimiter, header information, etc.
         """
@@ -383,6 +403,7 @@ class GWADataLoader:
                 annot_file,
                 annot_format=annot_format,
                 annot_parser=parser,
+                genome_build=genome_build,
                 **parse_kwargs,
             )
             self.annotation[annot_mat.chromosome] = annot_mat
@@ -536,17 +557,24 @@ class GWADataLoader:
         sumstats_format="magenpy",
         parser=None,
         drop_duplicated=True,
+        genome_build=None,
+        col_subset=None,
         **parse_kwargs,
     ):
         """
         Read GWAS summary statistics file(s) and parse them to `SumstatsTable` objects.
 
-        :param sumstats_path: The path to the summary statistics file(s). The path may be a wildcard.
+        :param sumstats_path: The path to the summary statistics file(s), or a
+        GWAS Catalog study accession. The path may be a wildcard.
         :param sumstats_format: A format registered in `sumstats_parsers`. Use
         `supported_sumstats_formats()` to inspect the available formats and aliases.
         :param parser: If the summary statistics file does not follow any of the formats above, you can create
         your own parser by inheriting from the base `SumstatsParser` class and passing it here as an argument.
         :param drop_duplicated: Drop SNPs with duplicated rsIDs.
+        :param genome_build: The genome build or assembly under which the variant
+        coordinates are defined.
+        :param col_subset: Summary-statistic columns to read in addition to the
+        variant-identification columns. Filtering happens while reading.
         :param parse_kwargs: keyword arguments for the parser. These are mainly parameters that will be passed to
         `pandas.read_csv` function, such as the delimiter, header information, etc.
         """
@@ -554,7 +582,11 @@ class GWADataLoader:
         if sumstats_path is None:
             return
 
-        if not iterable(sumstats_path):
+        from .utils.gwas_catalog import is_gwas_catalog_accession
+
+        if is_gwas_catalog_accession(sumstats_path):
+            sumstats_files = [sumstats_path]
+        elif not iterable(sumstats_path):
             sumstats_files = get_filenames(sumstats_path)
 
             from .utils.system_utils import valid_url
@@ -578,7 +610,12 @@ class GWADataLoader:
             sumstats_files, total=len(sumstats_files), desc="Reading summary statistics"
         ):
             ss_tab = SumstatsTable.from_file(
-                f, sumstats_format=sumstats_format, parser=parser, **parse_kwargs
+                f,
+                sumstats_format=sumstats_format,
+                parser=parser,
+                genome_build=genome_build,
+                col_subset=col_subset,
+                **parse_kwargs,
             )
 
             if drop_duplicated:
@@ -623,11 +660,13 @@ class GWADataLoader:
                 if "SNP" not in ss.table.columns and c in ref_table:
                     ss.infer_snp_id(ref_table[c], allow_na=True)
 
-    def read_ld(self, ld_store_paths):
+    def read_ld(self, ld_store_paths, genome_build=None):
         """
         Read the LD matrix files stored on-disk in Zarr array format.
         :param ld_store_paths: The path to the LD matrices. This may be a wildcard to accommodate reading data
         for multiple chromosomes.
+        :param genome_build: The genome build or assembly under which the variant
+        coordinates are defined when it is not stored with the LD matrix.
         """
 
         if ld_store_paths is None:
@@ -661,6 +700,18 @@ class GWADataLoader:
             ld_store_files, total=len(ld_store_files), desc="Reading LD metadata"
         ):
             z = LDMatrix.from_path(f)
+            if (
+                genome_build is not None
+                and z.genome_build is not None
+                and normalize_genome_build(genome_build)
+                != normalize_genome_build(z.genome_build)
+            ):
+                raise ValueError(
+                    "The requested genome build conflicts with the build stored "
+                    f"in the LD matrix: {z.genome_build}."
+                )
+            if z.genome_build is None:
+                z.genome_build = genome_build
             self.ld[z.chromosome] = z
 
     def load_ld(self):
@@ -758,9 +809,8 @@ class GWADataLoader:
             However, if you read or manipulate the data sources after initialization,
             you may need to call this method again to ensure that the data sources remain aligned.
 
-        !!! warning
-            Harmonization for now depends on having SNP rsID be present in all the resources. Hopefully
-            this requirement will be relaxed in the future.
+        Variants are matched by chromosome and base-pair position when those
+        columns are available in every source, and by SNP ID otherwise.
 
         """
 
@@ -775,6 +825,28 @@ class GWADataLoader:
             for name, source in named_data_sources.items()
             if source is not None
         }
+
+        source_builds = {}
+        for source_name, source in initialized_data_sources.items():
+            for data in source.values():
+                genome_build = normalize_genome_build(
+                    getattr(data, "genome_build", None)
+                )
+                if genome_build is not None:
+                    source_builds.setdefault(source_name, set()).add(genome_build)
+
+        genome_builds = (
+            set().union(*source_builds.values()) if source_builds else set()
+        )
+        if len(genome_builds) > 1:
+            build_description = ", ".join(
+                f"{source}={sorted(builds)}"
+                for source, builds in source_builds.items()
+            )
+            raise ValueError(
+                "Cannot harmonize data sources with conflicting genome builds: "
+                f"{build_description}."
+            )
 
         # If less than two data sources are present, skip harmonization...
         if len(initialized_data_sources) < 2:
@@ -804,19 +876,20 @@ class GWADataLoader:
                         del ds[c]
 
             else:
-                snp_ids = {}
+                variant_tables = {}
+                variant_ids = {}
                 alleles = {}
                 ld_original_positions = None
                 ld_current_mask = None
 
                 if self.genotype is not None:
                     genotype = self.genotype[c]
-                    snp_ids["genotype"] = genotype.snps
+                    variant_tables["genotype"] = genotype.snp_table
                     alleles["genotype"] = (genotype.a1, genotype.a2)
 
                 if self.sumstats_table is not None:
                     sumstats = self.sumstats_table[c]
-                    snp_ids["sumstats"] = sumstats.snps
+                    variant_tables["sumstats"] = sumstats.table
                     if self.genotype is not None or self.ld is not None:
                         if not all(
                             column in sumstats.table.columns for column in ("A1", "A2")
@@ -827,18 +900,50 @@ class GWADataLoader:
                             )
                         alleles["sumstats"] = (sumstats.a1, sumstats.a2)
 
+                if self.annotation is not None:
+                    annotation = self.annotation[c]
+                    variant_tables["annotation"] = annotation.table
+
+                use_position = all(
+                    all(column in table.columns for column in ("CHR", "POS"))
+                    for table in variant_tables.values()
+                )
+
                 if self.ld is not None:
                     ld = self.ld[c]
-                    stored_snps = ld.get_metadata("snps", apply_mask=False)
+                    stored_ids = None
+                    if use_position:
+                        try:
+                            stored_ids = ld.get_metadata("bp", apply_mask=False)
+                        except KeyError:
+                            use_position = False
+                    if not use_position:
+                        try:
+                            stored_ids = ld.get_metadata("snps", apply_mask=False)
+                        except KeyError as error:
+                            raise ValueError(
+                                "LD metadata contains neither CHR/POS nor SNP IDs."
+                            ) from error
+
                     ld_current_mask = ld.get_mask()
                     if ld_current_mask is None:
                         ld_original_positions = np.arange(
-                            len(stored_snps), dtype=np.intp
+                            len(stored_ids), dtype=np.intp
                         )
-                        snp_ids["ld"] = stored_snps
                     else:
                         ld_original_positions = np.flatnonzero(ld_current_mask)
-                        snp_ids["ld"] = stored_snps[ld_original_positions]
+
+                    current_ids = stored_ids[ld_original_positions]
+                    if use_position:
+                        variant_ids["ld"] = pd.MultiIndex.from_arrays(
+                            (
+                                np.repeat(c, len(current_ids)),
+                                current_ids,
+                            ),
+                            names=("CHR", "POS"),
+                        )
+                    else:
+                        variant_ids["ld"] = current_ids
 
                     # LD alleles are only needed when LD is the allele reference.
                     if self.genotype is None and self.sumstats_table is not None:
@@ -849,8 +954,22 @@ class GWADataLoader:
                             stored_a2[ld_original_positions],
                         )
 
-                if self.annotation is not None:
-                    snp_ids["annotation"] = self.annotation[c].snps
+                identifier_cols = ["CHR", "POS"] if use_position else ["SNP"]
+                if not use_position and any(
+                    "SNP" not in table.columns for table in variant_tables.values()
+                ):
+                    raise ValueError(
+                        "Cannot harmonize variants: CHR/POS are not available in "
+                        "every data source and at least one source has no SNP IDs."
+                    )
+
+                for source, table in variant_tables.items():
+                    if use_position:
+                        variant_ids[source] = pd.MultiIndex.from_frame(
+                            table[identifier_cols]
+                        )
+                    else:
+                        variant_ids[source] = table["SNP"].to_numpy()
 
                 # An LD matrix cannot be reordered without permuting its rows and
                 # columns, so its stored order is canonical whenever it is present.
@@ -858,26 +977,26 @@ class GWADataLoader:
                 reference = next(
                     source
                     for source in ("ld", "genotype", "sumstats", "annotation")
-                    if source in snp_ids
+                    if source in variant_ids
                 )
 
                 allele_reference = None
                 allele_target = None
-                if "sumstats" in snp_ids:
+                if "sumstats" in variant_ids:
                     # TODO: When genotype and LD are both present, reconcile the
                     # genotype A1/A2 orientation with LD as well. This requires
                     # deciding how allele flips propagate to genotype dosages and
                     # LD correlations; for now, as in the legacy implementation,
                     # only summary statistics are allele-harmonized.
-                    if "genotype" in snp_ids:
+                    if "genotype" in variant_ids:
                         allele_reference = "genotype"
-                    elif "ld" in snp_ids:
+                    elif "ld" in variant_ids:
                         allele_reference = "ld"
                     if allele_reference is not None:
                         allele_target = "sumstats"
 
                 plan = build_snp_harmonization_plan(
-                    snp_ids,
+                    variant_ids,
                     reference=reference,
                     alleles=alleles,
                     allele_reference=allele_reference,
@@ -969,6 +1088,8 @@ class GWADataLoader:
                 desc="Performing GWAS",
             )
         }
+        for c, sumstats in self.sumstats_table.items():
+            sumstats.genome_build = self.genotype[c].genome_build
 
     def score(self, beta=None, standardize_genotype=False):
         """
@@ -1385,15 +1506,27 @@ class GWADataLoader:
         genome_builds = set()
         if self.genotype:
             genome_builds.update(
-                g.genome_build
+                normalize_genome_build(g.genome_build)
                 for g in self.genotype.values()
                 if g.genome_build is not None
             )
         if self.ld:
             genome_builds.update(
-                ld.genome_build
+                normalize_genome_build(ld.genome_build)
                 for ld in self.ld.values()
                 if ld.genome_build is not None
+            )
+        if self.sumstats_table:
+            genome_builds.update(
+                normalize_genome_build(sumstats.genome_build)
+                for sumstats in self.sumstats_table.values()
+                if sumstats.genome_build is not None
+            )
+        if self.annotation:
+            genome_builds.update(
+                normalize_genome_build(annotation.genome_build)
+                for annotation in self.annotation.values()
+                if annotation.genome_build is not None
             )
         genome_build = (
             ", ".join(sorted(map(str, genome_builds)))

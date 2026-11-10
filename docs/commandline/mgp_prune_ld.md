@@ -54,4 +54,4 @@ mgp_prune_ld \
 If no `--rank-column` is provided for summary statistics, the script uses a p-value
 column when available.
 
-Use `--log-level` to control command-line logging.
+Package `INFO` messages are hidden by default. Use `--log-level INFO` to show them.

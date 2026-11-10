@@ -50,6 +50,7 @@ def format_run_summary(args, n_focal_snps=None):
             [
                 ("R2 threshold", args.r2_threshold),
                 ("Correlation threshold", round(float(np.sqrt(args.r2_threshold)), 2)),
+                ("Include LD relationships", args.include_ld),
             ],
         ),
         ("Output", [("Output file", args.output_file)]),
@@ -87,39 +88,81 @@ def make_data_loader(args):
     return gdl
 
 
-def focal_snps_by_chromosome(gdl, focal_snps):
+def focal_indices_by_chromosome(gdl, focal_snps):
     """
-    Split focal SNPs by the LD matrices where they are present.
+    Find focal SNP indices in each LD matrix with vectorized hash lookups.
 
     :param gdl: A ``GWADataLoader`` object with LD matrices.
     :param focal_snps: Ordered focal SNP IDs supplied by the user.
-    :return: Dictionary mapping chromosomes to matched focal SNP IDs.
+    :return: Dictionary mapping chromosomes to matched LD-matrix indices.
     """
+    focal_snps = np.asarray(focal_snps, dtype=str)
     matched = {}
     for chrom, ld_mat in gdl.ld.items():
-        ld_snps = set(ld_mat.snps.astype(str))
-        present = [snp for snp in focal_snps if snp in ld_snps]
-        if present:
-            matched[chrom] = present
+        indices = pd.Index(ld_mat.snps.astype(str)).get_indexer(focal_snps)
+        indices = indices[indices >= 0].astype(np.int32, copy=False)
+        if indices.size > 0:
+            matched[chrom] = indices
     return matched
 
 
-def expand_chromosome(ld_mat, focal_snps, corr_threshold):
+def expand_chromosome(ld_mat, focal_indices, corr_threshold):
     """
     Return SNPs tagged by focal SNPs in one LD matrix.
     """
-    ld_snps = ld_mat.snps.astype(str)
-    snp_to_idx = {snp: i for i, snp in enumerate(ld_snps)}
-    focal_indices = [snp_to_idx[snp] for snp in focal_snps if snp in snp_to_idx]
-    if not focal_indices:
+    if focal_indices.size < 1:
         return []
 
-    expanded = ld_mat.find_tagging_variants(
-        np.asarray(focal_indices, dtype=np.int32),
+    return ld_mat.find_tagging_variants(
+        focal_indices,
         threshold=corr_threshold,
         return_value="snps",
-    ).astype(str)
-    return [snp for snp in ld_snps if snp in set(expanded)]
+    ).astype(str).tolist()
+
+
+def extract_ld_relationships(ld_mat, focal_indices, corr_threshold):
+    """Extract focal-to-neighbor LD relationships with one sparse matrix load."""
+    ld_snps = ld_mat.snps.astype(str)
+    if focal_indices.size < 1:
+        return []
+
+    expanded_indices = ld_mat.find_tagging_variants(
+        focal_indices,
+        threshold=corr_threshold,
+        return_value="index",
+    )
+    expanded_snps = ld_snps[expanded_indices]
+    focal_positions = np.searchsorted(expanded_indices, focal_indices)
+
+    ld_mat.set_mask(expanded_indices)
+    try:
+        expanded_ld = ld_mat.to_csr(
+            return_symmetric=True,
+            dtype=np.float32,
+        )
+    finally:
+        ld_mat.reset_mask()
+
+    focal_ld = expanded_ld[focal_positions].tocoo()
+    original_snps = ld_snps[focal_indices][focal_ld.row]
+    neighbor_snps = expanded_snps[focal_ld.col]
+    correlations = focal_ld.data.astype(float, copy=False)
+    keep = (original_snps != neighbor_snps) & (
+        np.abs(correlations) >= corr_threshold
+    )
+
+    return [
+        {
+            "Original_SNP": original_snp,
+            "SNP": neighbor_snp,
+            "R": correlation,
+        }
+        for original_snp, neighbor_snp, correlation in zip(
+            original_snps[keep],
+            neighbor_snps[keep],
+            correlations[keep],
+        )
+    ]
 
 
 def write_variants(snps, output_file):
@@ -128,6 +171,15 @@ def write_variants(snps, output_file):
     """
     os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
     pd.DataFrame({"SNP": snps}).to_csv(output_file, sep="\t", index=False)
+
+
+def write_ld_relationships(relationships, output_file):
+    """Write focal variants, their neighbors, and pairwise LD values."""
+    os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
+    pd.DataFrame(
+        relationships,
+        columns=["Original_SNP", "SNP", "R"],
+    ).to_csv(output_file, sep="\t", index=False)
 
 
 def parse_args():
@@ -144,10 +196,15 @@ def parse_args():
         "--snp-column", type=int, default=0, help="Zero-based SNP column index."
     )
     parser.add_argument("--r2-threshold", type=float, default=0.1, help="Default: 0.1.")
+    parser.add_argument(
+        "--include-ld",
+        action="store_true",
+        help="Write original-to-neighbor relationships with their R values.",
+    )
     parser.add_argument("--output-file", required=True, help="Output table path.")
     parser.add_argument(
         "--log-level",
-        default="INFO",
+        default="WARNING",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Logging level.",
     )
@@ -174,31 +231,53 @@ def main():
         ),
     )
     gdl = make_data_loader(args)
-    focal_by_chrom = focal_snps_by_chromosome(gdl, focal_snps)
-    n_matched_focal = sum(len(snps) for snps in focal_by_chrom.values())
+    focal_indices = focal_indices_by_chromosome(gdl, focal_snps)
+    n_matched_focal = sum(len(indices) for indices in focal_indices.values())
     logger.info(
         "Matched %s of %s focal variants to %s LD matrices before expansion.",
         n_matched_focal,
         len(focal_snps),
-        len(focal_by_chrom),
+        len(focal_indices),
     )
     corr_threshold = float(np.sqrt(args.r2_threshold))
 
-    expanded = list(focal_snps)
-    for chrom, ld_mat in sorted(gdl.ld.items(), key=lambda x: str(x[0])):
-        expanded.extend(
-            expand_chromosome(ld_mat, focal_by_chrom.get(chrom, []), corr_threshold)
-        )
-        ld_mat.release()
+    if args.include_ld:
+        relationships = []
+        for chrom, ld_mat in sorted(gdl.ld.items(), key=lambda x: str(x[0])):
+            relationships.extend(
+                extract_ld_relationships(
+                    ld_mat,
+                    focal_indices.get(chrom, np.empty(0, dtype=np.int32)),
+                    corr_threshold,
+                )
+            )
+            ld_mat.release()
+        write_ld_relationships(relationships, args.output_file)
+        n_output = len(relationships)
+        output_label = "Output relationships"
+    else:
+        expanded = list(focal_snps)
+        for chrom, ld_mat in sorted(gdl.ld.items(), key=lambda x: str(x[0])):
+            expanded.extend(
+                expand_chromosome(
+                    ld_mat,
+                    focal_indices.get(chrom, np.empty(0, dtype=np.int32)),
+                    corr_threshold,
+                )
+            )
+            ld_mat.release()
 
-    output_snps = unique_preserving_order(expanded)
-    write_variants(output_snps, args.output_file)
+        output_snps = unique_preserving_order(expanded)
+        write_variants(output_snps, args.output_file)
+        n_output = len(output_snps)
+        output_label = "Output variants"
+
     logger.info(
         "LD expansion completed.\n%s",
         format_rows(
             [
                 ("Input variants", len(focal_snps)),
-                ("Output variants", len(output_snps)),
+                (output_label, n_output),
                 ("Output file", args.output_file),
             ]
         ),

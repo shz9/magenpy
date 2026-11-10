@@ -17,6 +17,21 @@ def tqdm(*args, **kwargs):
     return _tqdm(*args, **kwargs)
 
 
+def normalize_genome_build(genome_build):
+    """Normalize common names for human genome assemblies."""
+
+    if genome_build is None:
+        return None
+
+    normalized = str(genome_build).lower().replace("_", "").replace("-", "")
+    normalized = normalized.replace(" ", "")
+    if normalized in {"37", "b37", "build37", "grch37", "hg19", "ncbi37"}:
+        return "GRCh37"
+    if normalized in {"38", "b38", "build38", "grch38", "hg38", "ncbi38"}:
+        return "GRCh38"
+    return normalized
+
+
 def match_chromosomes(chrom_1, chrom_2, check_patterns=('chr_', 'chr:', 'chr'), return_both=False):
     """
     Given two lists of chromosome IDs, this function returns the
@@ -126,9 +141,9 @@ def merge_snp_tables(ref_table,
     :param ref_table: The reference table (pandas dataframe).
     :param alt_table: The alternative table (pandas dataframe)
     :param how: `inner` or `left`
-    :param on: Which columns to use as anchors when merging. By default, we automatically infer which columns
-    to use, but the user can specify this directly. When `on='auto'`, we try to use `SNP` (i.e. rsID) if available.
-    If not, we use `['CHR', 'POS']`. If neither are available, we raise a ValueError.
+    :param on: Which columns to use as anchors when merging. By default, we
+    use `CHR` and `POS` when available in both tables, falling back to `SNP`.
+    If neither definition is available, we raise a ValueError.
     :param signed_statistics: The columns with signed statistics to flip if `correct_flips` is set to True.
     :param drop_duplicates: Drop duplicate SNPs
     :param correct_flips: Correct SNP summary statistics that depend on status of alternative allele
@@ -145,12 +160,12 @@ def merge_snp_tables(ref_table,
 
     # Determine which columns to merge on:
     if on == 'auto':
-        # Check that the `SNP` column is present in both tables:
-        if all(['SNP' in tab.columns for tab in (ref_table, alt_table)]):
-            on = ['SNP']
         # Check that the `CHR`, `POS` columns are present in both tables:
-        elif all([col in tab.columns for col in ('CHR', 'POS') for tab in (ref_table, alt_table)]):
+        if all([col in tab.columns for col in ('CHR', 'POS') for tab in (ref_table, alt_table)]):
             on = ['CHR', 'POS']
+        # Fall back to the `SNP` column:
+        elif all(['SNP' in tab.columns for tab in (ref_table, alt_table)]):
+            on = ['SNP']
         else:
             raise ValueError("Cannot merge SNP tables without specifying which columns to merge on.")
     elif isinstance(on, str):
@@ -234,18 +249,21 @@ def build_snp_harmonization_plan(
     with incompatible alleles and reports which target alleles need flipping.
     Missing identifiers and identifiers duplicated within any source are excluded.
 
-    :param snp_ids: Mapping from source name to its one-dimensional SNP ID array.
+    :param snp_ids: Mapping from source name to its one-dimensional variant ID
+        array or pandas Index. Composite identifiers may be represented by a
+        pandas MultiIndex.
     :param reference: Source whose SNP order defines the final canonical order.
     :param alleles: Optional mapping from source name to an ``(A1, A2)`` pair.
     :param allele_reference: Source defining the canonical allele orientation.
     :param allele_target: Source whose alleles are checked against the reference.
 
-    :return: A dictionary with ``indexers`` and ``snps``. When allele sources are
-        provided, it also contains ``flip``, ``a1``, and ``a2`` in canonical order.
+    :return: A dictionary with ``indexers`` and ``variant_ids``. The ``snps``
+        key remains as a backwards-compatible array alias. When allele sources
+        are provided, it also contains ``flip``, ``a1``, and ``a2``.
     """
 
     if not snp_ids:
-        raise ValueError("At least one SNP array is required for harmonization.")
+        raise ValueError("At least one variant ID array is required for harmonization.")
     if reference not in snp_ids:
         raise KeyError(f"Reference source '{reference}' is not available.")
 
@@ -253,12 +271,19 @@ def build_snp_harmonization_plan(
     source_positions = {}
 
     for source, values in snp_ids.items():
-        values = np.asarray(values)
-        if values.ndim != 1:
-            raise ValueError(f"SNP IDs for source '{source}' must be one-dimensional.")
-
-        valid_positions = np.flatnonzero(~pd.isna(values))
-        index = pd.Index(values[valid_positions])
+        if isinstance(values, pd.MultiIndex):
+            valid_positions = np.flatnonzero(
+                ~values.to_frame(index=False).isna().any(axis=1).to_numpy()
+            )
+            index = values[valid_positions]
+        else:
+            values = np.asarray(values)
+            if values.ndim != 1:
+                raise ValueError(
+                    f"Variant IDs for source '{source}' must be one-dimensional."
+                )
+            valid_positions = np.flatnonzero(~pd.isna(values))
+            index = pd.Index(values[valid_positions])
         if not index.is_unique:
             unique = ~index.duplicated(keep=False)
             valid_positions = valid_positions[unique]
@@ -267,24 +292,25 @@ def build_snp_harmonization_plan(
         source_indices[source] = index
         source_positions[source] = valid_positions
 
-    canonical_snps = source_indices[reference]
-    indexers = {reference: np.arange(len(canonical_snps), dtype=np.intp)}
-    keep = np.ones(len(canonical_snps), dtype=bool)
+    canonical_ids = source_indices[reference]
+    indexers = {reference: np.arange(len(canonical_ids), dtype=np.intp)}
+    keep = np.ones(len(canonical_ids), dtype=bool)
 
     for source, index in source_indices.items():
         if source == reference:
             continue
-        positions = index.get_indexer(canonical_snps)
+        positions = index.get_indexer(canonical_ids)
         keep &= positions >= 0
         indexers[source] = positions
 
-    canonical_snps = canonical_snps[keep]
+    canonical_ids = canonical_ids[keep]
     for source in indexers:
         indexers[source] = source_positions[source][indexers[source][keep]]
 
     plan = {
         "indexers": indexers,
-        "snps": canonical_snps.to_numpy(),
+        "variant_ids": canonical_ids,
+        "snps": canonical_ids.to_numpy(),
     }
 
     if allele_reference is None and allele_target is None:
@@ -304,14 +330,14 @@ def build_snp_harmonization_plan(
         or len(ref_a2_all) != len(ref_a1_all)
     ):
         raise ValueError(
-            "Reference allele arrays must match the corresponding SNP array length."
+            "Reference allele arrays must match the variant ID array length."
         )
     if (
         len(target_a1_all) != len(snp_ids[allele_target])
         or len(target_a2_all) != len(target_a1_all)
     ):
         raise ValueError(
-            "Target allele arrays must match the corresponding SNP array length."
+            "Target allele arrays must match the variant ID array length."
         )
 
     ref_positions = indexers[allele_reference]
@@ -329,6 +355,7 @@ def build_snp_harmonization_plan(
         indexers[source] = indexers[source][compatible]
 
     plan["snps"] = plan["snps"][compatible]
+    plan["variant_ids"] = plan["variant_ids"][compatible]
     plan["flip"] = flip[compatible]
     plan["a1"] = ref_a1[compatible]
     plan["a2"] = ref_a2[compatible]

@@ -44,7 +44,24 @@ mgp_compute_ld \
 ## Storage And Logging
 
 Use `--storage-dtype`, `--compressor`, and `--compression-level` to control LD storage.
-Use `--log-level` to control command-line logging:
+Pass `--consolidate-metadata` to write a root `.zmetadata` file in each chromosome
+store. Pass `--zip` to consolidate the metadata and additionally create a
+zero-compression `chr_N.zip` archive alongside each `chr_N` store:
+
+```bash
+mgp_compute_ld \
+  --bfile data/chr_22 \
+  --ld-window-cm 3 \
+  --output-dir output/ld \
+  --consolidate-metadata \
+  --zip
+```
+
+ZIP members retain the `chr_N/` prefix. Normal files are added in version-sorted
+order, and the root `chr_N/.zmetadata` member is appended last.
+
+Package `INFO` messages are hidden by default so they do not duplicate progress-bar
+updates. Use `--log-level` to change command-line logging:
 
 ```bash
 mgp_compute_ld --bfile data/chr_22 --ld-window-cm 3 --output-dir output/ld --log-level INFO

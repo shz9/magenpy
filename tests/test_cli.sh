@@ -21,7 +21,9 @@ echo "> Estimating LD using the windowed estimator:"
 mgp_compute_ld --estimator "windowed" \
                --bfile "$BFILE_PATH" \
                --ld-window-cm 3. \
-               --output-dir "output/ld_windowed/"
+               --output-dir "output/ld_windowed/" \
+               --consolidate-metadata \
+               --zip
 
 # Check that there's a directory called "output/ld_windowed/chr_22/":
 if [ ! -d "output/ld_windowed/chr_22/" ]; then
@@ -34,6 +36,30 @@ if [ ! -f "output/ld_windowed/chr_22/.zgroup" ] || [ ! -f "output/ld_windowed/ch
   echo "Error: The output directory does not contain the expected files."
   exit 1
 fi
+
+"$PYTHON_BIN" - "output/ld_windowed/chr_22.zip" <<'PY'
+import re
+import sys
+import zipfile
+
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    members = archive.infolist()
+
+if not members:
+    raise SystemExit("The LD ZIP archive is empty.")
+if any(member.compress_type != zipfile.ZIP_STORED for member in members):
+    raise SystemExit("The LD ZIP archive contains compressed members.")
+if members[-1].filename != "chr_22/.zmetadata":
+    raise SystemExit("Consolidated metadata is not the final ZIP member.")
+
+normal_names = [member.filename for member in members[:-1]]
+version_key = lambda name: tuple(
+    (1, int(part)) if part.isdigit() else (0, part)
+    for part in re.split(r"(\d+)", name)
+)
+if normal_names != sorted(normal_names, key=version_key):
+    raise SystemExit("Normal ZIP members are not in version-sorted order.")
+PY
 
 LD_STORE_PATH="output/ld_windowed/chr_22"
 CLI_TEST_DIR="output/cli_ld_tests"
@@ -114,6 +140,29 @@ if ! grep -q "$SNP_1" "$CLI_TEST_DIR/expanded_snps.tsv"; then
   echo "Error: The expanded SNP output file does not contain the input SNP."
   exit 1
 fi
+
+echo "> Expanding variants while retaining LD relationships:"
+mgp_expand_ld --ld "$LD_STORE_PATH" \
+              --snp-file "$CLI_TEST_DIR/snps.txt" \
+              --r2-threshold 0.1 \
+              --include-ld \
+              --output-file "$CLI_TEST_DIR/expanded_snps_with_ld.tsv"
+
+"$PYTHON_BIN" - "$CLI_TEST_DIR/expanded_snps_with_ld.tsv" <<'PY'
+import sys
+
+import pandas as pd
+
+relationships = pd.read_csv(sys.argv[1], sep="\t")
+expected_columns = ["Original_SNP", "SNP", "R"]
+if relationships.columns.tolist() != expected_columns:
+    raise SystemExit("The LD relationship output has unexpected columns.")
+if (relationships["Original_SNP"] == relationships["SNP"]).any():
+    raise SystemExit("The LD relationship output contains self-LD rows.")
+if not relationships.empty:
+    if ((relationships["R"] ** 2) < 0.1 - 1e-7).any():
+        raise SystemExit("A reported neighbor is below the requested R2 threshold.")
+PY
 
 # Clean up after computation:
 rm -rf output/ld_windowed

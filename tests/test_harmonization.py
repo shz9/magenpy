@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from magenpy.AnnotationMatrix import AnnotationMatrix
+from magenpy.GenotypeMatrix import GenotypeMatrix
 from magenpy.GWADataLoader import GWADataLoader
 from magenpy.SumstatsTable import SumstatsTable
 from magenpy.utils.compute_utils import intersect_arrays, intersect_multiple_arrays
@@ -16,8 +17,9 @@ from magenpy.utils.model_utils import (
 
 
 class InMemoryGenotype:
-    def __init__(self, table):
+    def __init__(self, table, genome_build=None):
         self.snp_table = table.copy()
+        self.genome_build = genome_build
 
     @property
     def snps(self):
@@ -33,12 +35,14 @@ class InMemoryGenotype:
 
 
 class CountingLD:
-    def __init__(self, snps, a1, a2):
+    def __init__(self, snps, a1, a2, bp=None):
         self.metadata = {
             "snps": np.asarray(snps),
             "a1": np.asarray(a1),
             "a2": np.asarray(a2),
         }
+        if bp is not None:
+            self.metadata["bp"] = np.asarray(bp)
         self.metadata_reads = Counter()
         self._mask = None
         self.set_mask_calls = 0
@@ -153,6 +157,35 @@ def test_build_harmonization_plan_excludes_missing_and_duplicate_ids():
     np.testing.assert_array_equal(plan["snps"], ["rs1", "rs3"])
     np.testing.assert_array_equal(plan["indexers"]["reference"], [0, 4])
     np.testing.assert_array_equal(plan["indexers"]["other"], [1, 0])
+
+
+def test_build_harmonization_plan_accepts_composite_variant_ids():
+    plan = build_snp_harmonization_plan(
+        {
+            "reference": pd.MultiIndex.from_tuples([(1, 20), (1, 10)]),
+            "other": pd.MultiIndex.from_tuples([(1, 10), (1, 30), (1, 20)]),
+        },
+        reference="reference",
+    )
+
+    assert plan["variant_ids"].tolist() == [(1, 20), (1, 10)]
+    np.testing.assert_array_equal(plan["indexers"]["reference"], [0, 1])
+    np.testing.assert_array_equal(plan["indexers"]["other"], [2, 0])
+
+
+def test_genotype_duplicate_filter_prefers_positions_over_snp_ids():
+    genotype = GenotypeMatrix.__new__(GenotypeMatrix)
+    genotype.snp_table = pd.DataFrame(
+        {
+            "CHR": [1, 1, 1, 1],
+            "POS": [10, 20, 30, 30],
+            "SNP": [".", ".", "rs3a", "rs3b"],
+        }
+    )
+
+    genotype.drop_duplicated_snps()
+
+    np.testing.assert_array_equal(genotype.snp_table["POS"], [10, 20])
 
 
 def test_identity_indexer_handles_aligned_and_reordered_positions():
@@ -344,6 +377,32 @@ def test_harmonize_data_reads_each_ld_allele_once_when_ld_is_reference():
     assert ld.set_mask_calls == 1
 
 
+def test_harmonize_data_uses_ld_positions_when_snp_ids_are_missing():
+    sumstats = SumstatsTable(
+        pd.DataFrame(
+            {
+                "CHR": [1, 1],
+                "POS": [10, 20],
+                "A1": ["A", "T"],
+                "A2": ["G", "C"],
+                "BETA": [1.0, 2.0],
+            }
+        )
+    )
+    ld = CountingLD(
+        ["ld2", "ld1", "ld3"],
+        ["C", "A", "G"],
+        ["T", "G", "A"],
+        bp=[20, 10, 30],
+    )
+
+    make_loader(sumstats=sumstats, ld=ld).harmonize_data()
+
+    np.testing.assert_array_equal(sumstats.table["POS"], [20, 10])
+    np.testing.assert_array_equal(sumstats.table["BETA"], [-2.0, 1.0])
+    assert ld.metadata_reads == {"bp": 1, "a1": 1, "a2": 1}
+
+
 def test_harmonize_data_reuses_aligned_sumstats_dataframe():
     genotype = InMemoryGenotype(
         pd.DataFrame(
@@ -370,3 +429,124 @@ def test_harmonize_data_reuses_aligned_sumstats_dataframe():
     make_loader(genotype=genotype, sumstats=sumstats).harmonize_data()
 
     assert sumstats.table is original_table
+
+
+def test_harmonize_data_prefers_position_and_does_not_require_snp_ids():
+    genotype = InMemoryGenotype(
+        pd.DataFrame(
+            {
+                "CHR": [1, 1],
+                "POS": [20, 10],
+                "SNP": ["genotype_2", "genotype_1"],
+                "A1": ["C", "A"],
+                "A2": ["T", "G"],
+            }
+        )
+    )
+    sumstats = SumstatsTable(
+        pd.DataFrame(
+            {
+                "CHR": [1, 1],
+                "POS": [10, 20],
+                "A1": ["A", "T"],
+                "A2": ["G", "C"],
+                "BETA": [1.0, 2.0],
+            }
+        )
+    )
+    annotation = AnnotationMatrix(
+        pd.DataFrame(
+            {
+                "CHR": [1, 1],
+                "POS": [10, 20],
+                "coding": [1, 0],
+            }
+        )
+    )
+
+    make_loader(genotype, sumstats, annotation=annotation).harmonize_data()
+
+    np.testing.assert_array_equal(sumstats.table["POS"], [20, 10])
+    np.testing.assert_array_equal(sumstats.table["BETA"], [-2.0, 1.0])
+    np.testing.assert_array_equal(annotation.table["POS"], [20, 10])
+
+
+def test_harmonize_data_falls_back_to_snp_ids_without_positions():
+    genotype = InMemoryGenotype(
+        pd.DataFrame(
+            {
+                "SNP": ["rs2", "rs1"],
+                "A1": ["C", "A"],
+                "A2": ["T", "G"],
+            }
+        )
+    )
+    sumstats = SumstatsTable(
+        pd.DataFrame(
+            {
+                "CHR": [1, 1],
+                "POS": [10, 20],
+                "SNP": ["rs1", "rs2"],
+                "A1": ["A", "C"],
+                "A2": ["G", "T"],
+                "BETA": [1.0, 2.0],
+            }
+        )
+    )
+
+    make_loader(genotype, sumstats).harmonize_data()
+
+    np.testing.assert_array_equal(sumstats.table["SNP"], ["rs2", "rs1"])
+
+
+def test_harmonize_data_rejects_conflicting_genome_builds():
+    genotype = InMemoryGenotype(
+        pd.DataFrame(
+            {
+                "SNP": ["rs1"],
+                "A1": ["A"],
+                "A2": ["G"],
+            }
+        ),
+        genome_build="GRCh37",
+    )
+    sumstats = SumstatsTable(
+        pd.DataFrame(
+            {
+                "SNP": ["rs1"],
+                "A1": ["A"],
+                "A2": ["G"],
+                "BETA": [1.0],
+            }
+        ),
+        genome_build="GRCh38",
+    )
+
+    with pytest.raises(ValueError, match="conflicting genome builds"):
+        make_loader(genotype, sumstats).harmonize_data()
+
+
+def test_harmonize_data_accepts_equivalent_genome_build_names():
+    genotype = InMemoryGenotype(
+        pd.DataFrame(
+            {
+                "SNP": ["rs1"],
+                "A1": ["A"],
+                "A2": ["G"],
+            }
+        ),
+        genome_build="hg19",
+    )
+    sumstats = SumstatsTable(
+        pd.DataFrame(
+            {
+                "SNP": ["rs1"],
+                "A1": ["A"],
+                "A2": ["G"],
+                "BETA": [1.0],
+            }
+        ),
+        genome_build="GRCh37",
+    )
+
+    make_loader(genotype, sumstats).harmonize_data()

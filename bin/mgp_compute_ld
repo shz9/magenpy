@@ -24,11 +24,17 @@ You can do that by specifying the `--backend` parameter:
 
 import argparse
 import logging
+import os
 import os.path as osp
+import re
+import stat
 import time
+import zipfile
 from datetime import timedelta
+from pathlib import Path
 
 import magenpy as mgp
+import zarr
 from magenpy.utils.bin_utils import (
     format_cli_block,
     format_rows,
@@ -168,6 +174,11 @@ def format_run_summary(args, ld_kwargs, metadata):
                 ("Compressor", args.compressor),
                 ("Compression level", args.compression_level),
                 ("Spectral properties", args.compute_spectral),
+                (
+                    "Consolidated metadata",
+                    args.consolidate_metadata or args.zip_archive,
+                ),
+                ("Zero-compression ZIP", args.zip_archive),
             ],
         ),
         ("Metadata", [("Attributes", metadata if metadata else "Date only")]),
@@ -189,6 +200,76 @@ def set_ld_metadata(ld_matrices, metadata):
     for ld_mat in ld_matrices.values():
         for key, value in metadata.items():
             ld_mat.set_store_attr(key, value)
+
+
+def consolidate_ld_metadata(ld_matrices):
+    """Write consolidated Zarr metadata for each computed LD matrix."""
+    for ld_mat in ld_matrices.values():
+        zarr.consolidate_metadata(ld_mat._zg.store)
+
+
+def _version_sort_key(path):
+    """Return a natural-sort key comparable to ``sort -V`` for store paths."""
+    return tuple(
+        (1, int(part)) if part.isdigit() else (0, part)
+        for part in re.split(r"(\d+)", path.as_posix())
+    )
+
+
+def _regular_files(root):
+    """Yield regular files below ``root`` without following symbolic links."""
+    for directory, _, filenames in os.walk(root):
+        for filename in filenames:
+            path = Path(directory, filename)
+            if stat.S_ISREG(path.lstat().st_mode):
+                yield path
+
+
+def create_zero_zipped_archives(ld_matrices):
+    """Create store-only ZIP archives with root ``.zmetadata`` written last."""
+    archive_paths = []
+
+    for chromosome, ld_mat in sorted(ld_matrices.items()):
+        store_path = Path(ld_mat._zarr_store_path(ld_mat._zg.store)).resolve()
+        if not store_path.is_dir():
+            raise ValueError(
+                f"Cannot archive chromosome {chromosome}: expected a directory "
+                f"Zarr store at '{store_path}'."
+            )
+
+        zmetadata_path = store_path / ".zmetadata"
+        archive_path = store_path.with_suffix(".zip")
+        temporary_path = archive_path.with_name(f".{archive_path.name}.tmp")
+        normal_files = sorted(
+            (path for path in _regular_files(store_path) if path != zmetadata_path),
+            key=lambda path: _version_sort_key(path.relative_to(store_path.parent)),
+        )
+
+        try:
+            with zipfile.ZipFile(
+                temporary_path,
+                mode="w",
+                compression=zipfile.ZIP_STORED,
+                allowZip64=True,
+            ) as archive:
+                for path in normal_files:
+                    archive.write(path, path.relative_to(store_path.parent).as_posix())
+
+                # Keep the root consolidated metadata as the final ZIP member.
+                if zmetadata_path.is_file():
+                    archive.write(
+                        zmetadata_path,
+                        zmetadata_path.relative_to(store_path.parent).as_posix(),
+                    )
+
+            os.replace(temporary_path, archive_path)
+        except BaseException:
+            temporary_path.unlink(missing_ok=True)
+            raise
+
+        archive_paths.append(archive_path)
+
+    return archive_paths
 
 
 # --------- Options ---------
@@ -317,6 +398,21 @@ parser.add_argument(
     default=7,
     help="The compression level to use for the entries of the LD matrix (1-9).",
 )
+parser.add_argument(
+    "--consolidate-metadata",
+    dest="consolidate_metadata",
+    default=False,
+    action="store_true",
+    help="Write consolidated Zarr metadata (.zmetadata) for each LD store.",
+)
+parser.add_argument(
+    "--zip",
+    dest="zip_archive",
+    default=False,
+    action="store_true",
+    help="Consolidate metadata and create a zero-compression ZIP archive "
+    "alongside each LD store.",
+)
 
 # Options for the various LD estimators:
 
@@ -372,7 +468,7 @@ parser.add_argument(
     "--log-level",
     dest="log_level",
     type=str,
-    default="INFO",
+    default="WARNING",
     choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
     help="Logging level.",
 )
@@ -420,6 +516,15 @@ ld_matrices = gdl.get_ld_matrices()
 logger.info("Storing LD metadata...")
 set_ld_metadata(ld_matrices, metadata)
 
+if args.consolidate_metadata or args.zip_archive:
+    logger.info("Consolidating Zarr metadata...")
+    consolidate_ld_metadata(ld_matrices)
+
+archive_paths = []
+if args.zip_archive:
+    logger.info("Creating zero-compression ZIP archives...")
+    archive_paths = create_zero_zipped_archives(ld_matrices)
+
 gdl.cleanup()
 
 end_time = time.time()
@@ -430,6 +535,10 @@ logger.info(
         [
             ("Output directory", args.output_dir),
             ("Chromosomes", chromosomes),
+            (
+                "ZIP archives",
+                ", ".join(map(str, archive_paths)) if archive_paths else "Not requested",
+            ),
             ("Total runtime", timedelta(seconds=end_time - start_time)),
         ]
     ),

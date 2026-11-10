@@ -20,6 +20,8 @@ MAGENPY_SUMSTATS_COLUMNS = (
     "PVAL",
 )
 
+VARIANT_IDENTIFICATION_COLUMNS = ("CHR", "SNP", "POS", "A1", "A2")
+
 
 DEFAULT_ESSENTIAL_COL_GROUPS = (
     (
@@ -72,22 +74,28 @@ class SumstatsParser:
         # Parse through NumPy's fast numeric path, then downcast to int32 (or
         # nullable Int32 when missing positions remain) in post-processing.
         "POS": np.float64,
-        "A1": str,
-        "A2": str,
-        "MAF": np.float64,
-        "MAC": np.float64,
-        "N": np.float64,
-        "BETA": np.float64,
-        "STD_BETA": np.float64,
-        "OR": np.float64,
-        "Z": np.float64,
-        "SE": np.float64,
+        # Alleles have very low cardinality, so categorical storage is much
+        # smaller than one Python string object per row.
+        "A1": "category",
+        "A2": "category",
+        "MAF": np.float32,
+        "MAC": np.float32,
+        "N": np.float32,
+        "BETA": np.float32,
+        "STD_BETA": np.float32,
+        "OR": np.float32,
+        "Z": np.float32,
+        "SE": np.float32,
+        # Preserve the range of very small association p-values.
         "PVAL": np.float64,
-        "CHISQ": np.float64,
+        "CHISQ": np.float32,
     }
     raw_column_dtypes = {}
+    selection_dependencies = {}
 
-    def __init__(self, col_name_converter=None, **read_csv_kwargs):
+    def __init__(
+        self, col_name_converter=None, col_subset=None, **read_csv_kwargs
+    ):
         """
         Initialize the summary statistics parser.
 
@@ -95,6 +103,10 @@ class SumstatsParser:
         in the original table to magenpy's column names for the various
         summary statistics. If a string, it should be a comma-separated list of
         key-value pairs (e.g. 'rsid=SNP,pos=POS').
+        :param col_subset: Summary-statistic columns to read in addition to the
+        variant-identification columns. Names may use the input format or
+        magenpy's standardized names. Selection is applied while reading the
+        file to reduce peak memory usage.
         :param read_csv_kwargs: Keyword arguments to pass to pandas' read_csv
         """
 
@@ -110,7 +122,13 @@ class SumstatsParser:
                 None if col_name_converter is None else dict(col_name_converter)
             )
 
+        # Keep the user's spelling until parse time. Specialized parsers add
+        # their format-specific name mappings after this base initializer.
+        self.col_subset = col_subset
         self.read_csv_kwargs = read_csv_kwargs
+
+        if self.col_subset is not None and "usecols" in self.read_csv_kwargs:
+            raise ValueError("Pass either `col_subset` or `usecols`, not both.")
 
         # If the delimiter is not specified, assume whitespace by default:
         if (
@@ -118,6 +136,33 @@ class SumstatsParser:
             and "delimiter" not in self.read_csv_kwargs
         ):
             self.read_csv_kwargs["sep"] = "\t"
+
+    def _normalize_col_subset(self, col_subset):
+        if col_subset is None:
+            return None
+        if isinstance(col_subset, str):
+            col_subset = [
+                column.strip()
+                for column in col_subset.split(",")
+                if column.strip()
+            ]
+
+        converters = self.col_name_converter or {}
+        return tuple(
+            dict.fromkeys(converters.get(column, column) for column in col_subset)
+        )
+
+    def _selected_columns(self):
+        """Return requested output columns plus parsing dependencies."""
+
+        if self.col_subset is None:
+            return None
+
+        selected = set(VARIANT_IDENTIFICATION_COLUMNS)
+        selected.update(self._normalize_col_subset(self.col_subset))
+        for column in tuple(selected):
+            selected.update(self.selection_dependencies.get(column, ()))
+        return selected
 
     def _get_read_csv_kwargs(self):
         """Return read options with format-aware column dtypes.
@@ -128,6 +173,13 @@ class SumstatsParser:
 
         kwargs = self.read_csv_kwargs.copy()
         user_dtype = kwargs.get("dtype")
+
+        selected = self._selected_columns()
+        if selected is not None:
+            converters = self.col_name_converter or {}
+            kwargs["usecols"] = lambda column: (
+                column in selected or converters.get(column, column) in selected
+            )
 
         # A scalar dtype is an explicit instruction for every column and should
         # not be combined with the parser defaults.
@@ -261,21 +313,45 @@ class SumstatsParser:
 
         return df
 
-    def parse(self, file_name, drop_na=True):
+    def parse(self, file_name, drop_na=True, col_subset=None):
         """
         Parse a summary statistics file.
         :param file_name: The path to the summary statistics file.
         :param drop_na: If True, drop any entries with missing values.
+        :param col_subset: Override the parser's requested summary-statistic
+        columns for this file. Variant-identification columns are always kept.
 
         :return: A pandas DataFrame containing the parsed summary statistics.
         """
 
-        df = pd.read_csv(file_name, **self._get_read_csv_kwargs())
+        original_col_subset = self.col_subset
+        if col_subset is not None:
+            self.col_subset = col_subset
+
+        try:
+            df = pd.read_csv(file_name, **self._get_read_csv_kwargs())
+        finally:
+            self.col_subset = original_col_subset
 
         if self.col_name_converter is not None:
             df.rename(columns=self.col_name_converter, inplace=True)
 
         df = self.post_process(df)
+
+        active_subset = (
+            self._normalize_col_subset(col_subset)
+            if col_subset is not None
+            else self._normalize_col_subset(original_col_subset)
+        )
+        if active_subset is not None:
+            missing = [column for column in active_subset if column not in df]
+            if missing:
+                raise ValueError(
+                    "Requested summary-statistics columns were not found: "
+                    + ", ".join(missing)
+                )
+            keep = set(VARIANT_IDENTIFICATION_COLUMNS).union(active_subset)
+            df = df.loc[:, [column for column in df if column in keep]]
 
         if drop_na:
             df = self.drop_na_from_essential_cols(df)
@@ -322,7 +398,12 @@ class Plink2SSParser(SumstatsParser):
         "Z": "Z_STAT",
         "PVAL": "P",
     }
-    raw_column_dtypes = {"REF": str, "ALT": str, "ALT1": str}
+    raw_column_dtypes = {
+        "REF": "category",
+        "ALT": "category",
+        "ALT1": "category",
+    }
+    selection_dependencies = {"A2": ("REF", "ALT", "ALT1")}
 
     def __init__(self, col_name_converter=None, **read_csv_kwargs):
         """
@@ -366,9 +447,9 @@ class Plink2SSParser(SumstatsParser):
                 column in df.columns for column in ("A1", "REF")
             ):
                 df["A2"] = np.where(
-                    df["A1"] == df[alt_column],
-                    df["REF"],
-                    df[alt_column],
+                    df["A1"].to_numpy() == df[alt_column].to_numpy(),
+                    df["REF"].to_numpy(),
+                    df[alt_column].to_numpy(),
                 )
             else:
                 logger.warning(
@@ -600,6 +681,7 @@ class SaigeSSParser(SumstatsParser):
         "Z": "Tstat",
         "PVAL": "p.value",
     }
+    selection_dependencies = {"N": ("MAC", "MAF")}
 
     def __init__(self, col_name_converter=None, **read_csv_kwargs):
         """
@@ -637,7 +719,8 @@ class SaigeSSParser(SumstatsParser):
         :return: The processed DataFrame.
         """
 
-        df["N"] = df["MAC"] / (2.0 * df["MAF"])
+        if "MAC" in df.columns and "MAF" in df.columns:
+            df["N"] = df["MAC"] / (2.0 * df["MAF"])
 
         return df
 
@@ -675,10 +758,11 @@ class RegenieSSParser(SumstatsParser):
         "PVAL": "LOG10P",
     }
     raw_column_dtypes = {
-        "INFO": np.float64,
-        "TEST": str,
+        "INFO": np.float32,
+        "TEST": "category",
         "LOG10P": np.float64,
     }
+    selection_dependencies = {"PVAL": ("LOG10P",)}
 
     def __init__(self, col_name_converter=None, **read_csv_kwargs):
         if "sep" not in read_csv_kwargs and "delimiter" not in read_csv_kwargs:
@@ -731,9 +815,13 @@ class LDAKSSParser(SumstatsParser):
         "MAF": "A1Freq",
     }
     raw_column_dtypes = {
-        "Stat": np.float64,
-        "Direction": np.float64,
-        "A1_mean": np.float64,
+        "Stat": np.float32,
+        "Direction": np.float32,
+        "A1_mean": np.float32,
+    }
+    selection_dependencies = {
+        "MAF": ("A1_mean",),
+        "Z": ("Stat", "P", "Direction"),
     }
 
     def __init__(self, col_name_converter=None, **read_csv_kwargs):

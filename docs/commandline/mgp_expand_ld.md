@@ -23,4 +23,19 @@ The SNP file is read as a PLINK-style filter file. Use `--snp-column` to select 
 zero-based SNP column index. The output includes the focal SNPs and all LD neighbors
 that meet the threshold.
 
-Use `--log-level` to control command-line logging.
+Use `--include-ld` to output the relationship between each original SNP and its
+newly found neighbors:
+
+```bash
+mgp_expand_ld \
+  --ld "output/ld/chr_*" \
+  --snp-file focal_snps.txt \
+  --r2-threshold 0.1 \
+  --include-ld \
+  --output-file output/expanded_variants_with_ld.tsv
+```
+
+This mode writes `Original_SNP`, `SNP`, and `R` columns. It performs one aggregate
+tagging search and one sparse LD extraction per chromosome. Self-LD rows are omitted.
+
+Package `INFO` messages are hidden by default. Use `--log-level INFO` to show them.

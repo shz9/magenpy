@@ -52,4 +52,4 @@ The output format can be `csv`, `npy`, or `npz`. If `--output-format auto` is us
 the format is inferred from the output file extension. Matrices are written as
 symmetric `float32` arrays.
 
-Use `--log-level` to control command-line logging.
+Package `INFO` messages are hidden by default. Use `--log-level INFO` to show them.
