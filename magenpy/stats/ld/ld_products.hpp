@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 #include "../../utils/linear_algebra_utils.hpp"
 
 // Four independent accumulators expose instruction-level parallelism even in
@@ -115,6 +116,33 @@ void ld_matrix_product(int n, int nrhs, const int* left, const I* ptr,
             }
         }
     }
+}
+
+// Cython cannot always reconcile NumPy's float typedefs with the corresponding
+// native C++ types while deducing T from multiple arguments. These adapters fix
+// T explicitly and leave the independent storage and index types deducible.
+template<typename U, typename I>
+inline void ld_matrix_product_float(
+        int n, int nrhs, const int* left, const I* ptr, const U* data,
+        const float* x, float* out, float scale, bool stored_full, bool lower,
+        bool upper, bool diag, int threads) {
+    using data_type = typename std::remove_cv<U>::type;
+    using index_type = typename std::remove_cv<I>::type;
+    ld_matrix_product<float, data_type, index_type>(
+        n, nrhs, left, ptr, data, x, out, scale, stored_full, lower, upper,
+        diag, threads);
+}
+
+template<typename U, typename I>
+inline void ld_matrix_product_double(
+        int n, int nrhs, const int* left, const I* ptr, const U* data,
+        const double* x, double* out, double scale, bool stored_full,
+        bool lower, bool upper, bool diag, int threads) {
+    using data_type = typename std::remove_cv<U>::type;
+    using index_type = typename std::remove_cv<I>::type;
+    ld_matrix_product<double, data_type, index_type>(
+        n, nrhs, left, ptr, data, x, out, scale, stored_full, lower, upper,
+        diag, threads);
 }
 
 #endif

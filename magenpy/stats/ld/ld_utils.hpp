@@ -155,6 +155,22 @@ ld_rank_one_update(int c_size,
     }
 }
 
+template<typename U, typename I>
+inline void ld_rank_one_update_float(
+        int c_size, int* ld_left_bound, I* ld_indptr, U* ld_data, float* vec,
+        float* out, float alpha, float dq_scale, int threads) {
+    ld_rank_one_update<float, U, I>(c_size, ld_left_bound, ld_indptr, ld_data,
+                                    vec, out, alpha, dq_scale, threads);
+}
+
+template<typename U, typename I>
+inline void ld_rank_one_update_double(
+        int c_size, int* ld_left_bound, I* ld_indptr, U* ld_data, double* vec,
+        double* out, double alpha, double dq_scale, int threads) {
+    ld_rank_one_update<double, U, I>(c_size, ld_left_bound, ld_indptr, ld_data,
+                                     vec, out, alpha, dq_scale, threads);
+}
+
 
 template<typename T>
 typename std::enable_if<std::is_floating_point<T>::value, void>::type

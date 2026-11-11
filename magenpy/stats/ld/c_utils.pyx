@@ -57,6 +57,16 @@ cdef extern from "ld_utils.hpp" nogil:
               const T* x, T* out, T scale, bint stored_full,
               bint lower, bint upper, bint diag, int threads) noexcept nogil
 
+    void ld_matrix_product_float[U, I](int n, int nrhs,
+              const int* left, const I* indptr, const U* data,
+              const float* x, float* out, float scale, bint stored_full,
+              bint lower, bint upper, bint diag, int threads) noexcept nogil
+
+    void ld_matrix_product_double[U, I](int n, int nrhs,
+              const int* left, const I* indptr, const U* data,
+              const double* x, double* out, double scale, bint stored_full,
+              bint lower, bint upper, bint diag, int threads) noexcept nogil
+
     void ld_rank_one_update[T, U, I](int c_size,
                    int* ld_left_bound,
                    I* ld_indptr,
@@ -65,6 +75,16 @@ cdef extern from "ld_utils.hpp" nogil:
                    T* out,
                    T alpha,
                    T dq_scale,
+                   int threads) noexcept nogil
+
+    void ld_rank_one_update_float[U, I](int c_size,
+                   int* ld_left_bound, I* ld_indptr, U* ld_data,
+                   float* vec, float* out, float alpha, float dq_scale,
+                   int threads) noexcept nogil
+
+    void ld_rank_one_update_double[U, I](int c_size,
+                   int* ld_left_bound, I* ld_indptr, U* ld_data,
+                   double* vec, double* out, double alpha, double dq_scale,
                    int threads) noexcept nogil
 
     void cpp_compute_ld_from_bed "compute_ld_from_bed"[T](string bed_filename,
@@ -107,9 +127,16 @@ cpdef ld_dot(const int[::1] ld_left_bound,
     cdef floating[::1] out = np.empty(vec.shape[0], dtype=np.asarray(vec).dtype)
     if vec.shape[0]:
         with nogil:
-            ld_matrix_product(<int>vec.shape[0], 1, &ld_left_bound[0],
-                              &ld_indptr[0], &ld_data[0], &vec[0], &out[0],
-                              dq_scale, True, True, True, True, threads)
+            if floating is float:
+                ld_matrix_product_float(
+                    <int>vec.shape[0], 1, &ld_left_bound[0], &ld_indptr[0],
+                    &ld_data[0], &vec[0], &out[0], dq_scale, True, True, True,
+                    True, threads)
+            else:
+                ld_matrix_product_double(
+                    <int>vec.shape[0], 1, &ld_left_bound[0], &ld_indptr[0],
+                    &ld_data[0], &vec[0], &out[0], dq_scale, True, True, True,
+                    True, threads)
     return np.asarray(out)
 
 
@@ -123,10 +150,16 @@ cpdef ut_ld_dot(const int_dtype[::1] ld_indptr,
     cdef floating[::1] out = np.empty(vec.shape[0], dtype=np.asarray(vec).dtype)
     if vec.shape[0]:
         with nogil:
-            ld_matrix_product(<int>vec.shape[0], 1, NULL, &ld_indptr[0],
-                              &ld_data[0], &vec[0], &out[0], dq_scale, False,
-                              include_lower_triangle, include_upper_triangle,
-                              include_diag, threads)
+            if floating is float:
+                ld_matrix_product_float(
+                    <int>vec.shape[0], 1, NULL, &ld_indptr[0], &ld_data[0],
+                    &vec[0], &out[0], dq_scale, False, include_lower_triangle,
+                    include_upper_triangle, include_diag, threads)
+            else:
+                ld_matrix_product_double(
+                    <int>vec.shape[0], 1, NULL, &ld_indptr[0], &ld_data[0],
+                    &vec[0], &out[0], dq_scale, False, include_lower_triangle,
+                    include_upper_triangle, include_diag, threads)
     return np.asarray(out)
 
 
@@ -146,9 +179,16 @@ cpdef ld_matmat(const int[::1] left,
                                        dtype=np.asarray(x).dtype)
     if x.shape[0] and x.shape[1]:
         with nogil:
-            ld_matrix_product(<int>x.shape[0], <int>x.shape[1], &left[0],
-                              &indptr[0], &data[0], &x[0, 0], &out[0, 0],
-                              scale, stored_full, lower, upper, diag, threads)
+            if floating is float:
+                ld_matrix_product_float(
+                    <int>x.shape[0], <int>x.shape[1], &left[0], &indptr[0],
+                    &data[0], &x[0, 0], &out[0, 0], scale, stored_full, lower,
+                    upper, diag, threads)
+            else:
+                ld_matrix_product_double(
+                    <int>x.shape[0], <int>x.shape[1], &left[0], &indptr[0],
+                    &data[0], &x[0, 0], &out[0, 0], scale, stored_full, lower,
+                    upper, diag, threads)
     return np.asarray(out)
 
 
@@ -198,17 +238,14 @@ cpdef rank_one_update(int[::1] ld_left_bound,
                       floating dq_scale = 1.,
                       int threads = 1):
 
-    ld_rank_one_update(
-        vec.shape[0],
-        &ld_left_bound[0],
-        &ld_indptr[0],
-        &ld_data[0],
-        &vec[0],
-        &out[0],
-        alpha,
-        dq_scale,
-        threads
-    )
+    if floating is float:
+        ld_rank_one_update_float(
+            vec.shape[0], &ld_left_bound[0], &ld_indptr[0], &ld_data[0],
+            &vec[0], &out[0], alpha, dq_scale, threads)
+    else:
+        ld_rank_one_update_double(
+            vec.shape[0], &ld_left_bound[0], &ld_indptr[0], &ld_data[0],
+            &vec[0], &out[0], alpha, dq_scale, threads)
 
 
 cpdef compute_ld_from_bed(bed_filename,
