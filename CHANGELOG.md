@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-11-11
+
+### Added
+
+- Added direct GWAS Catalog study-accession support to `SumstatsTable` and
+  `GWADataLoader`. Accessions are resolved to preferred GRCh37 harmonised,
+  formatted, or GWAS-SSF summary-statistics files with metadata-based build
+  detection and actionable errors when no compatible file exists.
+- Added genome-build metadata to genotype, summary-statistics, annotation, and
+  LD inputs, including normalization of common GRCh37/hg19 and GRCh38/hg38
+  aliases, propagation through split/filter operations, and validation against
+  conflicting builds during loading and harmonization.
+- Added selective summary-statistics loading through `col_subset`, preserving
+  variant-identification columns and automatically reading dependencies needed
+  to derive requested statistics. The option is available from parsers,
+  `SumstatsTable`, and `GWADataLoader` to reduce peak memory use.
+- Added `--consolidate-metadata` and `--zip` to `mgp_compute_ld` for consolidated
+  Zarr metadata and deterministic zero-compression chromosome archives. Added
+  `--include-ld` to `mgp_expand_ld` for emitting focal SNP, tagged SNP, and
+  correlation triples.
+- Added native batched LD matrix products, transpose-aware triangular products,
+  compiled diagonal-shift updates, runtime OpenMP capability reporting, and an
+  LD-product benchmark with expanded operator documentation.
+
+### Changed
+
+- Variant harmonization now prefers composite chromosome/position identifiers
+  when every source provides them and falls back to SNP IDs otherwise. Duplicate
+  filtering follows the same identifier preference, allowing data without SNP
+  IDs and avoiding false duplicate removal when rsIDs are reused.
+- Summary-statistics parsers now store alleles categorically and use compact
+  single-precision types for most numeric statistics while retaining double
+  precision for p-values and position parsing. Format-specific derived columns
+  continue to load their required source fields under column selection.
+- Reworked `LDLinearOperator` to borrow compatible LD, RHS, and diagonal-shift
+  buffers; batch multiple right-hand sides; preserve float32/float64 behavior;
+  support complex inputs without intermediate complex arrays; and avoid dense,
+  dequantized, per-row, or per-thread temporary matrices.
+- Optimized native `BlockLD` computation to apply validated, non-overlapping
+  block boundaries in one BED-backed pass, including gaps between blocks.
+  Other genotype backends retain a lazily constructed per-block fallback.
+- Improved LD command-line workflows with vectorized SNP lookup and aggregate
+  sparse extraction in `mgp_expand_ld`, quieter `WARNING`-level defaults, and
+  logger setup that prevents duplicate package and progress output.
+- Updated build and release automation to use current Miniforge and macOS 15
+  runners, platform-specific C++17/optimization flags, and refreshed locked
+  `oauthlib` and `pyasn1` dependencies.
+
+### Fixed
+
+- Fixed overlapping writes in multithreaded triangular LD products by assigning
+  disjoint output rows to workers, and corrected block-boundary handling for
+  variants in gaps or outside the supplied blocks.
+- Fixed Cython C++ template deduction across NumPy/native scalar typedefs,
+  including the Cython 3.1.2 WebAssembly build path.
+- Fixed Windows compilation by suppressing unsupported OpenMP SIMD directives
+  while retaining parallel OpenMP regions, and by passing MSVC-compatible
+  optimization and C++17 switches. Also corrected Apple Silicon CI and wheel
+  runner configuration.
+
 ## [0.2.3] - 2026-10-27
 
 ### Added
