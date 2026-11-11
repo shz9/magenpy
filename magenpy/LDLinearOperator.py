@@ -14,9 +14,11 @@ class LDLinearOperator(LinearOperator):
     `lower_triangle=False`.
 
     .. note::
-        The LD linear operator assumes that the underlying LD matrix is square and symmetric.
-        Currently, does not support non-square matrices (which may arise in certain situations).
-        This is left for future work.
+        Products require square matrices. With ``symmetric=False`` (the default),
+        storage contains the strict upper triangle with an implicit unit diagonal;
+        the triangle flags select which parts to apply. With ``symmetric=True``,
+        all rows, including the diagonal, are explicitly stored and applied.
+        Both vectors and dense matrices are supported without expanding LD data.
 
     :ivar ld_indptr: The index pointer array for the CSR matrix.
     :ivar ld_data: The data array for the CSR matrix (supported data types are float32, float64, int8, int16).
@@ -28,7 +30,7 @@ class LDLinearOperator(LinearOperator):
     :ivar include_diag: If True, the diagonal entries of the LD matrix are included in the computation.
     :ivar lower_triangle: If True, the lower triangle of the LD matrix is included in the computation.
     :ivar upper_triangle: If True, the upper triangle of the LD matrix is included in the computation.
-    :ivar threads: The number of threads to use for the computation (experimental).
+    :ivar threads: The number of OpenMP workers (positive integer; serial without OpenMP).
 
     """
 
@@ -58,7 +60,7 @@ class LDLinearOperator(LinearOperator):
         :param include_diag: If True, the diagonal entries of the LD matrix are included in the computation.
         :param lower_triangle: If True, the lower triangle of the LD matrix is included in the computation.
         :param upper_triangle: If True, the upper triangle of the LD matrix is included in the computation.
-        :param threads: The number of threads to use for the computation (experimental).
+        :param threads: The number of OpenMP workers (positive integer; serial without OpenMP).
 
         """
 
@@ -90,7 +92,9 @@ class LDLinearOperator(LinearOperator):
             self.lower_triangle = lower_triangle
 
         # Set the number of threads to use for the computation:
-        self.threads = threads
+        if not isinstance(threads, (int, np.integer)) or threads < 1:
+            raise ValueError("threads must be a positive integer.")
+        self.threads = int(threads)
 
     @property
     def ld_data_type(self) -> np.dtype:
@@ -133,54 +137,111 @@ class LDLinearOperator(LinearOperator):
         else:
             self.diag_shift += diag_shift
 
-    def _matvec(self, x):
+    def _product(self, x, transpose=False):
+        """Normalize the RHS once and dispatch to the allocation-free LD kernels.
+
+        Floating inputs retain their precision; integer inputs are promoted to
+        the operator's floating dtype. Complex inputs use two real products.
+        Contiguous float32/float64 RHS buffers are reused, including read-only
+        arrays. Other RHS layouts/dtypes are packed once for the real kernels.
+        Reshaping below creates views. LD buffers and native float/integer
+        shift arrays are borrowed; float16 and non-native shift dtypes are
+        converted once for the compiled loop. Diagonal updates allocate no
+        RHS-sized temporary. Complex results fill their final buffer directly.
         """
-        Perform matrix-vector multiplication with the LD matrix.
+        if not self.is_square:
+            raise NotImplementedError("Products require a square LD matrix.")
+        x = np.asarray(x)
+        if np.iscomplexobj(x):
+            # Interleaved complex components must be packed for real kernels.
+            # Fill the final buffer directly, without complex multiply/add temps.
+            out = np.empty(x.shape, dtype=x.dtype)
+            out.real = self._product(x.real, transpose)
+            out.imag = self._product(x.imag, transpose)
+            return out
+        dtype = x.dtype
+        if dtype not in (np.dtype("float32"), np.dtype("float64")):
+            dtype = np.result_type(self.dtype, dtype, np.float32)
+        x = np.ascontiguousarray(x, dtype=dtype)
+        from .stats.ld.c_utils import add_diag_shift, ld_dot, ld_matmat, ut_ld_dot
 
-        :param x: The input vector to multiply with the LD matrix.
-        :return: A numpy array representing the result of the matrix-vector multiplication.
-        """
-
-        assert self.is_square or self.symmetric, (
-            "Only square or symmetric matrices are supported for now."
-        )
-        assert x.shape[0] == self.shape[1]
-
-        from .stats.ld.c_utils import ld_dot, ut_ld_dot
-
-        flatten = len(x.shape) > 1
-
-        if self.symmetric:
-            out_vec = ld_dot(
+        lower, upper = self.lower_triangle, self.upper_triangle
+        if transpose:
+            lower, upper = upper, lower
+        scale = x.dtype.type(self.dequantization_scale)
+        if x.ndim == 2 and x.shape[1] != 1:
+            out = ld_matmat(
                 self.leftmost_idx,
                 self.ld_indptr,
                 self.ld_data,
-                x.flatten() if flatten else x,
-                x.dtype.type(self.dequantization_scale),
-                self.threads,
-            )
-        else:
-            out_vec = ut_ld_dot(
-                self.ld_indptr,
-                self.ld_data,
-                x.flatten() if flatten else x,
-                x.dtype.type(self.dequantization_scale),
-                self.lower_triangle,
-                self.upper_triangle,
+                x,
+                scale,
+                self.symmetric,
+                lower,
+                upper,
                 self.include_diag,
                 self.threads,
             )
-
-        if self.diag_shift is not None:
-            out_vec += x * self.diag_shift
-
-        if flatten:
-            return out_vec.reshape(-1, 1)
         else:
-            return out_vec
+            vec = x.reshape(-1)
+            if self.symmetric:
+                out = ld_dot(
+                    self.leftmost_idx,
+                    self.ld_indptr,
+                    self.ld_data,
+                    vec,
+                    scale,
+                    self.threads,
+                )
+            else:
+                out = ut_ld_dot(
+                    self.ld_indptr,
+                    self.ld_data,
+                    vec,
+                    scale,
+                    lower,
+                    upper,
+                    self.include_diag,
+                    self.threads,
+                )
+            out = out.reshape(x.shape)
+        if self.diag_shift is not None:
+            shift = np.asarray(self.diag_shift)
+            if shift.dtype == np.dtype("float16"):
+                shift = shift.astype(np.float32)
+            elif not shift.dtype.isnative:
+                shift = shift.astype(shift.dtype.newbyteorder("="))
+            # Scalar/row shifts retain their dtype and strides. The compiled
+            # loop adds x * shift directly into out, without a dense temporary.
+            add_diag_shift(
+                x if x.ndim == 2 else x[:, None],
+                out if out.ndim == 2 else out[:, None],
+                shift.reshape(-1),
+            )
+        return out
+
+    def _matvec(self, x):
+        """Multiply a vector (or column vector) without expanding LD storage."""
+        return self._product(x)
+
+    def _matmat(self, x):
+        """Multiply dense RHS columns together, reusing LD data across columns.
+
+        C-contiguous float32/float64 inputs avoid a copy. Other layouts are
+        packed once. Extra workspace is O(n * nrhs), independent of LD nnz and
+        thread count; quantized LD is never expanded or cached. OpenMP builds
+        use ``threads`` workers with disjoint output rows. Non-OpenMP builds
+        run the same kernels serially.
+        """
+        return self._product(x)
 
     def _rmatvec(self, x):
-        return self._matvec(x)
+        """Apply the transpose, including operators with only one triangle."""
+        return self._product(x, transpose=True)
+
+    def _rmatmat(self, x):
+        """Apply the transpose to multiple RHS columns."""
+        return self._product(x, transpose=True)
 
     def rank_one_update(self, x, alpha=None, inplace=False):
         """

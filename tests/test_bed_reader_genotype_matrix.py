@@ -5,7 +5,7 @@ import pytest
 
 import magenpy as mgp
 from magenpy.GenotypeMatrix import bedReaderGenotypeMatrix
-from magenpy.stats.ld.estimator import WindowedLD
+from magenpy.stats.ld.estimator import BlockLD, WindowedLD
 
 
 def _require_bed_reader():
@@ -258,3 +258,26 @@ def test_compute_ld_matches_numpy_windowed(tmp_path, bed_reader_gmat, genotype_n
 
     observed = ld_mat.to_csr(return_symmetric=True, dtype=np.float32).toarray()
     np.testing.assert_allclose(observed, expected_sparse, rtol=2e-5, atol=2e-5)
+
+
+def test_block_ld_uses_blockwise_fallback(tmp_path, bed_reader_gmat):
+    positions = bed_reader_gmat.bp_pos
+    blocks = np.array(
+        [
+            [positions[0], positions[20]],
+            [positions[24], positions[48]],
+            [positions[52], positions[-1] + 1],
+        ],
+        dtype=np.int64,
+    )
+
+    estimator = BlockLD(bed_reader_gmat, ld_blocks=blocks)
+    assert estimator._direct_estimator is None
+
+    ld_mat = estimator.compute(
+        str(tmp_path / "bed_reader_block_ld"), dtype="float32"
+    )
+
+    assert ld_mat.validate_ld_matrix()
+    assert ld_mat.get_store_attr("LD estimator") == "block"
+    assert ld_mat.stored_n_snps == 56

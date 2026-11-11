@@ -8,7 +8,7 @@ from ...LDMatrix import LDMatrix
 from ...utils.system_utils import makedir
 
 
-class SampleLD(object):
+class SampleLD:
     """
     A basic wrapper class to facilitate computing Linkage-Disequilibrium (LD) matrices.
 
@@ -747,31 +747,85 @@ class BlockLD(SampleLD):
                 self.genotype_matrix.chromosome
             ]
         else:
-            self.ld_blocks = ld_blocks
+            self.ld_blocks = np.asarray(ld_blocks)
 
-        from ...utils.model_utils import map_variants_to_genomic_blocks
+        self.ld_blocks = self._validate_ld_blocks(self.ld_blocks)
 
-        # Map variants to their associated genomic blocks:
-        variants_to_blocks = map_variants_to_genomic_blocks(
-            pd.DataFrame(
-                {
-                    "SNP": self.genotype_matrix.snps,
-                    "bp_pos": self.genotype_matrix.bp_pos,
-                }
-            ),
-            pd.DataFrame(self.ld_blocks, columns=["block_start", "block_end"]).assign(
-                group=np.arange(len(self.ld_blocks))
-            ),
-            variant_pos_col="bp_pos",
-            filter_unmatched=True,
+        positions = np.asarray(self.genotype_matrix.bp_pos)
+        if np.any(np.diff(positions) < 0):
+            raise ValueError("Genotype variants must be sorted by base-pair position.")
+
+        # Assign each variant to the block with the nearest preceding start.
+        # Gaps between blocks are allowed; variants in those gaps are excluded.
+        block_index = np.searchsorted(
+            self.ld_blocks[:, 0], positions, side="right"
+        ) - 1
+        safe_index = np.maximum(block_index, 0)
+        matched = (block_index >= 0) & (
+            positions < self.ld_blocks[safe_index, 1]
         )
 
-        # Split the genotype matrix by the blocks:
-        split_geno_matrices = self.genotype_matrix.split_by_variants(variants_to_blocks)
+        variants_to_blocks = pd.DataFrame(
+            {
+                "SNP": self.genotype_matrix.snps[matched],
+                "bp_pos": positions[matched],
+                "group": block_index[matched],
+            }
+        )
 
-        self._block_estimators = {
-            i: SampleLD(geno_matrix) for i, geno_matrix in split_geno_matrices.items()
-        }
+        if variants_to_blocks.empty:
+            raise ValueError("No genotype variants overlap the supplied LD blocks.")
+
+        self._variants_to_blocks = variants_to_blocks
+        self._block_estimators = None
+
+        # The native BED kernel can apply all block boundaries efficiently in
+        # one pass. Other backends retain the established per-block fallback.
+        from ...GenotypeMatrix import MagenpyGenotypeMatrix
+
+        self._direct_estimator = None
+        if isinstance(self.genotype_matrix, MagenpyGenotypeMatrix):
+            # Use one group to select all variants covered by any LD block,
+            # excluding variants in gaps or outside the supplied blocks. This
+            # creates one filtered matrix sharing the original BED file; it
+            # does not copy genotypes or split computation into separate blocks.
+            # _compute_direct applies the actual block boundaries to this subset.
+            direct_group = variants_to_blocks.copy()
+            direct_group["group"] = 0
+            direct_matrix = self.genotype_matrix.split_by_variants(direct_group)[0]
+            self._direct_estimator = SampleLD(direct_matrix)
+
+    def _get_block_estimators(self):
+        """Build per-block estimators only when the fallback path needs them."""
+
+        if self._block_estimators is None:
+            split_matrices = self.genotype_matrix.split_by_variants(
+                self._variants_to_blocks
+            )
+            self._block_estimators = {
+                group: SampleLD(matrix) for group, matrix in split_matrices.items()
+            }
+        return self._block_estimators
+
+    @staticmethod
+    def _validate_ld_blocks(ld_blocks):
+        """Validate and normalize genomic LD block boundaries."""
+
+        blocks = np.asarray(ld_blocks)
+        if blocks.ndim != 2 or blocks.shape[1] != 2 or len(blocks) == 0:
+            raise ValueError("LD blocks must be a non-empty array with two columns.")
+        if not np.issubdtype(blocks.dtype, np.number) or not np.all(np.isfinite(blocks)):
+            raise ValueError("LD block boundaries must be finite numbers.")
+
+        blocks = blocks.astype(np.int64, copy=False)
+        if np.any(blocks[:, 0] >= blocks[:, 1]):
+            raise ValueError("Each LD block must have start < end.")
+        if np.any(np.diff(blocks[:, 0]) < 0):
+            raise ValueError("LD blocks must be sorted by start position.")
+        if np.any(blocks[1:, 0] < blocks[:-1, 1]):
+            raise ValueError("LD blocks must not overlap.")
+
+        return blocks
 
     def compute_ld_boundaries(self):
         """
@@ -789,43 +843,64 @@ class BlockLD(SampleLD):
 
         return self.ld_boundaries
 
-    def compute(
+    def _set_block_attributes(self, ld_mat):
+        """Attach block-estimator attributes to a completed LD matrix."""
+
+        ld_mat.set_store_attr("LD estimator", "block")
+        ld_mat.set_store_attr(
+            "Estimator properties", {"LD blocks": self.ld_blocks.tolist()}
+        )
+
+    def _compute_direct(
         self,
         output_dir,
-        overwrite=True,
-        delete_original=True,
-        dtype="int16",
-        compressor_name="zstd",
-        compression_level=7,
-        compute_spectral_properties=False,
-        store_type=None,
-    ) -> LDMatrix:
-        """
+        overwrite,
+        delete_original,
+        dtype,
+        compressor_name,
+        compression_level,
+        store_type,
+    ):
+        """Compute native block LD directly into the final store."""
 
-        Compute the block-based LD matrix and store in Zarr array format.
+        from .c_utils import find_ld_block_boundaries
 
-        :param output_dir: The path where to store the resulting LD matrix.
-        :param overwrite: If True, overwrite any existing LD matrices in `temp_dir` and `output_dir`.
-        :param delete_original: If True, deletes dense or intermediate LD matrices generated along the way.
-        :param compute_spectral_properties: If True, compute and store information about the eigenvalues of
-        the LD matrix.
-        :param dtype: The data type for the entries of the LD matrix.
-        :param compressor_name: The name of the compressor to use for the LD matrix.
-        :param compression_level: The compression level to use for the LD matrix (1-9).
-        :param store_type: Optional Zarr store type. One of None, 'directory', or 'zip'.
+        self._direct_estimator.ld_boundaries = find_ld_block_boundaries(
+            self._direct_estimator.genotype_matrix.bp_pos, self.ld_blocks
+        )
+        ld_mat = self._direct_estimator._compute_ld_matrix(
+            output_dir,
+            overwrite=overwrite,
+            delete_original=delete_original,
+            dtype=dtype,
+            compressor_name=compressor_name,
+            compression_level=compression_level,
+            compute_spectral_properties=False,
+            store_type=store_type,
+        )
+        self._set_block_attributes(ld_mat)
+        return self._finish_ld_matrix(ld_mat, store_type)
 
-        :return: An instance of `LDMatrix` encapsulating the computed LD matrix, its attributes, and metadata.
-        """
+    def _compute_blockwise(
+        self,
+        output_dir,
+        overwrite,
+        delete_original,
+        dtype,
+        compressor_name,
+        compression_level,
+        compute_spectral_properties,
+        store_type,
+    ):
+        """Compute one temporary LD matrix per block for general backends."""
 
         ld_mats = []
-
-        # TODO: Parallelize this loop
 
         temp_dir = tempfile.TemporaryDirectory(
             dir=self.temp_dir, prefix=self.temp_dir_prefix
         )
 
-        for i, block_estimator in self._block_estimators.items():
+        for i, block_estimator in self._get_block_estimators().items():
             block_output_dir = osp.join(
                 temp_dir.name, f"chr_{self.genotype_matrix.chromosome}_block_{i}/"
             )
@@ -873,10 +948,7 @@ class BlockLD(SampleLD):
         )
 
         # Populate the attributes of the LDMatrix object:
-        ld_mat.set_store_attr("LD estimator", "block")
-        ld_mat.set_store_attr(
-            "Estimator properties", {"LD blocks": self.ld_blocks.tolist()}
-        )
+        self._set_block_attributes(ld_mat)
 
         ld_mat.set_store_attr("Chromosome", int(self.genotype_matrix.chromosome))
         ld_mat.set_store_attr("Sample size", int(self.genotype_matrix.sample_size))
@@ -902,3 +974,38 @@ class BlockLD(SampleLD):
 
         temp_dir.cleanup()
         return self._finish_ld_matrix(ld_mat, store_type)
+
+    def compute(
+        self,
+        output_dir,
+        overwrite=True,
+        delete_original=True,
+        dtype="int16",
+        compressor_name="zstd",
+        compression_level=7,
+        compute_spectral_properties=False,
+        store_type=None,
+    ) -> LDMatrix:
+        """Compute the block-based LD matrix and store it in Zarr format."""
+
+        if self._direct_estimator is not None and not compute_spectral_properties:
+            return self._compute_direct(
+                output_dir,
+                overwrite,
+                delete_original,
+                dtype,
+                compressor_name,
+                compression_level,
+                store_type,
+            )
+
+        return self._compute_blockwise(
+            output_dir,
+            overwrite,
+            delete_original,
+            dtype,
+            compressor_name,
+            compression_level,
+            compute_spectral_properties,
+            store_type,
+        )

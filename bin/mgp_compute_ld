@@ -33,8 +33,9 @@ import zipfile
 from datetime import timedelta
 from pathlib import Path
 
-import magenpy as mgp
 import zarr
+
+import magenpy as mgp
 from magenpy.utils.bin_utils import (
     format_cli_block,
     format_rows,
@@ -537,7 +538,9 @@ logger.info(
             ("Chromosomes", chromosomes),
             (
                 "ZIP archives",
-                ", ".join(map(str, archive_paths)) if archive_paths else "Not requested",
+                ", ".join(map(str, archive_paths))
+                if archive_paths
+                else "Not requested",
             ),
             ("Total runtime", timedelta(seconds=end_time - start_time)),
         ]

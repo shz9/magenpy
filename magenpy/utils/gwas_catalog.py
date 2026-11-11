@@ -2,7 +2,6 @@ import html
 import re
 from urllib.parse import unquote, urljoin, urlsplit
 
-
 GWAS_CATALOG_SUMSTATS_ROOT = (
     "https://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics/"
 )
@@ -11,9 +10,10 @@ GWAS_CATALOG_SUMSTATS_ROOT = (
 def is_gwas_catalog_accession(value):
     """Return whether ``value`` is a GWAS Catalog study accession."""
 
-    return isinstance(value, str) and re.fullmatch(
-        r"GCST\d+", value.strip(), re.IGNORECASE
-    ) is not None
+    return (
+        isinstance(value, str)
+        and re.fullmatch(r"GCST\d+", value.strip(), re.IGNORECASE) is not None
+    )
 
 
 def gwas_catalog_directory(accession):
@@ -38,9 +38,7 @@ def _listing_links(listing, directory):
     origin = urlsplit(directory)[:2]
     links = (
         urljoin(directory, html.unescape(match.group(1)))
-        for match in re.finditer(
-            r"href=[\"']([^\"']+)[\"']", listing, re.IGNORECASE
-        )
+        for match in re.finditer(r"href=[\"']([^\"']+)[\"']", listing, re.IGNORECASE)
     )
     return [
         url
@@ -50,11 +48,14 @@ def _listing_links(listing, directory):
 
 
 def _is_build_37_filename(url):
-    return re.search(
-        r"(?:grch37|build(?:grch)?37|hg19)",
-        unquote(urlsplit(url).path),
-        re.IGNORECASE,
-    ) is not None
+    return (
+        re.search(
+            r"(?:grch37|build(?:grch)?37|hg19)",
+            unquote(urlsplit(url).path),
+            re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 def _metadata_is_build_37(metadata):

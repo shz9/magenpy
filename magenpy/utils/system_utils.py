@@ -151,10 +151,7 @@ def fits_in_memory(alloc_size, max_prop=0.9):
     psutil = _require_psutil()
     avail_mem = psutil.virtual_memory().available / (1024.0**2)
 
-    if alloc_size / avail_mem > max_prop:
-        return False
-    else:
-        return True
+    return not (alloc_size / avail_mem > max_prop)
 
 
 def available_cpu():

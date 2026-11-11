@@ -5,7 +5,7 @@ import pytest
 
 import magenpy as mgp
 from magenpy.GenotypeMatrix import MagenpyGenotypeMatrix
-from magenpy.stats.ld.estimator import WindowedLD
+from magenpy.stats.ld.estimator import BlockLD, WindowedLD
 
 
 def _require_native_extensions():
@@ -194,3 +194,50 @@ def test_compute_ld_matches_numpy_windowed(tmp_path, genotype_numpy, magenpy_gma
 
     observed = ld_mat.to_csr(return_symmetric=True, dtype=np.float32).toarray()
     np.testing.assert_allclose(observed, expected_sparse, rtol=2e-5, atol=2e-5)
+
+
+def test_block_boundaries_handle_gaps():
+    from magenpy.stats.ld.c_utils import find_ld_block_boundaries
+
+    positions = np.array([10, 20, 30, 40, 50, 60], dtype=np.int32)
+    blocks = np.array([[10, 31], [50, 61]], dtype=np.int64)
+
+    observed = find_ld_block_boundaries(positions, blocks)
+    expected = np.array(
+        [[0, 0, 0, 3, 4, 4], [3, 3, 3, 4, 6, 6]], dtype=np.int32
+    )
+    np.testing.assert_array_equal(observed, expected)
+
+
+def test_native_block_ld_matches_blockwise_fallback(tmp_path, magenpy_gmat):
+    positions = magenpy_gmat.bp_pos
+    blocks = np.array(
+        [
+            [positions[0], positions[20]],
+            [positions[24], positions[48]],
+            [positions[52], positions[-1] + 1],
+        ],
+        dtype=np.int64,
+    )
+
+    direct_estimator = BlockLD(magenpy_gmat, ld_blocks=blocks)
+    direct = direct_estimator.compute(
+        str(tmp_path / "direct_block_ld"), dtype="float32"
+    )
+
+    fallback_estimator = BlockLD(magenpy_gmat, ld_blocks=blocks)
+    fallback = fallback_estimator._compute_blockwise(
+        str(tmp_path / "fallback_block_ld"),
+        overwrite=True,
+        delete_original=True,
+        dtype="float32",
+        compressor_name="zstd",
+        compression_level=7,
+        compute_spectral_properties=False,
+        store_type=None,
+    )
+
+    assert direct.get_store_attr("LD estimator") == "block"
+    assert np.array_equal(direct.snps, fallback.snps)
+    assert np.array_equal(direct.indptr[:], fallback.indptr[:])
+    np.testing.assert_allclose(direct.data[:], fallback.data[:], rtol=1e-6, atol=1e-6)

@@ -32,29 +32,30 @@ ctypedef fused noncomplex_numeric:
     cnp.float64_t
 
 
+# Independent from the LD storage type; shifts need no dtype conversion.
+ctypedef fused shift_numeric:
+    cnp.npy_bool
+    cnp.int8_t
+    cnp.int16_t
+    cnp.int32_t
+    cnp.int64_t
+    cnp.uint8_t
+    cnp.uint16_t
+    cnp.uint32_t
+    cnp.uint64_t
+    cnp.float32_t
+    cnp.float64_t
+    cnp.longdouble_t
+
+
 cdef extern from "ld_utils.hpp" nogil:
     bint blas_supported() noexcept nogil
     bint omp_supported() noexcept nogil
 
-    void ld_matrix_dot[T, U, I](int c_size,
-              int* ld_left_bound,
-              I* ld_indptr,
-              U* ld_data,
-              T* vec,
-              T* out,
-              T dq_scale,
-              int threads) noexcept nogil
-
-    void ut_ld_matrix_dot[T, U, I](int c_size,
-              I* ld_indptr,
-              U* ld_data,
-              T* vec,
-              T* out,
-              T dq_scale,
-              bint include_lower_triangle,
-              bint include_upper_triangle,
-              bint include_diag,
-              int threads) noexcept nogil
+    void ld_matrix_product[T, U, I](int n, int nrhs,
+              const int* left, const I* indptr, const U* data,
+              const T* x, T* out, T scale, bint stored_full,
+              bint lower, bint upper, bint diag, int threads) noexcept nogil
 
     void ld_rank_one_update[T, U, I](int c_size,
                    int* ld_left_bound,
@@ -92,52 +93,100 @@ cdef extern from "ld_utils.hpp" nogil:
                     int threads) except + nogil
 
 
-cpdef ld_dot(int[::1] ld_left_bound,
-             int_dtype[::1] ld_indptr,
-             noncomplex_numeric[::1] ld_data,
-             floating[::1] vec,
-             floating dq_scale = 1.,
-             int threads = 1):
+def openmp_enabled():
+    """Whether this extension was compiled with OpenMP support."""
+    return bool(omp_supported())
 
-    cdef:
-        floating[::1] out = np.zeros_like(vec)
 
-    ld_matrix_dot(vec.shape[0],
-                  &ld_left_bound[0],
-                  &ld_indptr[0],
-                  &ld_data[0],
-                  &vec[0],
-                  &out[0],
-                  dq_scale,
-                  threads)
-
+cpdef ld_dot(const int[::1] ld_left_bound,
+             const int_dtype[::1] ld_indptr,
+             const noncomplex_numeric[::1] ld_data,
+             const floating[::1] vec,
+             floating dq_scale=1., int threads=1):
+    """Multiply fully stored contiguous LD rows; release the GIL during work."""
+    cdef floating[::1] out = np.empty(vec.shape[0], dtype=np.asarray(vec).dtype)
+    if vec.shape[0]:
+        with nogil:
+            ld_matrix_product(<int>vec.shape[0], 1, &ld_left_bound[0],
+                              &ld_indptr[0], &ld_data[0], &vec[0], &out[0],
+                              dq_scale, True, True, True, True, threads)
     return np.asarray(out)
 
 
-cpdef ut_ld_dot(int_dtype[::1] ld_indptr,
-             noncomplex_numeric[::1] ld_data,
-             floating[::1] vec,
-             floating dq_scale = 1.,
-             bint include_lower_triangle = 1,
-             bint include_upper_triangle = 1,
-             bint include_diag = 1,
-             int threads = 1):
-
-    cdef:
-        floating[::1] out = np.zeros_like(vec)
-
-    ut_ld_matrix_dot(vec.shape[0],
-                  &ld_indptr[0],
-                  &ld_data[0],
-                  &vec[0],
-                  &out[0],
-                  dq_scale,
-                  include_lower_triangle,
-                  include_upper_triangle,
-                  include_diag,
-                  threads)
-
+cpdef ut_ld_dot(const int_dtype[::1] ld_indptr,
+                const noncomplex_numeric[::1] ld_data,
+                const floating[::1] vec,
+                floating dq_scale=1., bint include_lower_triangle=True,
+                bint include_upper_triangle=True, bint include_diag=True,
+                int threads=1):
+    """Multiply implicit triangular LD storage with race-free output ownership."""
+    cdef floating[::1] out = np.empty(vec.shape[0], dtype=np.asarray(vec).dtype)
+    if vec.shape[0]:
+        with nogil:
+            ld_matrix_product(<int>vec.shape[0], 1, NULL, &ld_indptr[0],
+                              &ld_data[0], &vec[0], &out[0], dq_scale, False,
+                              include_lower_triangle, include_upper_triangle,
+                              include_diag, threads)
     return np.asarray(out)
+
+
+cpdef ld_matmat(const int[::1] left,
+                const int_dtype[::1] indptr,
+                const noncomplex_numeric[::1] data,
+                const floating[:, ::1] x,
+                floating scale=1., bint stored_full=False,
+                bint lower=True, bint upper=True, bint diag=True,
+                int threads=1):
+    """Batched LD product for a C-contiguous (n, nrhs) real RHS.
+
+    LD values stay compressed and are converted in registers. No expanded LD
+    matrix or per-thread output buffers are allocated. Empty RHSs are supported.
+    """
+    cdef floating[:, ::1] out = np.empty((x.shape[0], x.shape[1]),
+                                       dtype=np.asarray(x).dtype)
+    if x.shape[0] and x.shape[1]:
+        with nogil:
+            ld_matrix_product(<int>x.shape[0], <int>x.shape[1], &left[0],
+                              &indptr[0], &data[0], &x[0, 0], &out[0, 0],
+                              scale, stored_full, lower, upper, diag, threads)
+    return np.asarray(out)
+
+
+cpdef add_diag_shift(const floating[:, ::1] x,
+                     floating[:, ::1] out,
+                     const shift_numeric[:] shift):
+    """Add a scalar or strided row shift into an existing real product.
+
+    All arguments are borrowed buffers. Match NumPy's multiplication precision
+    before the in-place addition, without allocating a dense temporary.
+    """
+    cdef:
+        Py_ssize_t i, k, idx
+        bint scalar = shift.shape[0] == 1
+        bint wide = np.result_type(np.asarray(x).dtype,
+                                   np.asarray(shift).dtype) == np.dtype('float64')
+        bint extended = np.asarray(shift).dtype.itemsize > 8 and np.asarray(shift).dtype.kind == 'f'
+        long double product_extended
+        double product64
+        floating product
+
+    if out.shape[0] != x.shape[0] or out.shape[1] != x.shape[1]:
+        raise ValueError("Input and output shapes must match.")
+    if not scalar and shift.shape[0] != x.shape[0]:
+        raise ValueError("Diagonal shift must be scalar or have one entry per row.")
+    with nogil:
+        for i in range(x.shape[0]):
+            idx = 0 if scalar else i
+            for k in range(x.shape[1]):
+                if extended:
+                    product_extended = <long double>x[i, k] * <long double>shift[idx]
+                    out[i, k] = <floating>(<long double>out[i, k] + product_extended)
+                elif wide:
+                    product64 = <double>x[i, k] * <double>shift[idx]
+                    out[i, k] = <floating>(<double>out[i, k] + product64)
+                else:
+                    product = x[i, k] * <floating>shift[idx]
+                    out[i, k] += product
 
 
 cpdef rank_one_update(int[::1] ld_left_bound,
@@ -1059,7 +1108,7 @@ cpdef expand_ranges(int_dtype[::1] start, int_dtype[::1] end, int64_t output_siz
 @cython.exceptval(check=False)
 cpdef find_ld_block_boundaries(
     const int_dtype[:] pos,
-    int[:, :] block_boundaries
+    block_boundaries
 ):
     """
     Find the LD boundaries for the blockwise estimator of LD, i.e., the
@@ -1070,29 +1119,36 @@ cpdef find_ld_block_boundaries(
     """
 
     cdef:
-        int i, j, ldb_idx, B = block_boundaries.shape[0], M = pos.shape[0]
-        int_dtype block_start, block_end
-        int[:] v_min = np.zeros_like(pos, dtype=np.int32)
-        int[:] v_max = M*np.ones_like(pos, dtype=np.int32)
+        int block_idx, B, M = pos.shape[0]
+        cnp.ndarray positions = np.asarray(pos)
+        cnp.ndarray blocks = np.asarray(block_boundaries)
+        cnp.ndarray starts
+        cnp.ndarray ends
+        cnp.ndarray v_min
+        cnp.ndarray v_max
 
-    with nogil:
-        for i in range(M):
+    if blocks.ndim != 2 or blocks.shape[1] != 2 or blocks.shape[0] == 0:
+        raise ValueError("LD blocks must be a non-empty array with two columns.")
+    B = blocks.shape[0]
+    if np.any(np.diff(positions) < 0):
+        raise ValueError("Variant positions must be sorted.")
+    if np.any(blocks[:, 0] >= blocks[:, 1]):
+        raise ValueError("Each LD block must have start < end.")
+    if np.any(np.diff(blocks[:, 0]) < 0):
+        raise ValueError("LD blocks must be sorted by start position.")
+    if np.any(blocks[1:, 0] < blocks[:-1, 1]):
+        raise ValueError("LD blocks must not overlap.")
 
-            # Find the positional boundaries for SNP i:
-            for ldb_idx in range(B):
-                if block_boundaries[ldb_idx, 0] <= pos[i] < block_boundaries[ldb_idx, 1]:
-                    block_start, block_end = block_boundaries[ldb_idx, 0], block_boundaries[ldb_idx, 1]
-                    break
+    starts = np.searchsorted(positions, blocks[:, 0], side="left")
+    ends = np.searchsorted(positions, blocks[:, 1], side="left")
 
-            for j in range(i, M):
-                if pos[j] >= block_end:
-                    v_max[i] = j
-                    break
-
-            for j in range(i, -1, -1):
-                if pos[j] < block_start:
-                    v_min[i] = j + 1
-                    break
+    # Unmatched variants receive an empty LD interval. Matched variants are
+    # assigned their block's positional slice in linear time.
+    v_min = np.arange(M, dtype=np.int32)
+    v_max = v_min + 1
+    for block_idx in range(B):
+        v_min[starts[block_idx]:ends[block_idx]] = starts[block_idx]
+        v_max[starts[block_idx]:ends[block_idx]] = ends[block_idx]
 
     return np.array((v_min, v_max))
 

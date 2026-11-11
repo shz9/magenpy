@@ -19,7 +19,6 @@ from magenpy.parsers.annotation_parsers import parse_annotation_bed_file
 from magenpy.parsers.misc_parsers import read_snp_filter_file
 from magenpy.utils.bin_utils import (
     format_cli_block,
-    format_rows,
     format_sections,
     print_cli_logo,
     setup_cli_logger,
