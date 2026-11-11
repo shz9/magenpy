@@ -15,7 +15,9 @@ inline T ld_product_dot(const T* x, const U* a, I n) {
     T s0 = 0, s1 = 0, s2 = 0, s3 = 0;
     I j = 0;
     #ifdef _OPENMP
-    #pragma omp simd reduction(+:s0,s1,s2,s3)
+        #ifndef _WIN32
+            #pragma omp simd reduction(+:s0,s1,s2,s3)
+        #endif
     #endif
     for (I q = 0; q < n / 4; ++q) {
         const I k = 4 * q;
@@ -76,7 +78,9 @@ void ld_matrix_product(int n, int nrhs, const int* left, const I* ptr,
                             const T a = static_cast<T>(data[ptr[row] + j]);
                             const T* xc = x + (static_cast<size_t>(first) + j) * nrhs + kb;
                             #ifdef _OPENMP
-                            #pragma omp simd
+                                #ifndef _WIN32
+                                    #pragma omp simd
+                                #endif
                             #endif
                             for (int k = 0; k < 8; ++k) sums[k] += a * xc[k];
                         }
@@ -99,7 +103,9 @@ void ld_matrix_product(int n, int nrhs, const int* left, const I* ptr,
                 if (nrhs == 1) {
                     const T a = scale * xr[0];
                     #ifdef _OPENMP
-                    #pragma omp simd
+                        #ifndef _WIN32
+                            #pragma omp simd
+                        #endif
                     #endif
                     for (int col = first; col < last; ++col)
                         out[col] += a * static_cast<T>(data[ptr[row] + col - row - 1]);
@@ -108,7 +114,9 @@ void ld_matrix_product(int n, int nrhs, const int* left, const I* ptr,
                         const T a = scale * static_cast<T>(data[ptr[row] + col - row - 1]);
                         T* y = out + static_cast<size_t>(col) * nrhs;
                         #ifdef _OPENMP
-                        #pragma omp simd
+                            #ifndef _WIN32
+                                #pragma omp simd
+                            #endif
                         #endif
                         for (int k = 0; k < nrhs; ++k) y[k] += a * xr[k];
                     }

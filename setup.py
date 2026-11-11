@@ -157,6 +157,11 @@ def find_blas_libraries():
 
 blas_flags = find_blas_libraries()
 
+if os.name == "nt":
+    cxx_compile_args = ["/O2", "/std:c++17"]
+else:
+    cxx_compile_args = ["-O3", "-std=c++17"]
+
 # ------------------------------------------------------
 
 # ------------------------------------------------------
@@ -193,21 +198,21 @@ extensions = [
         library_dirs=blas_flags["library_dirs"],
         define_macros=[("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")]
         + blas_flags["define_macros"],
-        extra_compile_args=["-O3", "-std=c++17"],
+        extra_compile_args=cxx_compile_args.copy(),
     ),
     Extension(
         "magenpy.stats.score.score_cpp",
         sources=["magenpy/stats/score/score_cpp.pyx"],
         include_dirs=[np.get_include()],
         language="c++",
-        extra_compile_args=["-O3", "-std=c++17"],
+        extra_compile_args=cxx_compile_args.copy(),
     ),
     Extension(
         "magenpy.stats.variant.variant_cpp",
         sources=["magenpy/stats/variant/variant_cpp.pyx"],
         include_dirs=[np.get_include()],
         language="c++",
-        extra_compile_args=["-O3", "-std=c++17"],
+        extra_compile_args=cxx_compile_args.copy(),
     ),
 ]
 
