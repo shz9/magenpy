@@ -41,29 +41,36 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements-benchmark.txt
+          cache-dependency-path: |
+            requirements-benchmark.txt
+            requirements.txt
+            pyproject.toml
       - name: Select baseline revision
         id: baseline
         env:
           BASELINE_REF: ${{ inputs.baseline_ref || github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+          EXPLICIT_BASELINE_REF: ${{ inputs.baseline_ref }}
         run: |
-          candidate="$BASELINE_REF"
-          if [ "$candidate" = 0000000000000000000000000000000000000000 ]; then
-            candidate=HEAD^
+          options=()
+          if [ -z "$EXPLICIT_BASELINE_REF" ]; then
+            options+=(--allow-fallback)
           fi
-          baseline_sha=$(git rev-parse --verify --end-of-options "${candidate}^{commit}")
+          baseline_sha=$(python benchmarks/resolve_baseline.py "$BASELINE_REF" "${options[@]}")
           echo "sha=$baseline_sha" >> "$GITHUB_OUTPUT"
       - name: Checkout baseline separately
+        if: steps.baseline.outputs.sha != ''
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.baseline.outputs.sha }}
           path: baseline
           persist-credentials: false
-      - name: Install fixed runtime and build dependencies
+      - name: Install shared runtime and build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y g++ make pkg-config libopenblas-dev
           python -m pip install -r requirements-benchmark.txt
+          mkdir -p "$RUNNER_TEMP/benchmark"
+          python -m pip freeze > "$RUNNER_TEMP/benchmark/dependencies.txt"
       - name: Build current native extensions
         run: python -m pip install --verbose --no-deps --no-build-isolation --editable .
       - name: Benchmark current revision
@@ -78,8 +85,10 @@ jobs:
             --threads 1 2 --repeats 5 --require-openmp \
             --output "$RUNNER_TEMP/benchmark/current.json"
       - name: Build baseline in the same Python environment
+        if: steps.baseline.outputs.sha != ''
         run: python -m pip install --verbose --no-deps --no-build-isolation --editable ./baseline
       - name: Benchmark baseline on the same runner
+        if: steps.baseline.outputs.sha != ''
         env:
           BENCHMARK_REVISION: ${{ steps.baseline.outputs.sha }}
         run: |
@@ -92,10 +101,16 @@ jobs:
       - name: Compare runtime and memory; merge history
         id: compare
         continue-on-error: true
+        env:
+          BASELINE_SHA: ${{ steps.baseline.outputs.sha }}
         run: |
+          baseline_args=()
+          if [ -n "$BASELINE_SHA" ]; then
+            baseline_args+=(--baseline "$RUNNER_TEMP/benchmark/baseline.json")
+          fi
           python benchmarks/benchmark_report.py \
             --current "$RUNNER_TEMP/benchmark/current.json" \
-            --baseline "$RUNNER_TEMP/benchmark/baseline.json" \
+            "${baseline_args[@]}" \
             --history benchmarks/results.csv \
             --output-dir "$RUNNER_TEMP/benchmark"
       - name: Add benchmark table to job summary
@@ -110,7 +125,7 @@ jobs:
         with:
           name: continuous-benchmark-results
           path: ${{ runner.temp }}/benchmark
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 90
       - name: Fail on a regression or invalid comparison
         if: steps.compare.outcome == 'failure'
@@ -140,9 +155,13 @@ jobs:
         env:
           BENCHMARK_COMMIT: ${{ github.sha }}
         run: |
+          baseline_args=()
+          if [ -f "$RUNNER_TEMP/benchmark/baseline.json" ]; then
+            baseline_args+=(--baseline "$RUNNER_TEMP/benchmark/baseline.json")
+          fi
           python benchmarks/benchmark_report.py \
             --current "$RUNNER_TEMP/benchmark/current.json" \
-            --baseline "$RUNNER_TEMP/benchmark/baseline.json" \
+            "${baseline_args[@]}" \
             --history benchmarks/results.csv \
             --output-dir "$RUNNER_TEMP/published"
           cp "$RUNNER_TEMP/published/results.csv" benchmarks/results.csv
