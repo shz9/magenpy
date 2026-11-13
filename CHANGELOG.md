@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Drop Python 3.10 support and add Python 3.14 to the supported versions,
+  CI test matrices, and wheel builds. Python 3.11 is now the minimum version.
+
 - Standardize chromosome labels before splitting and matching across genotypes,
   summary statistics, annotations, and LD metadata. Encodings such as `chr1`,
   `chr:1`, `chr_1`, and `1` share a canonical ID. Compact categorical storage uses
