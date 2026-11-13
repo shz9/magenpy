@@ -1,4 +1,3 @@
-
 def standardize(g_mat):
     """
     Standardize the genotype matrix, such that the columns (i.e. variants)

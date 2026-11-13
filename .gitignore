@@ -39,6 +39,7 @@ pip-delete-this-directory.txt
 .vscode/
 .tox/
 .pytest_cache/
+.ruff_cache/
 .venv/
 .uv*/
 *.html
@@ -47,3 +48,6 @@ pip-delete-this-directory.txt
 *.log
 *.DS_Store
 **/temp
+
+# Strict backend CI report
+backend-validation.xml

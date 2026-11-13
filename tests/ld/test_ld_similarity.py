@@ -96,9 +96,10 @@ def test_frequency_similarity_returns_relative_probabilities(tmp_path):
     )
 
     assert result.index[0] == "matched"
-    assert result.loc["matched", "frequency_rmse"] < result.loc[
-        "mismatched", "frequency_rmse"
-    ]
+    assert (
+        result.loc["matched", "frequency_rmse"]
+        < result.loc["mismatched", "frequency_rmse"]
+    )
     assert result.loc["matched", "probability"] > 0.9
     assert np.isclose(result["probability"].sum(), 1.0)
     assert set(result["method"]) == {"frequency"}
@@ -167,9 +168,7 @@ def test_ld_likelihood_prefers_generating_correlation(tmp_path):
     z_scores = rng.multivariate_normal(np.zeros(n_variants), matched_correlation)
 
     matched = _make_ld(tmp_path, "matched_ld", matched_correlation, None)
-    mismatched = _make_ld(
-        tmp_path, "mismatched_ld", mismatched_correlation, None
-    )
+    mismatched = _make_ld(tmp_path, "mismatched_ld", mismatched_correlation, None)
     sumstats = mgp.SumstatsTable(
         pd.DataFrame(
             {
@@ -212,9 +211,7 @@ def test_genome_wide_similarity_accepts_harmonized_data_loaders(tmp_path):
     matched_gdl.sumstats_table, mismatched_gdl.sumstats_table = {}, {}
 
     for chromosome in (1, 2):
-        z_scores = rng.multivariate_normal(
-            np.zeros(n_variants), matched_correlation
-        )
+        z_scores = rng.multivariate_normal(np.zeros(n_variants), matched_correlation)
         matched_gdl.ld[chromosome] = _make_ld(
             tmp_path,
             f"matched_chr{chromosome}",

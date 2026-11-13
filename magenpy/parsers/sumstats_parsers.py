@@ -4,6 +4,8 @@ from collections.abc import Mapping
 import numpy as np
 import pandas as pd
 
+from ..utils.chromosome_utils import normalize_chromosome_column
+
 logger = logging.getLogger(__name__)
 
 MAGENPY_SUMSTATS_COLUMNS = (
@@ -70,6 +72,7 @@ class SumstatsParser:
     essential_col_groups = DEFAULT_ESSENTIAL_COL_GROUPS
     output_col_name_converter = {}
     column_dtypes = {
+        "CHR": "category",
         "SNP": str,
         # Parse through NumPy's fast numeric path, then downcast to int32 (or
         # nullable Int32 when missing positions remain) in post-processing.
@@ -93,9 +96,7 @@ class SumstatsParser:
     raw_column_dtypes = {}
     selection_dependencies = {}
 
-    def __init__(
-        self, col_name_converter=None, col_subset=None, **read_csv_kwargs
-    ):
+    def __init__(self, col_name_converter=None, col_subset=None, **read_csv_kwargs):
         """
         Initialize the summary statistics parser.
 
@@ -142,9 +143,7 @@ class SumstatsParser:
             return None
         if isinstance(col_subset, str):
             col_subset = [
-                column.strip()
-                for column in col_subset.split(",")
-                if column.strip()
+                column.strip() for column in col_subset.split(",") if column.strip()
             ]
 
         converters = self.col_name_converter or {}
@@ -280,13 +279,13 @@ class SumstatsParser:
         return df.rename(columns=cls.output_col_name_converter)
 
     def post_process(self, df):
-        """Apply format-specific transformations after reading and renaming."""
+        """Normalize chromosome labels and base-pair position dtypes.
 
-        return df
-
-    @staticmethod
-    def _standardize_position_dtype(df):
-        """Store base-pair positions as int32, allowing missing nonessential POS."""
+        Positions use int32, or nullable Int32 when missing values are present.
+        Format-specific overrides should return super().post_process(df) after
+        their transformations to retain these shared normalization steps.
+        """
+        normalize_chromosome_column(df)
 
         if "POS" not in df.columns:
             return df
@@ -356,7 +355,7 @@ class SumstatsParser:
         if drop_na:
             df = self.drop_na_from_essential_cols(df)
 
-        return self._standardize_position_dtype(df)
+        return df
 
 
 class Plink2SSParser(SumstatsParser):
@@ -458,7 +457,7 @@ class Plink2SSParser(SumstatsParser):
                     "the A2 allele are missing or coded differently than what we expect."
                 )
 
-        return df
+        return super().post_process(df)
 
 
 class Plink1SSParser(SumstatsParser):
@@ -722,7 +721,7 @@ class SaigeSSParser(SumstatsParser):
         if "MAC" in df.columns and "MAF" in df.columns:
             df["N"] = df["MAC"] / (2.0 * df["MAF"])
 
-        return df
+        return super().post_process(df)
 
 
 class RegenieSSParser(SumstatsParser):
@@ -785,16 +784,14 @@ class RegenieSSParser(SumstatsParser):
     def post_process(self, df):
         if "LOG10P" in df.columns:
             df["PVAL"] = np.power(10.0, -df["LOG10P"].to_numpy())
-        return df
+        return super().post_process(df)
 
     @classmethod
     def format_table(cls, df):
         formatted = super().format_table(df)
         if "LOG10P" in formatted.columns:
             with np.errstate(divide="ignore"):
-                formatted["LOG10P"] = -np.log10(
-                    formatted["LOG10P"].to_numpy()
-                )
+                formatted["LOG10P"] = -np.log10(formatted["LOG10P"].to_numpy())
         return formatted
 
 
@@ -854,7 +851,7 @@ class LDAKSSParser(SumstatsParser):
             df["MAF"] = 0.5 * df["A1_mean"].to_numpy()
 
         if "Z" in df.columns or "Direction" not in df.columns:
-            return df
+            return super().post_process(df)
 
         direction = np.sign(df["Direction"].to_numpy())
         if "CHISQ" in df.columns:
@@ -864,7 +861,7 @@ class LDAKSSParser(SumstatsParser):
 
             df["Z"] = direction * -ndtri(0.5 * df["PVAL"].to_numpy())
 
-        return df
+        return super().post_process(df)
 
 
 SUMSTATS_PARSER_CLASSES = (

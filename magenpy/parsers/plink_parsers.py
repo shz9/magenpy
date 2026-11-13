@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 
+from ..utils.chromosome_utils import normalize_chromosome_column
+
 
 def parse_bim_file(plink_bfile):
     """
@@ -31,7 +33,7 @@ def parse_bim_file(plink_bfile):
         sep=r"\s+",
         names=["CHR", "SNP", "cM", "POS", "A1", "A2"],
         dtype={
-            "CHR": int,
+            "CHR": "category",
             "SNP": str,
             "cM": np.float32,
             "POS": np.int32,
@@ -40,7 +42,7 @@ def parse_bim_file(plink_bfile):
         },
     )
 
-    return bim_df
+    return normalize_chromosome_column(bim_df)
 
 
 def parse_fam_file(plink_bfile):

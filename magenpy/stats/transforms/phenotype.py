@@ -20,7 +20,7 @@ def adjust_for_covariates(phenotype, covariates):
     return sm.OLS(phenotype, sm.add_constant(covariates)).fit().resid
 
 
-def rint(phenotype, offset=3./8):
+def rint(phenotype, offset=3.0 / 8):
     """
     Apply Rank-based inverse normal transform on the phenotype.
     :param phenotype: A vector of continuous or quantitative phenotypes.
@@ -35,7 +35,7 @@ def rint(phenotype, offset=3./8):
     return norm.ppf((ranked_pheno - offset) / (len(ranked_pheno) - 2 * offset + 1))
 
 
-def detect_outliers(phenotype, sigma_threshold=3, nan_policy='omit'):
+def detect_outliers(phenotype, sigma_threshold=3, nan_policy="omit"):
     """
     Detect samples with outlier phenotype values.
     This function takes a vector of quantitative phenotypes,
@@ -52,6 +52,7 @@ def detect_outliers(phenotype, sigma_threshold=3, nan_policy='omit'):
     True indicates outlier).
     """
     from scipy.stats import zscore
+
     return np.abs(zscore(phenotype, nan_policy=nan_policy)) > sigma_threshold
 
 
@@ -65,12 +66,14 @@ def standardize(phenotype):
     return (phenotype - phenotype.mean()) / phenotype.std()
 
 
-def chained_transform(sample_table,
-                      adjust_covariates=False,
-                      standardize_phenotype=False,
-                      rint_phenotype=False,
-                      outlier_sigma_threshold=None,
-                      transform_order=('standardize', 'covariate_adjust', 'rint', 'outlier_removal')):
+def chained_transform(
+    sample_table,
+    adjust_covariates=False,
+    standardize_phenotype=False,
+    rint_phenotype=False,
+    outlier_sigma_threshold=None,
+    transform_order=("standardize", "covariate_adjust", "rint", "outlier_removal"),
+):
     """
     Apply a chain of transformations to the phenotype vector.
     :param sample_table: An instance of SampleTable that contains phenotype information and other
@@ -90,25 +93,26 @@ def chained_transform(sample_table,
     phenotype = sample_table.phenotype
     mask = np.ones_like(phenotype, dtype=bool)
 
-    if sample_table.phenotype_likelihood != 'binomial':
+    if sample_table.phenotype_likelihood != "binomial":
         for transform in transform_order:
-
-            if transform == 'standardize':
+            if transform == "standardize":
                 # Standardize the phenotype:
                 if standardize_phenotype:
                     phenotype = standardize(phenotype)
 
-            elif transform == 'covariate_adjust':
+            elif transform == "covariate_adjust":
                 # Adjust the phenotype for a set of covariates:
                 if adjust_covariates:
-                    phenotype = adjust_for_covariates(phenotype, sample_table.get_covariates_matrix()[mask, :])
+                    phenotype = adjust_for_covariates(
+                        phenotype, sample_table.get_covariates_matrix()[mask, :]
+                    )
 
-            elif transform == 'rint':
+            elif transform == "rint":
                 # Apply Rank-based inverse normal transform (RINT) to the phenotype:
                 if rint_phenotype:
                     phenotype = rint(phenotype)
 
-            elif transform == 'outlier_removal':
+            elif transform == "outlier_removal":
                 # Remove outlier samples whose phenotypes are more than `threshold` standard deviations from the mean:
                 if outlier_sigma_threshold is not None:
                     # Find outliers:

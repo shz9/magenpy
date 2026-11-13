@@ -12,6 +12,10 @@ on:
         type: string
 
 jobs:
+  validate_backends:
+    if: github.event_name == 'release' || inputs.confirm_publish == 'publish'
+    uses: ./.github/workflows/backend-validation.yml
+
   build_wheels:
     if: github.event_name == 'release' || inputs.confirm_publish == 'publish'
     name: Build wheels on ${{ matrix.os }}
@@ -73,7 +77,7 @@ jobs:
 
   upload_pypi:
     if: github.event_name == 'release' || inputs.confirm_publish == 'publish'
-    needs: [build_wheels, build_sdist]
+    needs: [validate_backends, build_wheels, build_sdist]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

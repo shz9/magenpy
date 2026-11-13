@@ -1,0 +1,49 @@
+name: Native backend validation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  compare-plink:
+    name: PLINK parity (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ make pkg-config libopenblas-dev
+      - name: Install pinned PLINK tools
+        run: |
+          python tools/install_plink.py --destination "$RUNNER_TEMP/plink"
+          echo "$RUNNER_TEMP/plink" >> "$GITHUB_PATH"
+      - name: Build current native extensions
+        run: python -m pip install --verbose -e ".[test]"
+      - name: Require OpenMP for threaded validation
+        run: |
+          python -c 'from magenpy.stats.ld.c_utils import openmp_enabled; assert openmp_enabled(), "Native validation requires OpenMP support"'
+      - name: Require backend parity with zero skips
+        run: python tests/scripts/run_backend_checks.py
+      - name: Upload backend validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-validation-py${{ matrix.python-version }}
+          path: backend-validation.xml
+          if-no-files-found: error

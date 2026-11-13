@@ -204,8 +204,8 @@ cpdef add_diag_shift(const floating[:, ::1] x,
         Py_ssize_t i, k, idx
         bint scalar = shift.shape[0] == 1
         bint wide = np.result_type(np.asarray(x).dtype,
-                                   np.asarray(shift).dtype) == np.dtype('float64')
-        bint extended = np.asarray(shift).dtype.itemsize > 8 and np.asarray(shift).dtype.kind == 'f'
+                                   np.asarray(shift).dtype) == np.dtype("float64")
+        bint extended = np.asarray(shift).dtype.itemsize > 8 and np.asarray(shift).dtype.kind == "f"
         long double product_extended
         double product64
         floating product

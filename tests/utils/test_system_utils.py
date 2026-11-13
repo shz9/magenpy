@@ -91,7 +91,9 @@ def test_cloud_utilities_explain_how_to_install_dependencies(
 
     def import_without_dependency(name, *args, **kwargs):
         if name == dependency or name.startswith(f"{dependency}."):
-            raise ModuleNotFoundError(f"No module named '{dependency}'", name=dependency)
+            raise ModuleNotFoundError(
+                f"No module named '{dependency}'", name=dependency
+            )
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", import_without_dependency)

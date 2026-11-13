@@ -26,8 +26,7 @@ def test_resolve_gwas_catalog_prefers_harmonised_build_37():
     listings = {
         directory: f'<a href="harmonised/">harmonised</a>',
         harmonised: (
-            f'<a href="{formatted}">formatted</a>'
-            f'<a href="{preferred}">harmonised</a>'
+            f'<a href="{formatted}">formatted</a><a href="{preferred}">harmonised</a>'
         ),
     }
 

@@ -1,0 +1,7 @@
+# Pinned independently of runtime/build dependencies for reproducible CI checks.
+ruff==0.17.4
+cython-lint==0.22.0
+Cython==3.3.0
+# cppcheck-wheel 1.5.3 bundles Cppcheck 2.22.0.
+cppcheck==1.5.3
+clang-format==23.1.5

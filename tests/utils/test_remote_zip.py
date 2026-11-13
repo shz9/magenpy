@@ -105,4 +105,3 @@ def test_remote_zip_store_coalesces_initialization_entries_at_data_barriers():
     requests_before_last_entry = len(requests)
     assert store["metadata/a1/0"] == b"a" * 128
     assert len(requests) > requests_before_last_entry
-

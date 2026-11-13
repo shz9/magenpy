@@ -14,28 +14,22 @@
 #include "../../utils/linear_algebra_utils.hpp"
 #include "../../utils/plink_bed_utils.hpp"
 
-template<typename T>
-typename std::enable_if<std::is_integral<T>::value, T>::type
-missing_genotype_value() {
+template <typename T>
+typename std::enable_if<std::is_integral<T>::value, T>::type missing_genotype_value() {
     return static_cast<T>(-1);
 }
 
-template<typename T>
+template <typename T>
 typename std::enable_if<std::is_floating_point<T>::value, T>::type
 missing_genotype_value() {
     return std::numeric_limits<T>::quiet_NaN();
 }
 
-template<typename T>
+template <typename T>
 typename std::enable_if<std::is_arithmetic<T>::value, void>::type
-extract_genotype_matrix(std::string bed_filename,
-                        const int* snp_indices,
-                        const int* sample_indices,
-                        int total_samples,
-                        int num_samples,
-                        int num_snps,
-                        T* out,
-                        int threads) {
+extract_genotype_matrix(std::string bed_filename, const int *snp_indices,
+                        const int *sample_indices, int total_samples, int num_samples,
+                        int num_snps, T *out, int threads) {
     /*
         Extract selected PLINK BED dosages into a row-major samples-by-SNPs
         matrix. Dosage decoding follows the shared convention:
@@ -78,12 +72,9 @@ extract_genotype_matrix(std::string bed_filename,
     const int num_threads = threads > 0 ? threads : 1;
     constexpr size_t target_block_bytes = 32u * 1024u * 1024u;
     const int snps_per_block = std::max<int>(
-        1,
-        static_cast<int>(std::min<size_t>(
-            static_cast<size_t>(std::numeric_limits<int>::max()),
-            std::max<size_t>(1, target_block_bytes / std::max<size_t>(1, stride))
-        ))
-    );
+        1, static_cast<int>(std::min<size_t>(
+               static_cast<size_t>(std::numeric_limits<int>::max()),
+               std::max<size_t>(1, target_block_bytes / std::max<size_t>(1, stride)))));
 
     std::vector<unsigned char> bed_block;
     bed_block.resize(static_cast<size_t>(snps_per_block) * stride);
@@ -99,21 +90,20 @@ extract_genotype_matrix(std::string bed_filename,
         const int block_snps = std::min(snps_per_block, num_snps - block_start);
 
         for (int block_pos = 0; block_pos < block_snps; ++block_pos) {
-            read_plink_bed_row(bed_file,
-                               snp_indices[block_start + block_pos],
-                               variant_stride,
-                               bed_block.data() + static_cast<size_t>(block_pos) * stride);
+            read_plink_bed_row(
+                bed_file, snp_indices[block_start + block_pos], variant_stride,
+                bed_block.data() + static_cast<size_t>(block_pos) * stride);
         }
 
-        #ifdef _OPENMP
-            #pragma omp parallel for schedule(static) num_threads(num_threads)
-        #endif
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(num_threads)
+#endif
         for (int block_pos = 0; block_pos < block_snps; ++block_pos) {
             const int snp_pos = block_start + block_pos;
-            const unsigned char* bed_row =
+            const unsigned char *bed_row =
                 bed_block.data() + static_cast<size_t>(block_pos) * stride;
 
-            for (const SelectedSampleByte& group : sample_groups) {
+            for (const SelectedSampleByte &group : sample_groups) {
                 const unsigned char byte = bed_row[group.byte_index];
 
                 for (int slot = 0; slot < 4; ++slot) {
@@ -123,7 +113,8 @@ extract_genotype_matrix(std::string bed_filename,
                     }
 
                     const int8_t dosage = lookup.dosage[byte][slot];
-                    out[static_cast<size_t>(output_sample) * static_cast<size_t>(num_snps) +
+                    out[static_cast<size_t>(output_sample) *
+                            static_cast<size_t>(num_snps) +
                         static_cast<size_t>(snp_pos)] =
                         dosage >= 0 ? static_cast<T>(dosage) : missing_value;
                 }
@@ -132,20 +123,13 @@ extract_genotype_matrix(std::string bed_filename,
     }
 }
 
-template<typename T>
+template <typename T>
 typename std::enable_if<std::is_floating_point<T>::value, void>::type
-compute_gwa_linear_stats(std::string bed_filename,
-                         const int* snp_indices,
-                         const int* sample_indices,
-                         int total_samples,
-                         int num_samples,
-                         int num_snps,
-                         const T* centered_phenotype,
-                         bool standardize_genotype,
-                         T* allele_frequencies,
-                         int* n_per_snp,
-                         T* x_dot_y,
-                         T* sum_x_sq,
+compute_gwa_linear_stats(std::string bed_filename, const int *snp_indices,
+                         const int *sample_indices, int total_samples, int num_samples,
+                         int num_snps, const T *centered_phenotype,
+                         bool standardize_genotype, T *allele_frequencies,
+                         int *n_per_snp, T *x_dot_y, T *sum_x_sq, T *sum_y_sq,
                          int threads) {
     /*
         Compute per-variant sufficient statistics for simple linear GWAS from
@@ -156,6 +140,7 @@ compute_gwa_linear_stats(std::string bed_filename,
             n_per_snp[snp_pos]
             x_dot_y[snp_pos] = x_j' y_centered
             sum_x_sq[snp_pos] = x_j' x_j
+            sum_y_sq[snp_pos] = centered phenotype sum of squares over observed calls
 
         Missing genotypes are assigned x=0 after centering/scaling. This
         matches the existing xarray GWAS path, where missing genotypes are
@@ -173,8 +158,7 @@ compute_gwa_linear_stats(std::string bed_filename,
         (num_samples > 0 && centered_phenotype == nullptr) ||
         (num_snps > 0 && allele_frequencies == nullptr) ||
         (num_snps > 0 && n_per_snp == nullptr) ||
-        (num_snps > 0 && x_dot_y == nullptr) ||
-        (num_snps > 0 && sum_x_sq == nullptr)) {
+        (num_snps > 0 && x_dot_y == nullptr) || (num_snps > 0 && sum_x_sq == nullptr)) {
         throw std::invalid_argument("Null pointer passed to compute_gwa_linear_stats.");
     }
 
@@ -199,6 +183,9 @@ compute_gwa_linear_stats(std::string bed_filename,
             n_per_snp[snp_pos] = 0;
             x_dot_y[snp_pos] = std::numeric_limits<T>::quiet_NaN();
             sum_x_sq[snp_pos] = T(0);
+            if (sum_y_sq != nullptr) {
+                sum_y_sq[snp_pos] = std::numeric_limits<T>::quiet_NaN();
+            }
         }
         return;
     }
@@ -209,12 +196,9 @@ compute_gwa_linear_stats(std::string bed_filename,
     const int num_threads = threads > 0 ? threads : 1;
     constexpr size_t target_block_bytes = 32u * 1024u * 1024u;
     const int snps_per_block = std::max<int>(
-        1,
-        static_cast<int>(std::min<size_t>(
-            static_cast<size_t>(std::numeric_limits<int>::max()),
-            std::max<size_t>(1, target_block_bytes / std::max<size_t>(1, stride))
-        ))
-    );
+        1, static_cast<int>(std::min<size_t>(
+               static_cast<size_t>(std::numeric_limits<int>::max()),
+               std::max<size_t>(1, target_block_bytes / std::max<size_t>(1, stride)))));
 
     std::vector<unsigned char> bed_block;
     bed_block.resize(static_cast<size_t>(snps_per_block) * stride);
@@ -228,25 +212,25 @@ compute_gwa_linear_stats(std::string bed_filename,
         const int block_snps = std::min(snps_per_block, num_snps - block_start);
 
         for (int block_pos = 0; block_pos < block_snps; ++block_pos) {
-            read_plink_bed_row(bed_file,
-                               snp_indices[block_start + block_pos],
-                               variant_stride,
-                               bed_block.data() + static_cast<size_t>(block_pos) * stride);
+            read_plink_bed_row(
+                bed_file, snp_indices[block_start + block_pos], variant_stride,
+                bed_block.data() + static_cast<size_t>(block_pos) * stride);
         }
 
-        #ifdef _OPENMP
-            #pragma omp parallel for schedule(static) num_threads(num_threads)
-        #endif
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(num_threads)
+#endif
         for (int block_pos = 0; block_pos < block_snps; ++block_pos) {
             T dosage_sum = T(0);
             T dosage_sum_sq = T(0);
             T dosage_dot_y = T(0);
             T observed_y_sum = T(0);
+            T observed_y_sum_sq = T(0);
             int non_missing = 0;
-            const unsigned char* bed_row =
+            const unsigned char *bed_row =
                 bed_block.data() + static_cast<size_t>(block_pos) * stride;
 
-            for (const SelectedSampleByte& group : sample_groups) {
+            for (const SelectedSampleByte &group : sample_groups) {
                 const unsigned char byte = bed_row[group.byte_index];
 
                 for (int slot = 0; slot < 4; ++slot) {
@@ -263,6 +247,7 @@ compute_gwa_linear_stats(std::string bed_filename,
                         dosage_sum_sq += dosage_value * dosage_value;
                         dosage_dot_y += dosage_value * phenotype_value;
                         observed_y_sum += phenotype_value;
+                        observed_y_sum_sq += phenotype_value * phenotype_value;
                         ++non_missing;
                     }
                 }
@@ -275,9 +260,17 @@ compute_gwa_linear_stats(std::string bed_filename,
                 allele_frequencies[snp_pos] = std::numeric_limits<T>::quiet_NaN();
                 x_dot_y[snp_pos] = std::numeric_limits<T>::quiet_NaN();
                 sum_x_sq[snp_pos] = T(0);
+                if (sum_y_sq != nullptr) {
+                    sum_y_sq[snp_pos] = std::numeric_limits<T>::quiet_NaN();
+                }
                 continue;
             }
 
+            if (sum_y_sq != nullptr) {
+                sum_y_sq[snp_pos] =
+                    std::max(T(0), observed_y_sum_sq - observed_y_sum * observed_y_sum /
+                                                           static_cast<T>(non_missing));
+            }
             const T mean_dosage = dosage_sum / static_cast<T>(non_missing);
             allele_frequencies[snp_pos] =
                 dosage_sum / (static_cast<T>(2) * static_cast<T>(non_missing));
@@ -289,16 +282,13 @@ compute_gwa_linear_stats(std::string bed_filename,
             if (centered_sum_sq <= T(0)) {
                 x_dot_y[snp_pos] = T(0);
                 sum_x_sq[snp_pos] = T(0);
-            }
-            else if (standardize_genotype) {
-                const T scale = static_cast<T>(
-                    std::sqrt(static_cast<double>(non_missing) /
-                              static_cast<double>(centered_sum_sq))
-                );
+            } else if (standardize_genotype) {
+                const T scale =
+                    static_cast<T>(std::sqrt(static_cast<double>(non_missing) /
+                                             static_cast<double>(centered_sum_sq)));
                 x_dot_y[snp_pos] = centered_dot_y * scale;
                 sum_x_sq[snp_pos] = static_cast<T>(non_missing);
-            }
-            else {
+            } else {
                 x_dot_y[snp_pos] = centered_dot_y;
                 sum_x_sq[snp_pos] = centered_sum_sq;
             }
@@ -306,17 +296,11 @@ compute_gwa_linear_stats(std::string bed_filename,
     }
 }
 
-
-template<typename T>
+template <typename T>
 typename std::enable_if<std::is_floating_point<T>::value, void>::type
-compute_variant_stats(std::string bed_filename,
-                      const int* snp_indices,
-                      const int* sample_indices,
-                      int total_samples,
-                      int num_samples,
-                      int num_snps,
-                      T* allele_frequencies,
-                      int* n_per_snp,
+compute_variant_stats(std::string bed_filename, const int *snp_indices,
+                      const int *sample_indices, int total_samples, int num_samples,
+                      int num_snps, T *allele_frequencies, int *n_per_snp,
                       int threads) {
     /*
         Compute A1-like allele frequencies and non-missing sample counts from a
@@ -341,8 +325,7 @@ compute_variant_stats(std::string bed_filename,
     }
     if ((num_snps > 0 && snp_indices == nullptr) ||
         (num_samples > 0 && sample_indices == nullptr) ||
-        allele_frequencies == nullptr ||
-        n_per_snp == nullptr) {
+        allele_frequencies == nullptr || n_per_snp == nullptr) {
         throw std::invalid_argument("Null pointer passed to compute_variant_stats.");
     }
 
@@ -375,12 +358,9 @@ compute_variant_stats(std::string bed_filename,
     const int num_threads = threads > 0 ? threads : 1;
     constexpr size_t target_block_bytes = 32u * 1024u * 1024u;
     const int snps_per_block = std::max<int>(
-        1,
-        static_cast<int>(std::min<size_t>(
-            static_cast<size_t>(std::numeric_limits<int>::max()),
-            std::max<size_t>(1, target_block_bytes / std::max<size_t>(1, stride))
-        ))
-    );
+        1, static_cast<int>(std::min<size_t>(
+               static_cast<size_t>(std::numeric_limits<int>::max()),
+               std::max<size_t>(1, target_block_bytes / std::max<size_t>(1, stride)))));
 
     std::vector<unsigned char> bed_block;
     bed_block.resize(static_cast<size_t>(snps_per_block) * stride);
@@ -394,22 +374,21 @@ compute_variant_stats(std::string bed_filename,
         const int block_snps = std::min(snps_per_block, num_snps - block_start);
 
         for (int block_pos = 0; block_pos < block_snps; ++block_pos) {
-            read_plink_bed_row(bed_file,
-                               snp_indices[block_start + block_pos],
-                               variant_stride,
-                               bed_block.data() + static_cast<size_t>(block_pos) * stride);
+            read_plink_bed_row(
+                bed_file, snp_indices[block_start + block_pos], variant_stride,
+                bed_block.data() + static_cast<size_t>(block_pos) * stride);
         }
 
-        #ifdef _OPENMP
-            #pragma omp parallel for schedule(static) num_threads(num_threads)
-        #endif
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(num_threads)
+#endif
         for (int block_pos = 0; block_pos < block_snps; ++block_pos) {
             int dosage_sum = 0;
             int non_missing = 0;
-            const unsigned char* bed_row =
+            const unsigned char *bed_row =
                 bed_block.data() + static_cast<size_t>(block_pos) * stride;
 
-            for (const SelectedSampleByte& group : sample_groups) {
+            for (const SelectedSampleByte &group : sample_groups) {
                 const unsigned char byte = bed_row[group.byte_index];
 
                 for (int slot = 0; slot < 4; ++slot) {
@@ -427,9 +406,10 @@ compute_variant_stats(std::string bed_filename,
 
             const int snp_pos = block_start + block_pos;
             n_per_snp[snp_pos] = non_missing;
-            allele_frequencies[snp_pos] = non_missing > 0 ?
-                static_cast<T>(dosage_sum) / (static_cast<T>(2) * static_cast<T>(non_missing)) :
-                std::numeric_limits<T>::quiet_NaN();
+            allele_frequencies[snp_pos] =
+                non_missing > 0 ? static_cast<T>(dosage_sum) /
+                                      (static_cast<T>(2) * static_cast<T>(non_missing))
+                                : std::numeric_limits<T>::quiet_NaN();
         }
     }
 }

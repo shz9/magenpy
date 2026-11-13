@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 
+from .chromosome_utils import normalize_chromosome
+
 try:
     from ..stats.variant.variant_cpp import (
         is_identity_indexer_native as _is_identity_indexer_native,
@@ -32,7 +34,34 @@ def normalize_genome_build(genome_build):
     return normalized
 
 
-def match_chromosomes(chrom_1, chrom_2, check_patterns=('chr_', 'chr:', 'chr'), return_both=False):
+def validate_harmonization_builds(data_sources):
+    """Reject conflicting known assemblies; allow sources with unknown builds.
+
+    :param data_sources: Mapping from source name to a chromosome-to-data mapping.
+        Objects may expose genome_build; missing or unknown builds are ignored.
+    :raises ValueError: If known builds disagree within or across sources.
+    """
+    source_builds = {}
+    for source_name, source in data_sources.items():
+        for data in source.values():
+            genome_build = normalize_genome_build(getattr(data, "genome_build", None))
+            if genome_build is not None:
+                source_builds.setdefault(source_name, set()).add(genome_build)
+
+    genome_builds = set().union(*source_builds.values()) if source_builds else set()
+    if len(genome_builds) > 1:
+        build_description = ", ".join(
+            f"{source}={sorted(builds)}" for source, builds in source_builds.items()
+        )
+        raise ValueError(
+            "Cannot harmonize data sources with conflicting genome builds: "
+            f"{build_description}."
+        )
+
+
+def match_chromosomes(
+    chrom_1, chrom_2, check_patterns=("chr_", "chr:", "chr"), return_both=False
+):
     """
     Given two lists of chromosome IDs, this function returns the
     chromosomes that are common to both lists. By default, the returned chromosomes
@@ -44,37 +73,37 @@ def match_chromosomes(chrom_1, chrom_2, check_patterns=('chr_', 'chr:', 'chr'), 
 
     :param chrom_1: A list or numpy array of chromosome IDs
     :param chrom_2: A list or numpy array of chromosome IDs
-    :param check_patterns: A list of patterns to check for and replace in the chromosome IDs
+    :param check_patterns: Additional leading prefixes to strip before standard normalization.
     :param return_both: If True, return the common chromosomes in both lists
     """
 
     chrom_1 = np.array(list(chrom_1))
     chrom_2 = np.array(list(chrom_2))
 
-    # First, convert the data types to strings:
-    chr1_str = chrom_1.astype(str)
-    chr2_str = chrom_2.astype(str)
+    def first_positions(values):
+        positions = {}
+        for i, value in enumerate(values):
+            # Retain support for callers supplying extra prefix conventions.
+            if isinstance(value, str):
+                value = value.strip()
+                for prefix in check_patterns:
+                    if value.lower().startswith(prefix.lower()):
+                        value = value[len(prefix) :]
+                        break
+            key = normalize_chromosome(value)
+            if not pd.isna(key):
+                positions.setdefault(key, i)
+        return positions
 
-    _, chr1_idx, chr2_idx = np.intersect1d(chr1_str, chr2_str, return_indices=True)
-
-    if len(chr1_idx) < 1:
-        # Replace patterns
-        for pattern in check_patterns:
-            chr1_str = np.char.replace(chr1_str, pattern, '')
-            chr2_str = np.char.replace(chr2_str, pattern, '')
-
-        _, chr1_idx, chr2_idx = np.intersect1d(chr1_str, chr2_str, return_indices=True)
-
-    if len(chr1_idx) < 1:
-        if return_both:
-            return [], []
-        else:
-            return []
-    else:
-        if return_both:
-            return chrom_1[chr1_idx], chrom_2[chr2_idx]
-        else:
-            return chrom_1[chr1_idx]
+    left = first_positions(chrom_1)
+    right = first_positions(chrom_2)
+    pairs = [(i, right[key]) for key, i in left.items() if key in right]
+    if not pairs:
+        return ([], []) if return_both else []
+    left_positions, right_positions = np.asarray(pairs, dtype=np.intp).T
+    if return_both:
+        return chrom_1[left_positions], chrom_2[right_positions]
+    return chrom_1[left_positions]
 
 
 def is_identity_indexer(indexer, size=None, chunk_size=65536):
@@ -114,15 +143,50 @@ def is_identity_indexer(indexer, size=None, chunk_size=65536):
     return True
 
 
-def merge_snp_tables(ref_table,
-                     alt_table,
-                     how='inner',
-                     on='auto',
-                     signed_statistics=('BETA', 'STD_BETA', 'Z'),
-                     drop_duplicates=True,
-                     correct_flips=True,
-                     return_ref_indices=False,
-                     return_alt_indices=False):
+def flip_allele_statistics(table, flip, signed_statistics=("BETA", "STD_BETA", "Z")):
+    """Update allele-dependent statistics in place for selected positional rows.
+
+    Negate each available signed statistic and replace effect-allele frequency
+    ``MAF`` with ``1 - MAF`` where ``flip`` is true. Other rows and columns are
+    unchanged. This function neither matches variants nor changes allele labels:
+    callers determine flips and assign reference A1/A2 after alignment.
+
+    :param table: DataFrame whose rows are already aligned with the reference.
+    :param flip: One-dimensional boolean mask in table row order, independent
+        of the DataFrame index labels.
+    :param signed_statistics: Signed statistic column names, or a single name.
+    :return: The same DataFrame, updated in place without a full-table copy.
+    """
+    flip = np.asarray(flip, dtype=bool)
+    if flip.ndim != 1 or len(flip) != len(table):
+        raise ValueError("flip must be a one-dimensional mask with one value per row.")
+    positions = np.flatnonzero(flip)
+    if len(positions) == 0:
+        return table
+    if isinstance(signed_statistics, str):
+        signed_statistics = [signed_statistics]
+
+    for statistic in signed_statistics:
+        if statistic in table:
+            column = table.columns.get_loc(statistic)
+            table.iloc[positions, column] = -table.iloc[positions, column].to_numpy()
+    if "MAF" in table:
+        column = table.columns.get_loc("MAF")
+        table.iloc[positions, column] = 1.0 - table.iloc[positions, column].to_numpy()
+    return table
+
+
+def merge_snp_tables(
+    ref_table,
+    alt_table,
+    how="inner",
+    on="auto",
+    signed_statistics=("BETA", "STD_BETA", "Z"),
+    drop_duplicates=True,
+    correct_flips=True,
+    return_ref_indices=False,
+    return_alt_indices=False,
+):
     """
     This function takes a reference SNP table with at least 3 columns ('SNP', 'A1', `A2`)
     and matches it with an alternative table that also has these 3 columns defined. In the most recent
@@ -152,53 +216,69 @@ def merge_snp_tables(ref_table,
     """
 
     # Sanity checking steps:
-    assert how in ('left', 'inner')
+    assert how in ("left", "inner")
     for tab in (ref_table, alt_table):
         assert isinstance(tab, pd.DataFrame)
-        if not all([col in tab.columns for col in ('A1', 'A2')]):
-            raise ValueError("To merge SNP tables, we require that the columns `A1` and `A2` are present.")
+        if not all([col in tab.columns for col in ("A1", "A2")]):
+            raise ValueError(
+                "To merge SNP tables, we require that the columns `A1` and `A2` are present."
+            )
 
     # Determine which columns to merge on:
-    if on == 'auto':
+    if on == "auto":
         # Check that the `CHR`, `POS` columns are present in both tables:
-        if all([col in tab.columns for col in ('CHR', 'POS') for tab in (ref_table, alt_table)]):
-            on = ['CHR', 'POS']
+        if all(
+            [
+                col in tab.columns
+                for col in ("CHR", "POS")
+                for tab in (ref_table, alt_table)
+            ]
+        ):
+            on = ["CHR", "POS"]
         # Fall back to the `SNP` column:
-        elif all(['SNP' in tab.columns for tab in (ref_table, alt_table)]):
-            on = ['SNP']
+        elif all(["SNP" in tab.columns for tab in (ref_table, alt_table)]):
+            on = ["SNP"]
         else:
-            raise ValueError("Cannot merge SNP tables without specifying which columns to merge on.")
+            raise ValueError(
+                "Cannot merge SNP tables without specifying which columns to merge on."
+            )
     elif isinstance(on, str):
         on = [on]
 
-    ref_include = on + ['A1', 'A2']
+    ref_include = on + ["A1", "A2"]
 
     if return_ref_indices:
-        ref_table.reset_index(inplace=True, names='REF_IDX')
-        ref_include += ['REF_IDX']
+        ref_table.reset_index(inplace=True, names="REF_IDX")
+        ref_include += ["REF_IDX"]
     if return_alt_indices:
-        alt_table.reset_index(inplace=True, names='ALT_IDX')
+        alt_table.reset_index(inplace=True, names="ALT_IDX")
 
     merged_table = ref_table[ref_include].merge(alt_table, how=how, on=on)
 
     if drop_duplicates:
         merged_table.drop_duplicates(inplace=True, subset=on)
 
-    if how == 'left':
-        merged_table['A1_y'] = merged_table['A1_y'].fillna(merged_table['A1_x'])
-        merged_table['A2_y'] = merged_table['A2_y'].fillna(merged_table['A2_x'])
+    if how == "left":
+        merged_table["A1_y"] = merged_table["A1_y"].fillna(merged_table["A1_x"])
+        merged_table["A2_y"] = merged_table["A2_y"].fillna(merged_table["A2_x"])
 
     # Assign A1 to be the one derived from the reference table:
-    merged_table['A1'] = merged_table['A1_x']
-    merged_table['A2'] = merged_table['A2_x']
+    merged_table["A1"] = merged_table["A1_x"]
+    merged_table["A2"] = merged_table["A2_x"]
 
     # Detect cases where the correct allele is specified in both tables:
-    matching_allele = np.all(merged_table[['A1_x', 'A2_x']].values == merged_table[['A1_y', 'A2_y']].values, axis=1)
+    matching_allele = np.all(
+        merged_table[["A1_x", "A2_x"]].values == merged_table[["A1_y", "A2_y"]].values,
+        axis=1,
+    )
 
     # Detect cases where the effect and reference alleles are flipped:
-    flip = np.all(merged_table[['A2_x', 'A1_x']].values == merged_table[['A1_y', 'A2_y']].values, axis=1)
+    flip = np.all(
+        merged_table[["A2_x", "A1_x"]].values == merged_table[["A1_y", "A2_y"]].values,
+        axis=1,
+    )
 
-    if how == 'inner':
+    if how == "inner":
         # Variants to keep:
         if correct_flips:
             keep_snps = matching_allele | flip
@@ -206,30 +286,13 @@ def merge_snp_tables(ref_table,
             keep_snps = matching_allele
 
         # Keep only SNPs with matching alleles or SNPs with flipped alleles:
-        merged_table = merged_table.loc[keep_snps, ]
+        merged_table = merged_table.take(np.flatnonzero(keep_snps))
         flip = flip[keep_snps]
 
     if correct_flips:
+        flip_allele_statistics(merged_table, flip, signed_statistics=signed_statistics)
 
-        flip = flip.astype(int)
-        num_flips = flip.sum()
-
-        if num_flips > 0:
-
-            # If the user provided a single signed statistic as a string, convert to list first:
-            if isinstance(signed_statistics, str):
-                signed_statistics = [signed_statistics]
-
-            # Loop over the signed statistics and correct them:
-            for s_stat in signed_statistics:
-                if s_stat in merged_table:
-                    merged_table[s_stat] = (-2. * flip + 1.) * merged_table[s_stat]
-
-            # Correct MAF:
-            if 'MAF' in merged_table:
-                merged_table['MAF'] = np.abs(flip - merged_table['MAF'])
-
-    merged_table.drop(['A1_x', 'A1_y', 'A2_x', 'A2_y'], axis=1, inplace=True)
+    merged_table.drop(["A1_x", "A1_y", "A2_x", "A2_y"], axis=1, inplace=True)
 
     return merged_table
 
@@ -325,20 +388,16 @@ def build_snp_harmonization_plan(
 
     ref_a1_all, ref_a2_all = (np.asarray(a) for a in alleles[allele_reference])
     target_a1_all, target_a2_all = (np.asarray(a) for a in alleles[allele_target])
-    if (
-        len(ref_a1_all) != len(snp_ids[allele_reference])
-        or len(ref_a2_all) != len(ref_a1_all)
+    if len(ref_a1_all) != len(snp_ids[allele_reference]) or len(ref_a2_all) != len(
+        ref_a1_all
     ):
         raise ValueError(
             "Reference allele arrays must match the variant ID array length."
         )
-    if (
-        len(target_a1_all) != len(snp_ids[allele_target])
-        or len(target_a2_all) != len(target_a1_all)
+    if len(target_a1_all) != len(snp_ids[allele_target]) or len(target_a2_all) != len(
+        target_a1_all
     ):
-        raise ValueError(
-            "Target allele arrays must match the variant ID array length."
-        )
+        raise ValueError("Target allele arrays must match the variant ID array length.")
 
     ref_positions = indexers[allele_reference]
     target_positions = indexers[allele_target]
@@ -363,6 +422,149 @@ def build_snp_harmonization_plan(
     return plan
 
 
+def prepare_harmonization_plan(chromosome, data_sources):
+    """Read chromosome metadata and plan alignment without changing sources.
+
+    Collect table metadata and only the LD fields needed for matching. Prefer
+    CHR/POS identifiers, falling back to SNP IDs consistently across sources.
+    Choose variant-order and allele references separately, then delegate
+    intersection and allele compatibility to build_snp_harmonization_plan.
+
+    Return the plan and current LD rows in stored coordinates. The latter
+    is None when no LD source is initialized.
+
+    :param chromosome: Chromosome label used to construct LD CHR/POS identifiers.
+    :param data_sources: Mapping of source names (genotype, sumstats, ld,
+        annotation) to data objects for this chromosome. Absent sources can be
+        omitted or set to None. Inputs are read without copying full tables.
+    :return: Alignment plan and current LD row indices in stored coordinates.
+    """
+    genotype = data_sources.get("genotype")
+    sumstats = data_sources.get("sumstats")
+    ld = data_sources.get("ld")
+    annotation = data_sources.get("annotation")
+    # Collect in-memory table metadata and the alleles used for comparison.
+    variant_tables = {}
+    variant_ids = {}
+    alleles = {}
+    ld_original_positions = None
+    ld_current_mask = None
+
+    if genotype is not None:
+        variant_tables["genotype"] = genotype.snp_table
+        alleles["genotype"] = (genotype.a1, genotype.a2)
+
+    if sumstats is not None:
+        variant_tables["sumstats"] = sumstats.table
+        if genotype is not None or ld is not None:
+            if not all(column in sumstats.table.columns for column in ("A1", "A2")):
+                raise ValueError(
+                    "To harmonize summary statistics, both `A1` and "
+                    "`A2` must be present."
+                )
+            alleles["sumstats"] = (sumstats.a1, sumstats.a2)
+
+    if annotation is not None:
+        variant_tables["annotation"] = annotation.table
+
+    # Choose one identifier definition shared by every source. LD can
+    # force a fallback to SNP IDs if its position metadata is unavailable.
+    use_position = all(
+        all(column in table.columns for column in ("CHR", "POS"))
+        for table in variant_tables.values()
+    )
+
+    if ld is not None:
+        stored_ids = None
+        if use_position:
+            try:
+                stored_ids = ld.get_metadata("bp", apply_mask=False)
+            except KeyError:
+                use_position = False
+        if not use_position:
+            try:
+                stored_ids = ld.get_metadata("snps", apply_mask=False)
+            except KeyError as error:
+                raise ValueError(
+                    "LD metadata contains neither CHR/POS nor SNP IDs."
+                ) from error
+
+        ld_current_mask = ld.get_mask()
+        if ld_current_mask is None:
+            ld_original_positions = np.arange(len(stored_ids), dtype=np.intp)
+        else:
+            ld_original_positions = np.flatnonzero(ld_current_mask)
+
+        current_ids = stored_ids[ld_original_positions]
+        if use_position:
+            variant_ids["ld"] = pd.MultiIndex.from_arrays(
+                (
+                    np.repeat(chromosome, len(current_ids)),
+                    current_ids,
+                ),
+                names=("CHR", "POS"),
+            )
+        else:
+            variant_ids["ld"] = current_ids
+
+        # LD alleles are only needed when LD is the allele reference.
+        if genotype is None and sumstats is not None:
+            stored_a1 = ld.get_metadata("a1", apply_mask=False)
+            stored_a2 = ld.get_metadata("a2", apply_mask=False)
+            alleles["ld"] = (
+                stored_a1[ld_original_positions],
+                stored_a2[ld_original_positions],
+            )
+
+    variant_id_cols = ["CHR", "POS"] if use_position else ["SNP"]
+    if not use_position and any(
+        "SNP" not in table.columns for table in variant_tables.values()
+    ):
+        raise ValueError(
+            "Cannot harmonize variants: CHR/POS are not available in "
+            "every data source and at least one source has no SNP IDs."
+        )
+
+    for source, table in variant_tables.items():
+        if use_position:
+            variant_ids[source] = pd.MultiIndex.from_frame(table[variant_id_cols])
+        else:
+            variant_ids[source] = table["SNP"].to_numpy()
+
+    # An LD matrix cannot be reordered without permuting its rows and
+    # columns, so its stored order is canonical whenever it is present.
+    # Otherwise retain genotype, summary-statistic, then annotation order.
+    order_reference = next(
+        source
+        for source in ("ld", "genotype", "sumstats", "annotation")
+        if source in variant_ids
+    )
+
+    allele_reference = None
+    allele_target = None
+    if "sumstats" in variant_ids:
+        # TODO: When genotype and LD are both present, reconcile the
+        # genotype A1/A2 orientation with LD as well. This requires
+        # deciding how allele flips propagate to genotype dosages and
+        # LD correlations; for now, as in the legacy implementation,
+        # only summary statistics are allele-harmonized.
+        if "genotype" in variant_ids:
+            allele_reference = "genotype"
+        elif "ld" in variant_ids:
+            allele_reference = "ld"
+        if allele_reference is not None:
+            allele_target = "sumstats"
+
+    plan = build_snp_harmonization_plan(
+        variant_ids,
+        reference=order_reference,
+        alleles=alleles,
+        allele_reference=allele_reference,
+        allele_target=allele_target,
+    )
+    return plan, ld_original_positions
+
+
 def sumstats_train_test_split(gdl, prop_train=0.9, **kwargs):
     """
     Perform a train-test split on the GWAS summary statistics data.
@@ -384,18 +586,23 @@ def sumstats_train_test_split(gdl, prop_train=0.9, **kwargs):
     """
 
     # Sanity checks:
-    assert 0. < prop_train < 1., "The proportion of training data must be between 0 and 1."
-    assert gdl.sumstats_table is not None, "The GWADataLoader object must have summary statistics initialized."
-    assert gdl.ld is not None, "The GWADataLoader object must have LD matrices initialized."
+    assert 0.0 < prop_train < 1.0, (
+        "The proportion of training data must be between 0 and 1."
+    )
+    assert gdl.sumstats_table is not None, (
+        "The GWADataLoader object must have summary statistics initialized."
+    )
+    assert gdl.ld is not None, (
+        "The GWADataLoader object must have LD matrices initialized."
+    )
 
     from ..stats.ld.utils import multivariate_normal_conditional_sampling
 
-    prop_test = 1. - prop_train
+    prop_test = 1.0 - prop_train
 
     results = {}
 
     for chrom in gdl.chromosomes:
-
         assert gdl.ld[chrom].n_snps == gdl.sumstats_table[chrom].n_snps, (
             "The number of SNPs in the LD matrix and the summary statistics table must match. Invoke the "
             "`harmonize_data` method on the GWADataLoader object to ensure that the data is harmonized."
@@ -405,37 +612,38 @@ def sumstats_train_test_split(gdl, prop_train=0.9, **kwargs):
         n = n_per_snp.max()  # Get the GWAS sample size
 
         # The covariance scale is computed based on the proportion of training data:
-        cov_scale = 1. / (prop_train * n) - (1. / n)
+        cov_scale = 1.0 / (prop_train * n) - (1.0 / n)
         # Use the standardized marginal beta as the mean:
         mean = gdl.sumstats_table[chrom].standardized_marginal_beta
 
         # Sample the training beta values:
         sampled_train_beta = multivariate_normal_conditional_sampling(
-            gdl.ld[chrom],
-            mean=mean,
-            cov_scale=cov_scale,
-            **kwargs
+            gdl.ld[chrom], mean=mean, cov_scale=cov_scale, **kwargs
         )
 
         # Calculate the test beta values:
-        sampled_test_beta = mean * (1. / prop_test) - sampled_train_beta * (prop_train / prop_test)
+        sampled_test_beta = mean * (1.0 / prop_test) - sampled_train_beta * (
+            prop_train / prop_test
+        )
 
         # Store the results:
         results[chrom] = {
-            'train_beta': sampled_train_beta,
-            'train_n': n_per_snp * prop_train,
-            'test_beta': sampled_test_beta,
-            'test_n': n_per_snp * prop_test
+            "train_beta": sampled_train_beta,
+            "train_n": n_per_snp * prop_train,
+            "test_beta": sampled_test_beta,
+            "test_n": n_per_snp * prop_test,
         }
 
     return results
 
 
-def map_variants_to_genomic_blocks(variant_table,
-                                   block_table,
-                                   variant_pos_col='POS',
-                                   block_boundary_cols=('block_start', 'block_end'),
-                                   filter_unmatched=False):
+def map_variants_to_genomic_blocks(
+    variant_table,
+    block_table,
+    variant_pos_col="POS",
+    block_boundary_cols=("block_start", "block_end"),
+    filter_unmatched=False,
+):
     """
     Merge a variant table with a genomic block table. This function assumes that the
     variant table includes a column with the positions of the variants `POS` and the block table
@@ -461,26 +669,34 @@ def map_variants_to_genomic_blocks(variant_table,
     variant_table.sort_values(variant_pos_col, inplace=True)
 
     # Merge the two dataframes to assign each SNP to its corresponding block:
-    merged_df = pd.merge_asof(variant_table, block_table,
-                              left_on=variant_pos_col, right_on=block_boundary_cols[0],
-                              direction='backward')
+    merged_df = pd.merge_asof(
+        variant_table,
+        block_table,
+        left_on=variant_pos_col,
+        right_on=block_boundary_cols[0],
+        direction="backward",
+    )
 
     if filter_unmatched:
         # Filter merged_df to only include variants that were matched properly with a block:
-        merged_df = merged_df.loc[(merged_df[variant_pos_col] >= merged_df[block_boundary_cols[0]]) &
-                                  (merged_df[variant_pos_col] < merged_df[block_boundary_cols[1]])]
+        merged_df = merged_df.loc[
+            (merged_df[variant_pos_col] >= merged_df[block_boundary_cols[0]])
+            & (merged_df[variant_pos_col] < merged_df[block_boundary_cols[1]])
+        ]
 
     return merged_df
 
 
-def identify_mismatched_snps(gdl,
-                             chrom=None,
-                             n_iter=10,
-                             G=100,
-                             p_dentist_threshold=5e-8,
-                             p_gwas_threshold=1e-2,
-                             rsq_threshold=.95,
-                             max_removed_per_iter=.005):
+def identify_mismatched_snps(
+    gdl,
+    chrom=None,
+    n_iter=10,
+    G=100,
+    p_dentist_threshold=5e-8,
+    p_gwas_threshold=1e-2,
+    rsq_threshold=0.95,
+    max_removed_per_iter=0.005,
+):
     """
     This function implements a simple quality control procedures
     that checks that the GWAS summary statistics (Z-scores)
@@ -521,19 +737,16 @@ def identify_mismatched_snps(gdl,
         chromosomes = [chrom]
 
     shapes = gdl.shapes
-    mismatched_dict = {c: np.repeat(False, gdl.shapes[c])
-                       for c in chromosomes}
+    mismatched_dict = {c: np.repeat(False, gdl.shapes[c]) for c in chromosomes}
 
-    p_gwas_above_thres = {c: gdl.sumstats_table[c].p_value > p_gwas_threshold for c in chromosomes}
+    p_gwas_above_thres = {
+        c: gdl.sumstats_table[c].p_value > p_gwas_threshold for c in chromosomes
+    }
     gwas_thres_size = {c: p.sum() for c, p in p_gwas_above_thres.items()}
     converged = {c: False for c in chromosomes}
 
-    for j in tqdm(range(n_iter),
-                  total=n_iter,
-                  desc="Identifying mismatched SNPs..."):
-
+    for j in tqdm(range(n_iter), total=n_iter, desc="Identifying mismatched SNPs..."):
         for chrom in chromosomes:
-
             if converged[chrom]:
                 continue
 
@@ -543,7 +756,6 @@ def identify_mismatched_snps(gdl,
 
             # Loop over the LD matrix:
             for i, r in enumerate(gdl.ld[chrom]):
-
                 # If the number of neighbors is less than 10, skip...
                 if mismatched_dict[chrom][i] or len(r) < 10:
                     continue
@@ -552,20 +764,20 @@ def identify_mismatched_snps(gdl,
                 # Select neighbors randomly
                 # Note: We are excluding neighbors whose squared correlation coefficient
                 # is greater than pre-specified threshold:
-                p = (np.array(r)**2 < rsq_threshold).astype(float)
+                p = (np.array(r) ** 2 < rsq_threshold).astype(float)
                 p /= p.sum()
 
                 neighbor_idx = np.random.choice(len(r), p=p, size=G)
                 neighbor_r = np.array(r)[neighbor_idx]
 
                 # Predict the z-score of snp i, given the z-scores of its neighbors:
-                pred_z = neighbor_r*z[start_idx + neighbor_idx]
+                pred_z = neighbor_r * z[start_idx + neighbor_idx]
 
                 # Compute the Td statistic for each neighbor and average:
-                t[i] = ((z[i] - pred_z) ** 2 / (1. - neighbor_r**2)).mean()
+                t[i] = ((z[i] - pred_z) ** 2 / (1.0 - neighbor_r**2)).mean()
 
             # Compute the DENTIST p-value assuming a Chi-Square distribution with 1 dof.
-            dentist_pval = 1. - stats.chi2.cdf(t, 1)
+            dentist_pval = 1.0 - stats.chi2.cdf(t, 1)
             # Use a Bonferroni correction to select mismatched SNPs:
             mismatched_snps = dentist_pval < p_dentist_threshold
 
@@ -574,21 +786,22 @@ def identify_mismatched_snps(gdl,
                 converged[chrom] = True
             elif j == n_iter - 1:
                 # If this is the last iteration, take all identified SNPs
-                mismatched_dict[chrom] = (mismatched_dict[chrom] | mismatched_snps)
+                mismatched_dict[chrom] = mismatched_dict[chrom] | mismatched_snps
             else:
-
                 # Otherwise, we will perform the iterative filtering procedure
                 # by splitting variants based on their GWAS p-values:
 
                 # (1) Group S1: SNPs to remove from P_GWAS > threshold:
                 mismatch_above_thres = mismatched_snps & p_gwas_above_thres[chrom]
                 n_mismatch_above_thres = mismatch_above_thres.sum()
-                prop_mismatch_above_thres = n_mismatch_above_thres / gwas_thres_size[chrom]
+                prop_mismatch_above_thres = (
+                    n_mismatch_above_thres / gwas_thres_size[chrom]
+                )
 
                 if n_mismatch_above_thres < 1:
                     # If no mismatches are detected above the threshold, filter
                     # the mismatches below the threshold and continue...
-                    mismatched_dict[chrom] = (mismatched_dict[chrom] | mismatched_snps)
+                    mismatched_dict[chrom] = mismatched_dict[chrom] | mismatched_snps
                     continue
 
                 # Sort the DENTIST p-values by index:
@@ -596,7 +809,8 @@ def identify_mismatched_snps(gdl,
 
                 if prop_mismatch_above_thres > max_removed_per_iter:
                     idx_to_keep = sort_d_pval_idx[mismatch_above_thres][
-                                  int(gwas_thres_size[chrom]*max_removed_per_iter):]
+                        int(gwas_thres_size[chrom] * max_removed_per_iter) :
+                    ]
                     mismatch_above_thres[idx_to_keep] = False
 
                 # (2) Group S2: SNPs to remove from P_GWAS < threshold
@@ -604,23 +818,32 @@ def identify_mismatched_snps(gdl,
                 # Find mismatched variants below the threshold:
                 mismatch_below_thres = mismatched_snps & (~p_gwas_above_thres[chrom])
                 n_mismatch_below_thres = mismatch_below_thres.sum()
-                prop_mismatch_below_thres = n_mismatch_below_thres / (shapes[chrom] - gwas_thres_size[chrom])
+                prop_mismatch_below_thres = n_mismatch_below_thres / (
+                    shapes[chrom] - gwas_thres_size[chrom]
+                )
 
                 # For the mismatched variants below the threshold,
                 # we remove the same proportion as the variants above the threshold:
-                prop_keep_below_thres = min(max_removed_per_iter, prop_mismatch_above_thres)
+                prop_keep_below_thres = min(
+                    max_removed_per_iter, prop_mismatch_above_thres
+                )
 
                 if prop_mismatch_below_thres > prop_keep_below_thres:
                     idx_to_keep = sort_d_pval_idx[mismatch_below_thres][
-                                  int((shapes[chrom] - gwas_thres_size[chrom]) * prop_keep_below_thres):
-                                  ]
+                        int(
+                            (shapes[chrom] - gwas_thres_size[chrom])
+                            * prop_keep_below_thres
+                        ) :
+                    ]
                     mismatch_below_thres[idx_to_keep] = False
 
                 # Update the number of variants above the threshold:
                 gwas_thres_size[chrom] -= mismatch_above_thres.sum()
 
                 # Update the mismatched dictionary:
-                mismatched_dict[chrom] = (mismatched_dict[chrom] | mismatch_below_thres | mismatch_above_thres)
+                mismatched_dict[chrom] = (
+                    mismatched_dict[chrom] | mismatch_below_thres | mismatch_above_thres
+                )
 
     return mismatched_dict
 
@@ -660,7 +883,7 @@ def tree_to_rho(tree, min_corr):
     """
 
     max_depth = max(tree.depths().values())
-    tree.root.branch_length = min_corr*max_depth / (1. - min_corr)
+    tree.root.branch_length = min_corr * max_depth / (1.0 - min_corr)
     max_depth = max(tree.depths().values())
 
     for c in tree.find_clades():
@@ -685,7 +908,7 @@ def quantize(floats, int_dtype=np.int8):
 
     # Use as much in-place operations as possible
     # (Currently, we copy the data twice)
-    scaled_floats = floats*info.max
+    scaled_floats = floats * info.max
     np.round(scaled_floats, out=scaled_floats)
     np.clip(scaled_floats, info.min + 1, info.max, out=scaled_floats)
 
@@ -726,10 +949,10 @@ def multinomial_rvs(n, p):
     out = np.zeros(p.shape, dtype=int)
     ps = p.cumsum(axis=-1)
     # Conditional probabilities
-    with np.errstate(divide='ignore', invalid='ignore'):
+    with np.errstate(divide="ignore", invalid="ignore"):
         condp = p / ps
     condp[np.isnan(condp)] = 0.0
-    for i in range(p.shape[-1]-1, 0, -1):
+    for i in range(p.shape[-1] - 1, 0, -1):
         binsample = np.random.binomial(count, condp[..., i])
         out[..., i] = binsample
         count -= binsample

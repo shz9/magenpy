@@ -308,9 +308,7 @@ def test_from_hf_uses_read_only_store_for_remote_zip(monkeypatch):
     assert calls["hf_path"] == "hf://datasets/org/repo/EUR/chr_1.zip"
     assert calls["store_args"][0] == "https://example.com/chr_1.zip"
     assert calls["store_args"][1]["prefix"] == "chr_1"
-    assert calls["store_args"][1]["headers"] == {
-        "Authorization": "Bearer token"
-    }
+    assert calls["store_args"][1]["headers"] == {"Authorization": "Bearer token"}
 
 
 def test_ld_matrix_validation_does_not_require_store_listing(monkeypatch):

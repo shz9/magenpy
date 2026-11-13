@@ -2,6 +2,9 @@ name: Linux-CI
 
 on: [push, pull_request]
 
+env:
+  MAGENPY_REQUIRE_PLINK: "1"
+
 jobs:
   build:
 
@@ -29,12 +32,7 @@ jobs:
 
       - name: Install PLINK
         run: |
-          mkdir -p "$RUNNER_TEMP/plink"
-          wget -q https://s3.amazonaws.com/plink2-assets/alpha5/plink2_linux_x86_64_20240105.zip -O "$RUNNER_TEMP/plink/plink2.zip"
-          python -m zipfile -e "$RUNNER_TEMP/plink/plink2.zip" "$RUNNER_TEMP/plink"
-          wget -q https://s3.amazonaws.com/plink1-assets/plink_linux_x86_64_20231211.zip -O "$RUNNER_TEMP/plink/plink.zip"
-          python -m zipfile -e "$RUNNER_TEMP/plink/plink.zip" "$RUNNER_TEMP/plink"
-          chmod +x "$RUNNER_TEMP/plink/plink" "$RUNNER_TEMP/plink/plink2"
+          python tools/install_plink.py --destination "$RUNNER_TEMP/plink"
           echo "$RUNNER_TEMP/plink" >> "$GITHUB_PATH"
 
       - name: Install magenpy

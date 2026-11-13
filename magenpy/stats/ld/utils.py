@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 def ld_store_path(output_dir, chromosome, store_type=None):
     suffix = ".zip" if store_type == "zip" else ""
-    return osp.join(output_dir, 'chr_' + str(chromosome) + suffix)
+    return osp.join(output_dir, "chr_" + str(chromosome) + suffix)
 
 
 def move_ld_store(z_arr, target_path, overwrite=True):
@@ -33,6 +33,7 @@ def move_ld_store(z_arr, target_path, overwrite=True):
 
     if overwrite or not any(os.scandir(target_path)):
         import shutil
+
         shutil.rmtree(target_path, ignore_errors=True)
         shutil.move(source_path, target_path)
 
@@ -51,7 +52,9 @@ def delete_ld_store(ld_mat):
         logger.warning("Failed to delete LD store: %s", e)
 
 
-def combine_ld_matrices(ld_matrices, output_dir, overwrite=True, delete_original=False, store_type=None):
+def combine_ld_matrices(
+    ld_matrices, output_dir, overwrite=True, delete_original=False, store_type=None
+):
     """
     Combine the Zarr arrays underlying multiple `LDMatrix` objects into
     a single store, which will reside in `output_dir`. This function combines
@@ -77,43 +80,53 @@ def combine_ld_matrices(ld_matrices, output_dir, overwrite=True, delete_original
     total_n_snps = sum([ld.stored_n_snps for ld in ld_matrices])
     total_elements = sum([ld.data.shape[0] for ld in ld_matrices])
     compressor = ld_matrices[0].compressor
-    metadata = list(ld_matrices[0].zarr_group['metadata'].keys())
+    metadata = list(ld_matrices[0].zarr_group["metadata"].keys())
 
     # Create hierarchical storage with zarr groups:
-    store = LDMatrix._zarr_store(output_dir, mode="w" if overwrite else "a", store_type=store_type)
+    store = LDMatrix._zarr_store(
+        output_dir, mode="w" if overwrite else "a", store_type=store_type
+    )
     z = zarr.group(store=store, overwrite=overwrite)
 
     # Create sub-hierarchy to store the data of the sparse LD matrix:
-    mat = z.create_group('matrix')
-    mat.empty('data', shape=total_elements,
-              dtype=ld_matrices[0].stored_dtype,
-              compressor=compressor)
-    mat.zeros('indptr', shape=total_n_snps + 1,
-              dtype=np.int64, compressor=compressor)
+    mat = z.create_group("matrix")
+    mat.empty(
+        "data",
+        shape=total_elements,
+        dtype=ld_matrices[0].stored_dtype,
+        compressor=compressor,
+    )
+    mat.zeros("indptr", shape=total_n_snps + 1, dtype=np.int64, compressor=compressor)
 
     # Create sub-hierarchy to store the metadata for the LD matrix:
-    meta = z.create_group('metadata')
-    for meta_col, meta_zarr in ld_matrices[0].zarr_group['metadata'].items():
-
+    meta = z.create_group("metadata")
+    for meta_col, meta_zarr in ld_matrices[0].zarr_group["metadata"].items():
         if meta_zarr.dtype == object:
             meta.empty(meta_col, shape=total_n_snps, dtype=str, compressor=compressor)
         else:
-            meta.empty(meta_col, shape=total_n_snps,
-                       dtype=meta_zarr.dtype, compressor=compressor)
+            meta.empty(
+                meta_col,
+                shape=total_n_snps,
+                dtype=meta_zarr.dtype,
+                compressor=compressor,
+            )
 
     curr_n_snps = 0
     curr_n_entries = 0
 
     for ld in ld_matrices:
-
         # Copy the matrix data:
-        mat['data'][curr_n_entries:curr_n_entries + ld.data.shape[0]] = ld.data[:]
-        mat['indptr'][curr_n_snps + 1:curr_n_snps + ld.stored_n_snps + 1] = curr_n_entries + ld.indptr[1:]
+        mat["data"][curr_n_entries : curr_n_entries + ld.data.shape[0]] = ld.data[:]
+        mat["indptr"][curr_n_snps + 1 : curr_n_snps + ld.stored_n_snps + 1] = (
+            curr_n_entries + ld.indptr[1:]
+        )
 
         # Copy the metadata:
 
         for meta_col in metadata:
-            meta[meta_col][curr_n_snps:curr_n_snps + ld.stored_n_snps] = ld.zarr_group[f'metadata/{meta_col}'][:]
+            meta[meta_col][curr_n_snps : curr_n_snps + ld.stored_n_snps] = (
+                ld.zarr_group[f"metadata/{meta_col}"][:]
+            )
 
         # Update the counters:
         curr_n_snps += ld.stored_n_snps
@@ -127,11 +140,9 @@ def combine_ld_matrices(ld_matrices, output_dir, overwrite=True, delete_original
     return LDMatrix(z)
 
 
-def clump_snps(ldm: LDMatrix,
-               statistic=None,
-               rsq_threshold=.9,
-               extract=True,
-               sort_key=None):
+def clump_snps(
+    ldm: LDMatrix, statistic=None, rsq_threshold=0.9, extract=True, sort_key=None
+):
     """
     This function takes an LDMatrix object and clumps SNPs based
     on the `stat` vector (usually p-value) and the provided r-squared threshold.
@@ -167,10 +178,9 @@ def clump_snps(ldm: LDMatrix,
     snps = ldm.snps
     keep_snps = np.ones(len(snps), dtype=bool)
 
-    symm_ld = ldm.to_csr(return_symmetric=True, dtype='float32')
+    symm_ld = ldm.to_csr(return_symmetric=True, dtype="float32")
 
     for idx in sorted_idx:
-
         if not keep_snps[idx]:
             continue
 
@@ -218,12 +228,14 @@ def expand_snps(seed_snps, ldm, rsq_threshold=0.9):
 
     for idx in snp_seed_idx:
         r, indices = ldm.getrow(idx, return_indices=True)
-        final_set = final_set.union(set(ldm_snps[indices[np.where(r**2 > rsq_threshold)[0]]]))
+        final_set = final_set.union(
+            set(ldm_snps[indices[np.where(r**2 > rsq_threshold)[0]]])
+        )
 
     return list(final_set)
 
 
-def compute_extremal_eigenvalues(mat, k=1, which='both', **eigsh_kwargs):
+def compute_extremal_eigenvalues(mat, k=1, which="both", **eigsh_kwargs):
     """
     A helper function to compute the extremal eigenvalues (minimum and maximum) of the LD matrix efficiently.
     This function uses a trick to shift the eigenvalues to the right by the maximum eigenvalue
@@ -239,13 +251,13 @@ def compute_extremal_eigenvalues(mat, k=1, which='both', **eigsh_kwargs):
     :return: A dictionary containing the extremal eigenvalues of the LD matrix.
     """
 
-    assert which in ('both', 'min', 'max')
+    assert which in ("both", "min", "max")
 
-    if 'maxiter' not in eigsh_kwargs:
-        eigsh_kwargs['maxiter'] = 10000
+    if "maxiter" not in eigsh_kwargs:
+        eigsh_kwargs["maxiter"] = 10000
 
-    if 'tol' not in eigsh_kwargs:
-        eigsh_kwargs['tol'] = 1e-6
+    if "tol" not in eigsh_kwargs:
+        eigsh_kwargs["tol"] = 1e-6
 
     from scipy.sparse.linalg import eigsh, ArpackNoConvergence
     from scipy.sparse import csr_matrix, identity
@@ -253,61 +265,68 @@ def compute_extremal_eigenvalues(mat, k=1, which='both', **eigsh_kwargs):
     eig_result = {}
 
     # In all cases we need to compute the largest eigenvalue:
-    eig_result['max'] = eigsh(mat, k=k, which='LM', return_eigenvectors=False, **eigsh_kwargs)
-    max_eig = np.max(eig_result['max'])
+    eig_result["max"] = eigsh(
+        mat, k=k, which="LM", return_eigenvectors=False, **eigsh_kwargs
+    )
+    max_eig = np.max(eig_result["max"])
 
     # Compute the minimum eigenvalue (if requested):
-    if which in ('min', 'both'):
-
+    if which in ("min", "both"):
         if isinstance(mat, csr_matrix):
-            diag_shift = max_eig*identity(mat.shape[0], format='csr', dtype=mat.dtype)
+            diag_shift = max_eig * identity(mat.shape[0], format="csr", dtype=mat.dtype)
             mat -= diag_shift
         else:
             if mat.diag_shift is not None:
                 orig_diag_shift = copy.copy(mat.diag_shift)
-                mat.set_diag_shift(mat.diag_shift-max_eig)
+                mat.set_diag_shift(mat.diag_shift - max_eig)
             else:
                 orig_diag_shift = None
                 mat.set_diag_shift(-max_eig)
 
         # TODO: Try other solvers here?
         try:
-            lm_max_hat = eigsh(mat, k=k, which='LM', return_eigenvectors=False, **eigsh_kwargs)
+            lm_max_hat = eigsh(
+                mat, k=k, which="LM", return_eigenvectors=False, **eigsh_kwargs
+            )
         except ArpackNoConvergence:
             # If the solver does not converge, we can try to increase the number of iterations and the tolerance:
-            if 'maxiter' in eigsh_kwargs:
-                eigsh_kwargs['maxiter'] *= 2
+            if "maxiter" in eigsh_kwargs:
+                eigsh_kwargs["maxiter"] *= 2
 
-            if 'tol' in eigsh_kwargs:
-                eigsh_kwargs['tol'] *= 10
+            if "tol" in eigsh_kwargs:
+                eigsh_kwargs["tol"] *= 10
 
-            lm_max_hat = eigsh(mat, k=k, which='LM', return_eigenvectors=False, **eigsh_kwargs)
+            lm_max_hat = eigsh(
+                mat, k=k, which="LM", return_eigenvectors=False, **eigsh_kwargs
+            )
 
         if isinstance(mat, csr_matrix):
             mat += diag_shift
         else:
             mat.set_diag_shift(orig_diag_shift)
 
-        eig_result['min'] = lm_max_hat + max_eig
+        eig_result["min"] = lm_max_hat + max_eig
 
     if k == 1:
         for key in eig_result:
             eig_result[key] = eig_result[key][0]
 
-    if which == 'both':
+    if which == "both":
         return eig_result
     else:
         return eig_result[which]
 
 
-def multivariate_normal_conditional_sampling(ldm,
-                                             mean=None,
-                                             cov_scale=None,
-                                             size=None,
-                                             method='eigh',
-                                             threads=1,
-                                             seed=None,
-                                             max_block_size=500):
+def multivariate_normal_conditional_sampling(
+    ldm,
+    mean=None,
+    cov_scale=None,
+    size=None,
+    method="eigh",
+    threads=1,
+    seed=None,
+    max_block_size=500,
+):
     """
     Perform conditional sampling from a multivariate normal distribution where the covariance
     matrix is a linear scaling of the LD matrix. This function is useful for imputation or
@@ -339,39 +358,41 @@ def multivariate_normal_conditional_sampling(ldm,
         assert mean.shape[0] == ldm.n_snps
 
     if cov_scale is None:
-        cov_scale = 1.
+        cov_scale = 1.0
 
     rng = np.random.default_rng(seed)
 
     def sample_block(cov):
 
         try:
-            result = rng.multivariate_normal(np.zeros(cov.shape[0]),
-                                             cov,
-                                             check_valid='ignore',
-                                             size=size,
-                                             method=method)
+            result = rng.multivariate_normal(
+                np.zeros(cov.shape[0]),
+                cov,
+                check_valid="ignore",
+                size=size,
+                method=method,
+            )
         except np.linalg.LinAlgError as e:
-            if method == 'cholesky':
+            if method == "cholesky":
                 # If cholesky, try again with eigen decomposition:
-                result = rng.multivariate_normal(np.zeros(cov.shape[0]),
-                                                 cov,
-                                                 size=size,
-                                                 method='eigh')
+                result = rng.multivariate_normal(
+                    np.zeros(cov.shape[0]), cov, size=size, method="eigh"
+                )
             else:
                 raise e
 
         del cov  # Free up memory
         return result
 
-    parallel = Parallel(n_jobs=threads, backend='threading')
+    parallel = Parallel(n_jobs=threads, backend="threading")
 
     with parallel:
         x = parallel(
-            delayed(sample_block)(cov_scale*cov_block) for cov_block in ldm.iter_blocks(
-                return_type='numpy',
+            delayed(sample_block)(cov_scale * cov_block)
+            for cov_block in ldm.iter_blocks(
+                return_type="numpy",
                 return_symmetric=True,
-                dtype='float32',
+                dtype="float32",
                 max_block_size=max_block_size,
             )
         )
@@ -390,15 +411,16 @@ def multivariate_normal_conditional_sampling(ldm,
 # -------------------------------------------------------------------------
 
 
-def shrink_ld_matrix(ld_mat_obj,
-                     cm_pos,
-                     maf_var,
-                     genmap_ne,
-                     genmap_sample_size,
-                     shrinkage_cutoff=1e-3,
-                     phased_haplotype=False,
-                     chunk_size=1000):
-
+def shrink_ld_matrix(
+    ld_mat_obj,
+    cm_pos,
+    maf_var,
+    genmap_ne,
+    genmap_sample_size,
+    shrinkage_cutoff=1e-3,
+    phased_haplotype=False,
+    chunk_size=1000,
+):
     """
     Shrink the entries of the LD matrix using the shrinkage estimator
     described in Lloyd-Jones (2019) and Wen and Stephens (2010). The estimator
@@ -431,7 +453,7 @@ def shrink_ld_matrix(ld_mat_obj,
     # See also: https://github.com/stephenslab/rss/blob/master/misc/get_corr.R
     # and Wen and Stephens (2010)
 
-    mult_term = .02*genmap_ne / genmap_sample_size
+    mult_term = 0.02 * genmap_ne / genmap_sample_size
 
     def harmonic_series_sum(n):
         """
@@ -440,33 +462,41 @@ def shrink_ld_matrix(ld_mat_obj,
         Acknowledgement: https://stackoverflow.com/a/27683292
         """
         from scipy.special import digamma
+
         return digamma(n + 1) + np.euler_gamma
 
     # Compute theta according to Eq. 2.8 in Wen and Stephens (2010)
 
-    h_sum = harmonic_series_sum(2*genmap_sample_size - 1)  # The sum of the harmonic series in Eq. 2.8
-    theta = (1. / h_sum) / (2. * genmap_sample_size + 1. / h_sum)  # The theta parameter (related to mutation rate)
-    theta_factor = (1. - theta)**2  # The theta factor that we'll multiply all elements of the covariance matrix with
-    theta_diag_factor = .5 * theta * (1. - .5 * theta)  # The theta factor for the diagonal elements
+    h_sum = harmonic_series_sum(
+        2 * genmap_sample_size - 1
+    )  # The sum of the harmonic series in Eq. 2.8
+    theta = (1.0 / h_sum) / (
+        2.0 * genmap_sample_size + 1.0 / h_sum
+    )  # The theta parameter (related to mutation rate)
+    theta_factor = (
+        (1.0 - theta) ** 2
+    )  # The theta factor that we'll multiply all elements of the covariance matrix with
+    theta_diag_factor = (
+        0.5 * theta * (1.0 - 0.5 * theta)
+    )  # The theta factor for the diagonal elements
 
     # Phased haplotype/unphased genotype multiplicative factor:
     # Wen and Stephens (2010), Section 2.4
-    phased_mult = [.5, 1.][phased_haplotype]
+    phased_mult = [0.5, 1.0][phased_haplotype]
 
     # We need to turn the correlation matrix into a covariance matrix to
     # apply the shrinkage factor. For this, we have to multiply each row
     # by the product of standard deviations:
-    maf_sd = np.sqrt(phased_mult*maf_var)
+    maf_sd = np.sqrt(phased_mult * maf_var)
 
     # According to Eqs. 2.6 and 2.7 in Wen and Stephens (2010), the shrunk standard deviation should be:
-    shrunk_sd = np.sqrt(theta_factor*maf_var*phased_mult + theta_diag_factor)
+    shrunk_sd = np.sqrt(theta_factor * maf_var * phased_mult + theta_diag_factor)
 
     global_indptr = ld_mat_obj.indptr
 
     for chunk_idx in range(int(np.ceil(len(ld_mat_obj) / chunk_size))):
-
-        start_row = chunk_idx*chunk_size
-        end_row = min((chunk_idx+1)*chunk_size, len(ld_mat_obj))
+        start_row = chunk_idx * chunk_size
+        end_row = min((chunk_idx + 1) * chunk_size, len(ld_mat_obj))
 
         # Load the subset of the LD matrix specified by chunk_size.
         csr_mat = ld_mat_obj.load_data(
@@ -476,33 +506,38 @@ def shrink_ld_matrix(ld_mat_obj,
             return_square=False,
             keep_original_shape=True,
             return_as_csr=True,
-            dtype=np.float32
+            dtype=np.float32,
         )
 
         # Get the relevant portion of indices and pointers from the CSR matrix:
-        indptr = global_indptr[start_row:end_row+1]
+        indptr = global_indptr[start_row : end_row + 1]
 
-        row_indices = np.concatenate([
-            (start_row + r_idx)*np.ones(indptr[r_idx+1] - indptr[r_idx], dtype=int)
-            for r_idx in range(len(indptr) - 1)
-        ])
+        row_indices = np.concatenate(
+            [
+                (start_row + r_idx)
+                * np.ones(indptr[r_idx + 1] - indptr[r_idx], dtype=int)
+                for r_idx in range(len(indptr) - 1)
+            ]
+        )
 
         # Compute the shrinkage factor for entries in the current block:
-        shrink_factor = np.exp(-mult_term*np.abs(cm_pos[csr_mat.indices] - cm_pos[row_indices]))
+        shrink_factor = np.exp(
+            -mult_term * np.abs(cm_pos[csr_mat.indices] - cm_pos[row_indices])
+        )
         # Set shrinkage factors below the cutoff value to 0.:
-        shrink_factor[shrink_factor < shrinkage_cutoff] = 0.
+        shrink_factor[shrink_factor < shrinkage_cutoff] = 0.0
         # Compute the theta multiplicative factor following Eq. 2.6 in Wen and Stephens (2010)
         shrink_factor *= theta_factor
 
         # The factor to convert the entries of the correlation matrix into corresponding covariances:
-        to_cov_factor = maf_sd[row_indices]*maf_sd[csr_mat.indices]
+        to_cov_factor = maf_sd[row_indices] * maf_sd[csr_mat.indices]
 
         # Compute the new denominator for the Pearson correlation:
         # The shrunk standard deviation of SNP j multiplied by the shrunk standard deviations of each neighbor:
-        shrunk_sd_prod = shrunk_sd[row_indices]*shrunk_sd[csr_mat.indices]
+        shrunk_sd_prod = shrunk_sd[row_indices] * shrunk_sd[csr_mat.indices]
 
         # Finally, compute the shrunk LD matrix entries:
-        csr_mat.data *= to_cov_factor*shrink_factor / shrunk_sd_prod
+        csr_mat.data *= to_cov_factor * shrink_factor / shrunk_sd_prod
 
         # Update the LD matrix object inplace:
         ld_mat_obj.update_rows_inplace(csr_mat, start_row=start_row, end_row=end_row)
@@ -510,7 +545,7 @@ def shrink_ld_matrix(ld_mat_obj,
     return ld_mat_obj
 
 
-def estimate_rows_per_chunk(rows, cols, dtype='int16', mem_size=128):
+def estimate_rows_per_chunk(rows, cols, dtype="int16", mem_size=128):
     """
     Estimate the number of rows per chunk for matrices conditional on the desired size of the chunk in MB.
     The estimator takes as input the number of rows, columns, data type, and projected size of the chunk in memory.
@@ -523,24 +558,25 @@ def estimate_rows_per_chunk(rows, cols, dtype='int16', mem_size=128):
     :return: The estimated number of rows per chunk.
     """
 
-    matrix_size = rows * cols * np.dtype(dtype).itemsize / 1024 ** 2
+    matrix_size = rows * cols * np.dtype(dtype).itemsize / 1024**2
     n_chunks = max(1, matrix_size // mem_size)
 
     return rows // n_chunks
 
 
-def compute_ld_plink1p9(genotype_matrix,
-                        ld_boundaries,
-                        output_dir,
-                        window_size_thresholds,
-                        trim_boundaries=False,
-                        temp_dir='temp',
-                        overwrite=True,
-                        dtype='int16',
-                        compressor_name='zstd',
-                        compression_level=7,
-                        store_type=None):
-
+def compute_ld_plink1p9(
+    genotype_matrix,
+    ld_boundaries,
+    output_dir,
+    window_size_thresholds,
+    trim_boundaries=False,
+    temp_dir="temp",
+    overwrite=True,
+    dtype="int16",
+    compressor_name="zstd",
+    compression_level=7,
+    store_type=None,
+):
     """
     Compute LD matrices using plink 1.9.
 
@@ -567,16 +603,16 @@ def compute_ld_plink1p9(genotype_matrix,
 
     plink1 = plink1Executor()
 
-    keep_file = osp.join(temp_dir, 'samples.keep')
+    keep_file = osp.join(temp_dir, "samples.keep")
     keep_table = genotype_matrix.sample_table.get_individual_table()
     keep_table.to_csv(keep_file, index=False, header=False, sep="\t")
 
-    snp_keepfile = osp.join(temp_dir, 'variants.keep')
-    pd.DataFrame({'SNP': genotype_matrix.snps}).to_csv(
+    snp_keepfile = osp.join(temp_dir, "variants.keep")
+    pd.DataFrame({"SNP": genotype_matrix.snps}).to_csv(
         snp_keepfile, index=False, header=False
     )
 
-    plink_output = osp.join(temp_dir, f'chr_{str(genotype_matrix.chromosome)}')
+    plink_output = osp.join(temp_dir, f"chr_{str(genotype_matrix.chromosome)}")
 
     cmd = [
         f"--bfile {genotype_matrix.bed_file.replace('.bed', '')}",
@@ -586,10 +622,10 @@ def compute_ld_plink1p9(genotype_matrix,
         f"--out {plink_output}",
         "--r gz",
         f"--ld-window {window_size_thresholds['window_size']}",
-        f"--ld-window-kb {window_size_thresholds['kb_window_size']}"
+        f"--ld-window-kb {window_size_thresholds['kb_window_size']}",
     ]
 
-    if 'cm_window_size' in window_size_thresholds:
+    if "cm_window_size" in window_size_thresholds:
         cmd.append(f"--ld-window-cm {window_size_thresholds['cm_window_size']}")
 
     # ---------------------------------------------------------
@@ -620,42 +656,49 @@ def compute_ld_plink1p9(genotype_matrix,
     plink1.execute(cmd)
 
     # Convert from PLINK LD files to Zarr:
-    fin_ld_store = ld_store_path(output_dir, genotype_matrix.chromosome, store_type=store_type)
+    fin_ld_store = ld_store_path(
+        output_dir, genotype_matrix.chromosome, store_type=store_type
+    )
 
     # Compute the pandas chunk_size
     # The goal of this is to process chunks of the LD table without overwhelming memory resources:
     avg_ncols = int((ld_boundaries[1, :] - ld_boundaries[0, :]).mean())
     # NOTE: Estimate the rows per chunk using float32 because that's how we'll read the data from plink:
-    rows_per_chunk = estimate_rows_per_chunk(ld_boundaries.shape[1], avg_ncols, dtype=np.float32)
+    rows_per_chunk = estimate_rows_per_chunk(
+        ld_boundaries.shape[1], avg_ncols, dtype=np.float32
+    )
 
-    if rows_per_chunk > 0.1*ld_boundaries.shape[1]:
+    if rows_per_chunk > 0.1 * ld_boundaries.shape[1]:
         pandas_chunksize = None
     else:
-        pandas_chunksize = rows_per_chunk*avg_ncols // 2
+        pandas_chunksize = rows_per_chunk * avg_ncols // 2
 
-    return LDMatrix.from_plink_table(f"{plink_output}.ld.gz",
-                                     genotype_matrix.snps,
-                                     fin_ld_store,
-                                     ld_boundaries=[None, ld_boundaries][trim_boundaries],
-                                     pandas_chunksize=pandas_chunksize,
-                                     overwrite=overwrite,
-                                     dtype=dtype,
-                                     compressor_name=compressor_name,
-                                     compression_level=compression_level,
-                                     store_type=store_type)
+    return LDMatrix.from_plink_table(
+        f"{plink_output}.ld.gz",
+        genotype_matrix.snps,
+        fin_ld_store,
+        ld_boundaries=[None, ld_boundaries][trim_boundaries],
+        pandas_chunksize=pandas_chunksize,
+        overwrite=overwrite,
+        dtype=dtype,
+        compressor_name=compressor_name,
+        compression_level=compression_level,
+        store_type=store_type,
+    )
 
 
-def compute_ld_magenpy(genotype_matrix,
-                       ld_boundaries,
-                       output_dir,
-                       allele_frequencies=None,
-                       impute_missing=True,
-                       overwrite=True,
-                       dtype='int16',
-                       compressor_name='zstd',
-                       compression_level=7,
-                       store_type=None):
-
+def compute_ld_magenpy(
+    genotype_matrix,
+    ld_boundaries,
+    output_dir,
+    allele_frequencies=None,
+    impute_missing=True,
+    overwrite=True,
+    dtype="int16",
+    compressor_name="zstd",
+    compression_level=7,
+    store_type=None,
+):
     """
     Compute LD directly from a PLINK BED file using magenpy's native C++ BED
     kernel, and store the result as an upper-triangular sparse LDMatrix.
@@ -692,26 +735,28 @@ def compute_ld_magenpy(genotype_matrix,
     sample_indices = np.ascontiguousarray(genotype_matrix.sample_index, dtype=np.int32)
     ld_boundaries_end = np.ascontiguousarray(ld_boundaries[1, :], dtype=np.int32)
     allele_frequencies = genotype_matrix._resolve_allele_frequencies(
-        allele_frequencies=allele_frequencies,
-        for_selected_snps=False
+        allele_frequencies=allele_frequencies, for_selected_snps=False
     )
 
-    fin_ld_store = ld_store_path(output_dir, genotype_matrix.chromosome, store_type=store_type)
+    fin_ld_store = ld_store_path(
+        output_dir, genotype_matrix.chromosome, store_type=store_type
+    )
 
     row_indices = np.arange(m, dtype=np.int64)
     indptr_counts = np.maximum(
-        ld_boundaries_end.astype(np.int64) - (row_indices + 1),
-        0
+        ld_boundaries_end.astype(np.int64) - (row_indices + 1), 0
     ).astype(np.int64)
     indptr = np.insert(np.cumsum(indptr_counts, dtype=np.int64), 0, 0)
     total_len = int(indptr[-1])
 
-    store = LDMatrix._zarr_store(fin_ld_store, mode="w" if overwrite else "a", store_type=store_type)
+    store = LDMatrix._zarr_store(
+        fin_ld_store, mode="w" if overwrite else "a", store_type=store_type
+    )
     z = zarr.group(store=store, overwrite=overwrite)
     compressor = zarr.Blosc(cname=compressor_name, clevel=compression_level)
-    mat = z.create_group('matrix')
-    mat.empty('data', shape=total_len, dtype=dtype, compressor=compressor)
-    mat.array('indptr', indptr, dtype=np.int64, compressor=compressor)
+    mat = z.create_group("matrix")
+    mat.empty("data", shape=total_len, dtype=dtype, compressor=compressor)
+    mat.array("indptr", indptr, dtype=np.int64, compressor=compressor)
 
     compute_dtype = np.float64 if dtype == np.dtype(np.float64) else np.float32
     ld_values = compute_ut_ld_from_bed(
@@ -724,27 +769,28 @@ def compute_ld_magenpy(genotype_matrix,
         allele_frequencies,
         impute_missing=impute_missing,
         threads=genotype_matrix.threads,
-        dtype=compute_dtype
+        dtype=compute_dtype,
     )
 
     if np.issubdtype(dtype, np.integer):
-        mat['data'][:] = quantize(ld_values, int_dtype=dtype)
+        mat["data"][:] = quantize(ld_values, int_dtype=dtype)
     else:
-        mat['data'][:] = ld_values.astype(dtype, copy=False)
+        mat["data"][:] = ld_values.astype(dtype, copy=False)
 
     return LDMatrix(z)
 
 
-def compute_ld_bed_reader(genotype_matrix,
-                          ld_boundaries,
-                          output_dir,
-                          allele_frequencies=None,
-                          overwrite=True,
-                          dtype='int16',
-                          compressor_name='zstd',
-                          compression_level=7,
-                          store_type=None):
-
+def compute_ld_bed_reader(
+    genotype_matrix,
+    ld_boundaries,
+    output_dir,
+    allele_frequencies=None,
+    overwrite=True,
+    dtype="int16",
+    compressor_name="zstd",
+    compression_level=7,
+    store_type=None,
+):
     """
     Compute LD from a PLINK BED file using the bed-reader backend, and store
     the result as an upper-triangular sparse LDMatrix.
@@ -802,14 +848,18 @@ def compute_ld_bed_reader(genotype_matrix,
     indptr = np.insert(np.cumsum(indptr_counts, dtype=np.int64), 0, 0)
     total_len = int(indptr[-1])
 
-    fin_ld_store = ld_store_path(output_dir, genotype_matrix.chromosome, store_type=store_type)
+    fin_ld_store = ld_store_path(
+        output_dir, genotype_matrix.chromosome, store_type=store_type
+    )
 
-    store = LDMatrix._zarr_store(fin_ld_store, mode="w" if overwrite else "a", store_type=store_type)
+    store = LDMatrix._zarr_store(
+        fin_ld_store, mode="w" if overwrite else "a", store_type=store_type
+    )
     z = zarr.group(store=store, overwrite=overwrite)
     compressor = zarr.Blosc(cname=compressor_name, clevel=compression_level)
-    mat = z.create_group('matrix')
-    mat.empty('data', shape=total_len, dtype=dtype, compressor=compressor)
-    mat.array('indptr', indptr, dtype=np.int64, compressor=compressor)
+    mat = z.create_group("matrix")
+    mat.empty("data", shape=total_len, dtype=dtype, compressor=compressor)
+    mat.array("indptr", indptr, dtype=np.int64, compressor=compressor)
 
     max_window = int(indptr_counts.max()) if m > 0 else 1
     rows_per_chunk = estimate_rows_per_chunk(m, max(1, max_window), dtype=np.float32)
@@ -838,36 +888,33 @@ def compute_ld_bed_reader(genotype_matrix,
             continue
 
         col_offsets = np.arange(corr.shape[1], dtype=np.int64)
-        keep = (
-            (col_offsets.reshape(1, -1) >= row_offsets.reshape(-1, 1))
-            & (
-                col_offsets.reshape(1, -1)
-                < (row_offsets + row_lengths).reshape(-1, 1)
-            )
+        keep = (col_offsets.reshape(1, -1) >= row_offsets.reshape(-1, 1)) & (
+            col_offsets.reshape(1, -1) < (row_offsets + row_lengths).reshape(-1, 1)
         )
         data = corr[keep]
 
         if np.issubdtype(dtype, np.integer):
-            mat['data'][offset:offset + chunk_len] = quantize(data, int_dtype=dtype)
+            mat["data"][offset : offset + chunk_len] = quantize(data, int_dtype=dtype)
         else:
-            mat['data'][offset:offset + chunk_len] = data.astype(dtype)
+            mat["data"][offset : offset + chunk_len] = data.astype(dtype)
 
         offset += chunk_len
 
     return LDMatrix(z)
 
 
-def compute_ld_xarray(genotype_matrix,
-                      ld_boundaries,
-                      output_dir,
-                      temp_dir='temp',
-                      overwrite=True,
-                      delete_original=True,
-                      dtype='int16',
-                      compressor_name='zstd',
-                      compression_level=7,
-                      store_type=None):
-
+def compute_ld_xarray(
+    genotype_matrix,
+    ld_boundaries,
+    output_dir,
+    temp_dir="temp",
+    overwrite=True,
+    delete_original=True,
+    dtype="int16",
+    compressor_name="zstd",
+    compression_level=7,
+    store_type=None,
+):
     """
     Compute the Linkage Disequilibrium matrix or snp-by-snp
     correlation matrix assuming that the genotypes are represented
@@ -918,7 +965,6 @@ def compute_ld_xarray(genotype_matrix,
 
     # Ignore performance-related warnings from Dask:
     with warnings.catch_warnings():
-
         if np.issubdtype(np.dtype(dtype), np.integer):
             # If the requested data type is integer, we need to convert
             # the data to `float32` to avoid overflow errors when computing the dot product:
@@ -927,19 +973,25 @@ def compute_ld_xarray(genotype_matrix,
             dot_dtype = dtype
 
         warnings.simplefilter("ignore")
-        ld_mat = (da.dot(g_mat.T, g_mat) / genotype_matrix.sample_size).astype(dot_dtype)
+        ld_mat = (da.dot(g_mat.T, g_mat) / genotype_matrix.sample_size).astype(
+            dot_dtype
+        )
         ld_mat.to_zarr(temp_dir, overwrite=overwrite)
 
-    fin_ld_store = ld_store_path(output_dir, genotype_matrix.chromosome, store_type=store_type)
+    fin_ld_store = ld_store_path(
+        output_dir, genotype_matrix.chromosome, store_type=store_type
+    )
 
     # Load the dense matrix and transform it to a sparse matrix using utilities implemented in the
     # `LDMatrix` class:
-    return LDMatrix.from_dense_zarr_matrix(temp_dir,
-                                           ld_boundaries,
-                                           fin_ld_store,
-                                           overwrite=overwrite,
-                                           delete_original=delete_original,
-                                           dtype=dtype,
-                                           compressor_name=compressor_name,
-                                           compression_level=compression_level,
-                                           store_type=store_type)
+    return LDMatrix.from_dense_zarr_matrix(
+        temp_dir,
+        ld_boundaries,
+        fin_ld_store,
+        overwrite=overwrite,
+        delete_original=delete_original,
+        dtype=dtype,
+        compressor_name=compressor_name,
+        compression_level=compression_level,
+        store_type=store_type,
+    )

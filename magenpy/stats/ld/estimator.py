@@ -142,15 +142,15 @@ class SampleLD:
                 cm_bounds = self.genotype_matrix.cm_pos[positional_bounds]
                 threshold_dict["cm_window_size"] = np.abs(cm_bounds - cm_pos).max()
             except KeyError:
-                del threshold_dict["cm_window_size"]
+                threshold_dict.pop("cm_window_size", None)
 
         if self.estimator_id == "sample":
             # If we're using the sample estimator, then expand the plink thresholds slightly
             # to avoid the program dropping LD between variants at the extreme ends:
             for key, val in threshold_dict.items():
                 threshold_dict[key] = val * 1.05
-                if isinstance(val, int):
-                    threshold_dict[key] = int(threshold_dict[key])
+                if key == "window_size":
+                    threshold_dict[key] = int(np.ceil(threshold_dict[key]))
 
         return threshold_dict
 
@@ -757,13 +757,9 @@ class BlockLD(SampleLD):
 
         # Assign each variant to the block with the nearest preceding start.
         # Gaps between blocks are allowed; variants in those gaps are excluded.
-        block_index = np.searchsorted(
-            self.ld_blocks[:, 0], positions, side="right"
-        ) - 1
+        block_index = np.searchsorted(self.ld_blocks[:, 0], positions, side="right") - 1
         safe_index = np.maximum(block_index, 0)
-        matched = (block_index >= 0) & (
-            positions < self.ld_blocks[safe_index, 1]
-        )
+        matched = (block_index >= 0) & (positions < self.ld_blocks[safe_index, 1])
 
         variants_to_blocks = pd.DataFrame(
             {
@@ -814,7 +810,9 @@ class BlockLD(SampleLD):
         blocks = np.asarray(ld_blocks)
         if blocks.ndim != 2 or blocks.shape[1] != 2 or len(blocks) == 0:
             raise ValueError("LD blocks must be a non-empty array with two columns.")
-        if not np.issubdtype(blocks.dtype, np.number) or not np.all(np.isfinite(blocks)):
+        if not np.issubdtype(blocks.dtype, np.number) or not np.all(
+            np.isfinite(blocks)
+        ):
             raise ValueError("LD block boundaries must be finite numbers.")
 
         blocks = blocks.astype(np.int64, copy=False)

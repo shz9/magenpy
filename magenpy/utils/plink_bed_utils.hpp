@@ -33,14 +33,11 @@ struct PlinkDosageLookup {
                 // For A1-like dosages this maps to 2, NA, 1, 0.
                 if (code == 0) {
                     value = 2;
-                }
-                else if (code == 2) {
+                } else if (code == 2) {
                     value = 1;
-                }
-                else if (code == 3) {
+                } else if (code == 3) {
                     value = 0;
-                }
-                else {
+                } else {
                     value = -1;
                 }
 
@@ -59,7 +56,7 @@ inline std::streamoff plink_bed_variant_stride(int total_samples) {
     return (static_cast<std::streamoff>(total_samples) + 3) / 4;
 }
 
-inline void validate_plink_bed_file(const std::string& bed_filename) {
+inline void validate_plink_bed_file(const std::string &bed_filename) {
     std::ifstream initial_file(bed_filename, std::ios::binary);
     if (!initial_file.is_open()) {
         throw std::runtime_error("Error opening BED file.");
@@ -70,14 +67,14 @@ inline void validate_plink_bed_file(const std::string& bed_filename) {
     if (!initial_file) {
         throw std::runtime_error("Could not read BED file header.");
     }
-    if (magic_number[0] != '\x6C' || magic_number[1] != '\x1B' || magic_number[2] != '\x01') {
+    if (magic_number[0] != '\x6C' || magic_number[1] != '\x1B' ||
+        magic_number[2] != '\x01') {
         throw std::runtime_error("Invalid PLINK BED file.");
     }
 }
 
 inline std::vector<SelectedSampleByte>
-group_selected_samples_by_byte(const int* sample_indices,
-                               int total_samples,
+group_selected_samples_by_byte(const int *sample_indices, int total_samples,
                                int num_samples) {
 
     std::vector<SelectedSampleByte> groups;
@@ -115,17 +112,16 @@ group_selected_samples_by_byte(const int* sample_indices,
     return groups;
 }
 
-inline void read_plink_bed_row(std::ifstream& bed_file,
-                               int snp_index,
+inline void read_plink_bed_row(std::ifstream &bed_file, int snp_index,
                                std::streamoff variant_stride,
-                               unsigned char* row_buffer) {
+                               unsigned char *row_buffer) {
     if (snp_index < 0) {
         throw std::out_of_range("SNP index must be non-negative.");
     }
 
     bed_file.seekg(3 + static_cast<std::streamoff>(snp_index) * variant_stride,
                    std::ios::beg);
-    bed_file.read(reinterpret_cast<char*>(row_buffer),
+    bed_file.read(reinterpret_cast<char *>(row_buffer),
                   static_cast<std::streamsize>(variant_stride));
 
     if (!bed_file) {

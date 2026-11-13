@@ -3,6 +3,11 @@ import logging
 import numpy as np
 import pandas as pd
 
+from .utils.chromosome_utils import (
+    get_present_chromosomes,
+    is_normalized_chromosome_dtype,
+    normalize_chromosome_column,
+)
 from .utils.compute_utils import intersect_arrays
 
 logger = logging.getLogger(__name__)
@@ -40,6 +45,10 @@ class SumstatsTable:
             * [from_file][magenpy.SumstatsTable.SumstatsTable.from_file]
         """
         self.table: pd.DataFrame = ss_table
+        if "CHR" in self.table and not is_normalized_chromosome_dtype(
+            self.table["CHR"].dtype
+        ):
+            normalize_chromosome_column(self.table)
         self.genome_build = genome_build
 
         # Check that the table contains some of the required columns (non-exhaustive):
@@ -88,7 +97,7 @@ class SumstatsTable:
         :return: The unique chromosomes in the summary statistics table.
         """
         if "CHR" in self.table.columns:
-            return sorted(self.table["CHR"].unique())
+            return get_present_chromosomes(self.table["CHR"]).tolist()
 
     @property
     def m(self):
@@ -655,12 +664,12 @@ class SumstatsTable:
         """
 
         if "CHR" in self.table.columns:
-            chromosomes = self.table["CHR"].dropna().unique()
+            chromosomes = get_present_chromosomes(self.table["CHR"], dropna=False)
 
             # Summary-statistics files are frequently already chromosome-
             # specific. In that case there is nothing to group, but retain the
             # method's established copy semantics.
-            if len(chromosomes) == 1 and not self.table["CHR"].isna().any():
+            if len(chromosomes) == 1 and pd.notna(chromosomes[0]):
                 return {
                     chromosomes[0]: SumstatsTable(
                         self.table.copy(), genome_build=self.genome_build
@@ -669,7 +678,7 @@ class SumstatsTable:
 
             return {
                 c: SumstatsTable(table.copy(), genome_build=self.genome_build)
-                for c, table in self.table.groupby("CHR", sort=True)
+                for c, table in self.table.groupby("CHR", sort=True, observed=True)
             }
         elif snps_per_chrom is not None:
             chrom_dict = {
@@ -682,6 +691,7 @@ class SumstatsTable:
 
             for c, ss_tab in chrom_dict.items():
                 ss_tab.table["CHR"] = c
+                normalize_chromosome_column(ss_tab.table)
 
             return chrom_dict
         else:

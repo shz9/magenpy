@@ -3,6 +3,7 @@
 .pytest_cache
 .tox
 .venv
+.uv*/
 build
 dist
 site
@@ -17,6 +18,7 @@ __pycache__
 
 docs
 examples
-tests
 temp
 containers
+
+backend-validation.xml

@@ -81,9 +81,9 @@ def manhattan(
         if highlight_snps is not None:
             assert "SNP" in input_data.columns
 
-        input_data = {c: ss for c, ss in input_data.groupby("CHR")}
+        input_data = {c: ss for c, ss in input_data.groupby("CHR", observed=True)}
     else:
-        raise ValueError(
+        raise TypeError(
             "The input data must be an instance of `SumstatsTable`, `GWADataLoader` "
             "or a `pandas.DataFrame`."
         )

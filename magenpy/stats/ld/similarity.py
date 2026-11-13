@@ -21,6 +21,7 @@ import pandas as pd
 
 from ...LDMatrix import LDMatrix
 from ...SumstatsTable import SumstatsTable
+from ...utils.chromosome_utils import get_present_chromosomes
 from ...utils.compute_utils import intersect_multiple_arrays
 from ...utils.model_utils import match_chromosomes, merge_snp_tables
 
@@ -100,9 +101,7 @@ def _prepare_inputs(sumstats, ld_matrices, labels):
     else:
         raise TypeError("`sumstats` must be a SumstatsTable or pandas DataFrame.")
 
-    matrices, labels = _normalise_candidates(
-        ld_matrices, labels, LDMatrix, "LD matrix"
-    )
+    matrices, labels = _normalise_candidates(ld_matrices, labels, LDMatrix, "LD matrix")
 
     # A regional comparison is meaningful only when every candidate describes
     # the same chromosome. Missing chromosome metadata is tolerated because
@@ -124,7 +123,7 @@ def _prepare_inputs(sumstats, ld_matrices, labels):
     # position-based matching uses identical chromosome keys.
     if chromosomes and "CHR" in table:
         sumstats_chrom, _ = match_chromosomes(
-            table["CHR"].unique(), [chromosomes[0]], return_both=True
+            get_present_chromosomes(table["CHR"]), [chromosomes[0]], return_both=True
         )
         table = table.loc[table["CHR"].isin(sumstats_chrom)].copy()
         if len(sumstats_chrom):
@@ -180,9 +179,7 @@ def _prepare_data_loaders(data_loaders, labels):
         keys = [chromosome]
         for gdl in loaders[1:]:
             available = set(gdl.ld).intersection(gdl.sumstats_table)
-            _, matched = match_chromosomes(
-                [chromosome], available, return_both=True
-            )
+            _, matched = match_chromosomes([chromosome], available, return_both=True)
             if not len(matched):
                 break
             keys.append(matched[0])
@@ -285,7 +282,9 @@ def _align_sumstats(sumstats, ld_matrices):
     common = intersect_multiple_arrays(
         [frame["ALT_IDX"].to_numpy() for frame in aligned]
     )
-    aligned = [frame.set_index("ALT_IDX").loc[common].reset_index() for frame in aligned]
+    aligned = [
+        frame.set_index("ALT_IDX").loc[common].reset_index() for frame in aligned
+    ]
 
     # All downstream block indices refer to this shared physical ordering.
     if len(common):
@@ -388,10 +387,7 @@ def _frequency_scores(aligned, af_scale, block_size, n_blocks):
     selected = np.concatenate(blocks)
     aligned = [frame.iloc[selected].reset_index(drop=True) for frame in aligned]
     distances = np.array(
-        [
-            np.sqrt(np.mean((frame["MAF"] - frame["LD_MAF"]) ** 2))
-            for frame in aligned
-        ]
+        [np.sqrt(np.mean((frame["MAF"] - frame["LD_MAF"]) ** 2)) for frame in aligned]
     )
     return (
         aligned,
@@ -500,14 +496,11 @@ def _ld_likelihood_scores(
 
     # Convert pandas columns and masks once per candidate rather than once for
     # every candidate/block pair. Clipping is likewise block-independent.
-    z_values = [
-        frame["Z"].to_numpy(dtype=float, copy=False) for frame in aligned
-    ]
+    z_values = [frame["Z"].to_numpy(dtype=float, copy=False) for frame in aligned]
     if z_clip is not None:
         z_values = [np.clip(values, -z_clip, z_clip) for values in z_values]
     ld_indices = [
-        frame["LD_INDEX"].to_numpy(dtype=np.int64, copy=False)
-        for frame in aligned
+        frame["LD_INDEX"].to_numpy(dtype=np.int64, copy=False) for frame in aligned
     ]
     visible_indices = [
         np.flatnonzero(ldm.get_mask()) if ldm.is_mask_set else None
@@ -519,9 +512,7 @@ def _ld_likelihood_scores(
     for block in blocks:
         for i, ldm in enumerate(ld_matrices):
             z = z_values[i][block]
-            covariance = _load_ld_block(
-                ldm, ld_indices[i][block], visible_indices[i]
-            )
+            covariance = _load_ld_block(ldm, ld_indices[i][block], visible_indices[i])
             covariance *= 1 - regularization
             covariance.flat[:: len(block) + 1] += regularization
             try:
@@ -617,9 +608,7 @@ def _score_regions(
     aggregate = np.zeros(n_candidates)
     total_variants = total_blocks = 0
 
-    for aligned, matrices, region_blocks in zip(
-        regions, matrix_regions, allocation
-    ):
+    for aligned, matrices, region_blocks in zip(regions, matrix_regions, allocation):
         if region_blocks == 0:
             continue
         if method == "frequency":
@@ -647,7 +636,12 @@ def _score_regions(
     # Convert accumulated values back to the public score scale.
     if method == "frequency" and total_variants:
         aggregate = np.sqrt(aggregate / total_variants)
-        return -0.5 * (aggregate / af_scale) ** 2, aggregate, total_blocks, total_variants
+        return (
+            -0.5 * (aggregate / af_scale) ** 2,
+            aggregate,
+            total_blocks,
+            total_variants,
+        )
 
     scores = aggregate / total_variants if total_variants else aggregate
     return scores, np.full(n_candidates, np.nan), total_blocks, total_variants
@@ -770,7 +764,9 @@ def compute_ld_sumstats_similarity(
     if method not in {"auto", "frequency", "ld_likelihood"}:
         raise ValueError("Unknown similarity method.")
     if min_variants < 2 or not np.isfinite(temperature) or temperature <= 0:
-        raise ValueError("`min_variants` must be at least 2 and `temperature` positive.")
+        raise ValueError(
+            "`min_variants` must be at least 2 and `temperature` positive."
+        )
     if block_size < 2 or n_blocks < 1 or min_variants > block_size * n_blocks:
         raise ValueError(
             "Require `block_size >= 2`, `n_blocks >= 1`, and "
@@ -786,17 +782,13 @@ def compute_ld_sumstats_similarity(
             raise ValueError(
                 "Pass either `data_loaders` or `sumstats` with `ld_matrices`, not both."
             )
-        regions, matrix_regions, labels = _prepare_data_loaders(
-            data_loaders, labels
-        )
+        regions, matrix_regions, labels = _prepare_data_loaders(data_loaders, labels)
     else:
         if sumstats is None or ld_matrices is None:
             raise ValueError(
                 "Pass `sumstats` and `ld_matrices`, or use `data_loaders`."
             )
-        sumstats, matrices, labels = _prepare_inputs(
-            sumstats, ld_matrices, labels
-        )
+        sumstats, matrices, labels = _prepare_inputs(sumstats, ld_matrices, labels)
         regions = [_align_sumstats(sumstats, matrices)]
         matrix_regions = [matrices]
 

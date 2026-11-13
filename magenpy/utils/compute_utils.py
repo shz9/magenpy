@@ -46,7 +46,6 @@ def split_block_boundaries(block_iter, max_block_size, mask=None):
     new_block_iter = [0]
 
     for bidx in range(len(block_iter) - 1):
-
         # Get the block boundaries:
         start = block_iter[bidx]
         end = block_iter[bidx + 1]
@@ -63,9 +62,10 @@ def split_block_boundaries(block_iter, max_block_size, mask=None):
             # Determine the number of blocks:
             n_blocks = int(np.ceil(original_block_size / max_block_size))
 
-            new_block_iter += list(new_block_iter[-1] + np.linspace(0,
-                                                                    original_block_size,
-                                                                    n_blocks + 1, dtype=int)[1:])
+            new_block_iter += list(
+                new_block_iter[-1]
+                + np.linspace(0, original_block_size, n_blocks + 1, dtype=int)[1:]
+            )
 
         else:
             new_block_iter.append((end - start) + new_block_iter[-1])
@@ -88,14 +88,16 @@ def intersect_arrays(arr1, arr2, return_index=False):
 
     # NOTE: For best and consistent results, we cast all data types to `str`
     # for now. May need a smarter solution in the future.
-    common_elements = pd.DataFrame({'ID': arr1}, dtype=str).reset_index().merge(
-        pd.DataFrame({'ID': arr2}, dtype=str)
+    common_elements = (
+        pd.DataFrame({"ID": arr1}, dtype=str)
+        .reset_index()
+        .merge(pd.DataFrame({"ID": arr2}, dtype=str))
     )
 
     if return_index:
-        return common_elements['index'].values
+        return common_elements["index"].values
     else:
-        return common_elements['ID'].values
+        return common_elements["ID"].values
 
 
 def intersect_multiple_arrays(arrays):
@@ -131,7 +133,7 @@ def generate_overlapping_windows(seq, window_size, step_size, min_window_size=1)
 
     # Find the indices where each window starts and ends
     start_indices = np.searchsorted(seq, starts)
-    end_indices = np.searchsorted(seq, starts + window_size, side='right')
+    end_indices = np.searchsorted(seq, starts + window_size, side="right")
 
     # Ensure that the last window is not truncated and split it if necessary:
     if end_indices[-1] < seq.shape[0]:
@@ -159,7 +161,7 @@ def detect_header_keywords(fname, keywords):
     if isinstance(keywords, str):
         keywords = [keywords]
 
-    with open(fname, 'r') as f:
+    with open(fname, "r") as f:
         line = f.readline().strip()
 
     return any([kw in line for kw in keywords])
@@ -187,7 +189,4 @@ def iterable(arg):
 
     import collections.abc
 
-    return (
-        isinstance(arg, collections.abc.Iterable)
-        and not isinstance(arg, str)
-    )
+    return isinstance(arg, collections.abc.Iterable) and not isinstance(arg, str)

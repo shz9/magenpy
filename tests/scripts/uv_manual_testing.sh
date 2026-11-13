@@ -4,7 +4,7 @@
 # May be useful for sanity checks before pushing changes to the repository.
 #
 # Usage:
-# $ bash tests/uv_manual_testing.sh
+# $ bash tests/scripts/uv_manual_testing.sh
 #
 # Optional environment variables:
 #   PYTHON_VERSIONS="3.10 3.11"  Override the default Python versions.
@@ -20,7 +20,7 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+PROJECT_ROOT="$( cd "$SCRIPT_DIR/../.." && pwd )"
 ENV_ROOT="${UV_TEST_ENV_DIR:-$PROJECT_ROOT/.uv-test-envs}"
 
 echo "Running tests from: $SCRIPT_DIR"
@@ -28,7 +28,7 @@ echo "Project root: $PROJECT_ROOT"
 echo "Virtualenv root: $ENV_ROOT"
 
 # Define Python versions. Override with:
-#   PYTHON_VERSIONS="3.10 3.11" bash tests/uv_manual_testing.sh
+#   PYTHON_VERSIONS="3.10 3.11" bash tests/scripts/uv_manual_testing.sh
 if [[ -n "${PYTHON_VERSIONS:-}" ]]; then
     read -r -a python_versions <<< "$PYTHON_VERSIONS"
 else
@@ -72,7 +72,7 @@ do
         export PYTHON_BIN="$python_bin"
         hash -r
         "$python_bin" -m pytest -v
-        bash "$SCRIPT_DIR/test_cli.sh"
+        bash "$PROJECT_ROOT/tests/cli/test_cli.sh"
     )
 
     cleanup_env "$env_dir"

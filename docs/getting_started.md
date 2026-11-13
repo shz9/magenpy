@@ -9,11 +9,13 @@ the following commands in a `python` interpreter:
 
 ```python linenums="1"
 import magenpy as mgp
-g_sim = mgp.PhenotypeSimulator(mgp.tgp_eur_data_path(),  # Provide path to 1000G data
-                               h2=0.1) # Heritability set to 0.1
-g_sim.simulate() # Simulate the phenotype
-g_sim.to_phenotype_table()
 
+g_sim = mgp.PhenotypeSimulator(
+    mgp.tgp_eur_data_path(),  # Provide path to 1000G data
+    h2=0.1,
+)  # Heritability set to 0.1
+g_sim.simulate()  # Simulate the phenotype
+g_sim.to_phenotype_table()
 ```
 
 ```
@@ -89,10 +91,12 @@ We can also simulate a more complex genetic architecture by, e.g. simulating eff
 4-component sparse Gaussian mixture density, instead of the standard spike-and-slab density used by default:
 
 ```python linenums="1"
-g_sim = mgp.PhenotypeSimulator(mgp.tgp_eur_data_path(),
-                               pi=[.9, .03, .03, .04],  # Mixing proportions
-                               d=[0., .01, .1, 1.],  # Variance multipliers
-                               h2=0.1)
+g_sim = mgp.PhenotypeSimulator(
+    mgp.tgp_eur_data_path(),
+    pi=[0.9, 0.03, 0.03, 0.04],  # Mixing proportions
+    d=[0.0, 0.01, 0.1, 1.0],  # Variance multipliers
+    h2=0.1,
+)
 g_sim.simulate()
 g_sim.to_phenotype_table()
 ```

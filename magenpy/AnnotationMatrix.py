@@ -1,5 +1,11 @@
 import numpy as np
 
+from .utils.chromosome_utils import (
+    get_present_chromosomes,
+    is_normalized_chromosome_dtype,
+    normalize_chromosome_column,
+)
+
 
 class AnnotationMatrix:
     """
@@ -33,6 +39,12 @@ class AnnotationMatrix:
         """
 
         self.table = annotation_table
+        if (
+            self.table is not None
+            and "CHR" in self.table
+            and not is_normalized_chromosome_dtype(self.table["CHR"].dtype)
+        ):
+            normalize_chromosome_column(self.table)
         self._annotations = annotations
         self.genome_build = genome_build
 
@@ -123,7 +135,7 @@ class AnnotationMatrix:
         :return: The list of unique chromosomes in the annotation matrix.
         """
         if "CHR" in self.table.columns:
-            return self.table["CHR"].unique()
+            return get_present_chromosomes(self.table["CHR"])
 
     @property
     def snps(self):
@@ -274,7 +286,7 @@ class AnnotationMatrix:
 
         bed_df = parse_annotation_bed_file(bed_file)
         # Group the BED annotation file by chromosome:
-        range_groups = bed_df.groupby("CHR").groups
+        range_groups = bed_df.groupby("CHR", observed=True).groups
 
         def annotation_overlap(row):
             """
@@ -313,7 +325,7 @@ class AnnotationMatrix:
         """
 
         if "CHR" in self.table.columns:
-            chrom_tables = self.table.groupby("CHR")
+            chrom_tables = self.table.groupby("CHR", observed=True)
             return {
                 c: AnnotationMatrix(
                     annotation_table=chrom_tables.get_group(c),

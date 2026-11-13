@@ -73,6 +73,7 @@ cdef extern from "variant_utils.hpp" nogil:
                                                                     int* n_per_snp,
                                                                     T* x_dot_y,
                                                                     T* sum_x_sq,
+                                                                    T* sum_y_sq,
                                                                     int threads) except + nogil
 
 
@@ -205,12 +206,15 @@ cpdef compute_gwa_linear_stats(bed_filename,
                                int total_samples,
                                const double[::1] centered_phenotype,
                                bint standardize_genotype=False,
-                               int threads=1):
+                               int threads=1,
+                               bint return_y_sum_sq=False):
     """
     Compute per-SNP sufficient statistics for simple linear GWAS from a PLINK
     BED file without materializing the genotype matrix.
 
     :return: Tuple `(allele_frequencies, n_per_snp, x_dot_y, sum_x_sq)`.
+        When return_y_sum_sq=True, append phenotype sum of squares centered
+        within each SNP's observed sample subset.
     """
 
     cdef:
@@ -219,6 +223,7 @@ cpdef compute_gwa_linear_stats(bed_filename,
         int[::1] n_per_snp
         double[::1] x_dot_y
         double[::1] sum_x_sq
+        double[::1] sum_y_sq
         const int* snp_ptr = NULL
         const int* sample_ptr = NULL
         const double* centered_phenotype_ptr = NULL
@@ -226,6 +231,7 @@ cpdef compute_gwa_linear_stats(bed_filename,
         int* n_per_snp_ptr = NULL
         double* x_dot_y_ptr = NULL
         double* sum_x_sq_ptr = NULL
+        double* sum_y_sq_ptr = NULL
         int num_snps
         int num_samples
         cpp_bool c_standardize_genotype
@@ -256,6 +262,10 @@ cpdef compute_gwa_linear_stats(bed_filename,
     n_per_snp = np.zeros(num_snps, dtype=np.int32)
     x_dot_y = np.zeros(num_snps, dtype=np.float64)
     sum_x_sq = np.zeros(num_snps, dtype=np.float64)
+    if return_y_sum_sq:
+        sum_y_sq = np.zeros(num_snps, dtype=np.float64)
+        if num_snps > 0:
+            sum_y_sq_ptr = &sum_y_sq[0]
 
     if num_snps > 0:
         allele_frequency_ptr = &allele_frequencies[0]
@@ -275,12 +285,16 @@ cpdef compute_gwa_linear_stats(bed_filename,
                                          n_per_snp_ptr,
                                          x_dot_y_ptr,
                                          sum_x_sq_ptr,
+                                         sum_y_sq_ptr,
                                          threads)
 
-    return (np.asarray(allele_frequencies),
-            np.asarray(n_per_snp),
-            np.asarray(x_dot_y),
-            np.asarray(sum_x_sq))
+    result = (np.asarray(allele_frequencies),
+              np.asarray(n_per_snp),
+              np.asarray(x_dot_y),
+              np.asarray(sum_x_sq))
+    if return_y_sum_sq:
+        return result + (np.asarray(sum_y_sq),)
+    return result
 
 
 cpdef compute_variant_stats(bed_filename,

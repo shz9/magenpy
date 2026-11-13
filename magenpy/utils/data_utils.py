@@ -6,7 +6,7 @@ def tgp_eur_data_path():
     :return: The path of the attached 1000G genotype data for
     European samples (N=378) and a subset of chromosome 22 (p=15938)
     """
-    return osp.join(osp.dirname(osp.dirname(__file__)), 'data/1000G_eur_chr22')
+    return osp.join(osp.dirname(osp.dirname(__file__)), "data/1000G_eur_chr22")
 
 
 def ukb_height_sumstats_path():
@@ -17,7 +17,9 @@ def ukb_height_sumstats_path():
     published on the fastGWA database:
     https://yanglab.westlake.edu.cn/data/fastgwa_data/UKB/50.v1.1.fastGWA.gz
     """
-    return osp.join(osp.dirname(osp.dirname(__file__)), 'data/ukb_height_chr22.fastGWA.gz')
+    return osp.join(
+        osp.dirname(osp.dirname(__file__)), "data/ukb_height_chr22.fastGWA.gz"
+    )
 
 
 def lrld_path():
@@ -34,4 +36,4 @@ def lrld_path():
     :return: The path of the attached BED file containing long-range linkage disequilibrium
     (LD) regions in the human genome. The coordinates are in hg19/GRCh37.
     """
-    return osp.join(osp.dirname(osp.dirname(__file__)), 'data/lrld_hg19_GRCh37.txt')
+    return osp.join(osp.dirname(osp.dirname(__file__)), "data/lrld_hg19_GRCh37.txt")

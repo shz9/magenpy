@@ -1,3 +1,4 @@
+import copy
 import logging
 import tempfile
 from typing import Union
@@ -6,6 +7,11 @@ import numpy as np
 import pandas as pd
 
 from .SampleTable import SampleTable
+from .utils.chromosome_utils import (
+    get_present_chromosomes,
+    is_normalized_chromosome_dtype,
+    normalize_chromosome_column,
+)
 from .utils.system_utils import makedir
 
 logger = logging.getLogger(__name__)
@@ -46,7 +52,7 @@ class GenotypeMatrix:
         sample_table: Union[pd.DataFrame, SampleTable, None] = None,
         snp_table: Union[pd.DataFrame, None] = None,
         temp_dir: str = "temp",
-        bed_file: str = None,
+        bed_file: str | None = None,
         genome_build=None,
         threads=1,
         **kwargs,
@@ -65,6 +71,12 @@ class GenotypeMatrix:
 
         self.sample_table: Union[pd.DataFrame, SampleTable, None] = None
         self.snp_table: Union[pd.DataFrame, None] = snp_table
+        if (
+            self.snp_table is not None
+            and "CHR" in self.snp_table
+            and not is_normalized_chromosome_dtype(self.snp_table["CHR"].dtype)
+        ):
+            normalize_chromosome_column(self.snp_table)
 
         if sample_table is not None:
             self.set_sample_table(sample_table)
@@ -172,7 +184,10 @@ class GenotypeMatrix:
         return self._genome_build
 
     @property
-    def identifier_cols(self):
+    def variant_id_cols(self):
+        """
+        Columns identifying a variant: CHR/POS when available, otherwise SNP.
+        """
         if all(col in self.snp_table.columns for col in ("CHR", "POS")):
             return ["CHR", "POS"]
         return ["SNP"]
@@ -197,7 +212,7 @@ class GenotypeMatrix:
         """
         chrom = self.get_snp_attribute("CHR")
         if chrom is not None:
-            return np.unique(chrom)
+            return get_present_chromosomes(chrom)
 
     @property
     def snps(self):
@@ -335,12 +350,18 @@ class GenotypeMatrix:
             return self.snp_table.copy()
         else:
             present_cols = list(
-                set(col_subset).intersection(set(self.snp_table.columns))
+                dict.fromkeys(
+                    col for col in col_subset if col in self.snp_table.columns
+                )
             )
             non_present_cols = list(set(col_subset) - set(present_cols))
 
             if len(present_cols) > 0:
-                table = self.snp_table[present_cols].copy()
+                # take() selects independent columns without another copy or
+                # chained-assignment warnings on older pandas versions.
+                table = self.snp_table.take(
+                    self.snp_table.columns.get_indexer(present_cols), axis=1
+                )
             else:
                 table = pd.DataFrame({c: [] for c in non_present_cols})
 
@@ -354,6 +375,8 @@ class GenotypeMatrix:
                 else:
                     raise KeyError(f"Column '{col}' is not available in the SNP table!")
 
+            if list(table.columns) == list(col_subset):
+                return table
             return table[list(col_subset)]
 
     def get_snp_attribute(self, attr):
@@ -420,25 +443,38 @@ class GenotypeMatrix:
 
     def set_sample_table(self, sample_table):
         """
-        A convenience method set the sample table for the genotype matrix.
-        This may be useful for syncing sample tables across different Genotype matrices
+        A convenience method to set the sample table for the genotype matrix.
+        This may be useful for syncing sample tables across different genotype matrices
         corresponding to different chromosomes or genomic regions.
 
         :param sample_table: An instance of SampleTable or a pandas dataframe containing
         information about the samples in the genotype matrix.
-
         """
 
-        if isinstance(sample_table, SampleTable):
-            self.sample_table = sample_table
-        elif isinstance(sample_table, pd.DataFrame):
-            self.sample_table = SampleTable(sample_table)
-        else:
-            raise TypeError(
-                "The sample table is invalid! "
-                "Has to be either an instance of "
-                "SampleTable or pandas DataFrame."
-            )
+        if isinstance(sample_table, pd.DataFrame):
+            sample_table = SampleTable(sample_table.copy())
+        elif not isinstance(sample_table, SampleTable):
+            raise TypeError("sample_table must be a SampleTable or pandas DataFrame.")
+
+        # Genotype summaries depend on selected BED rows, not sample metadata.
+        # Keep an independent index snapshot to detect in-place table changes;
+        # unchanged selections can reuse the existing snapshot.
+        indices = sample_table.original_index
+        previous = getattr(self, "_sample_signature", None)
+        if previous is None or not np.array_equal(previous, indices):
+            if previous is not None and self.snp_table is not None:
+                self.snp_table = self.snp_table.drop(
+                    columns=["MAF", "N"], errors="ignore"
+                )
+            self._sample_signature = indices.copy()
+        self.sample_table = sample_table
+
+    def _filter_variant_rows(self, rows):
+        """Subset metadata and, for in-memory backends, the genotype columns."""
+        # Integer-array indexing selects independent rows. Reset only the index
+        # in place so older pandas versions do not copy the selected data again.
+        self.snp_table = self.snp_table.take(rows)
+        self.snp_table.reset_index(drop=True, inplace=True)
 
     def filter_snps(self, extract_snps=None, extract_file=None):
         """
@@ -457,7 +493,11 @@ class GenotypeMatrix:
 
             extract_snps = read_snp_filter_file(extract_file)
 
-        self.snp_table = self.snp_table.merge(pd.DataFrame({"SNP": extract_snps}))
+        # Membership filtering preserves BED order and cannot multiply rows
+        # when a requested identifier is repeated.
+        self._filter_variant_rows(
+            np.flatnonzero(self.snp_table["SNP"].isin(extract_snps))
+        )
 
     def filter_by_allele_frequency(self, min_maf=None, min_mac=1):
         """
@@ -467,40 +507,38 @@ class GenotypeMatrix:
         :param min_mac: Minimum minor allele count (1 by default)
         """
 
+        if min_maf is not None and (
+            not np.isfinite(min_maf) or not 0 <= min_maf <= 0.5
+        ):
+            raise ValueError("min_maf must lie between 0 and 0.5.")
+        if min_mac is not None and (not np.isfinite(min_mac) or min_mac < 0):
+            raise ValueError("min_mac must be nonnegative and finite.")
+
         if min_mac or min_maf:
             maf = self.maf
             n = self.n_per_snp
 
-            keep_flag = None
+            keep_flag = np.isfinite(maf) & np.isfinite(n) & (n > 0)
 
             if min_mac:
-                mac = (2 * maf * n).astype(np.int64)
-                keep_flag = (mac >= min_mac) & ((2 * n - mac) >= min_mac)
+                # Counts are integral; rounding avoids dropping exact-cutoff SNPs
+                # when frequency multiplication gives e.g. 9.999999999999998.
+                mac = np.rint(np.where(keep_flag, 2 * maf * n, 0)).astype(np.int32)
+                keep_flag &= (mac >= min_mac) & ((2 * n - mac) >= min_mac)
 
             if min_maf:
-                maf_cond = (maf >= min_maf) & (1.0 - maf >= min_maf)
-                if keep_flag is not None:
-                    keep_flag = keep_flag & maf_cond
-                else:
-                    keep_flag = maf_cond
+                keep_flag &= (maf >= min_maf) & (1.0 - maf >= min_maf)
 
-            if keep_flag is not None:
-                self.snp_table = (
-                    self.snp_table.iloc[np.flatnonzero(keep_flag)]
-                    .copy()
-                    .reset_index(drop=True)
-                )
+            self._filter_variant_rows(np.flatnonzero(keep_flag))
 
     def drop_duplicated_snps(self):
         """
         Drop variants whose preferred identifiers are duplicated.
         """
 
-        duplicated = self.snp_table.duplicated(
-            subset=self.identifier_cols, keep=False
-        )
+        duplicated = self.snp_table.duplicated(subset=self.variant_id_cols, keep=False)
         if duplicated.any():
-            self.snp_table = self.snp_table.loc[~duplicated].copy()
+            self._filter_variant_rows(np.flatnonzero(~duplicated))
 
     def filter_samples(self, keep_samples=None, keep_file=None):
         """
@@ -512,14 +550,24 @@ class GenotypeMatrix:
         :param keep_file: The path to a file with the list of samples to keep.
         """
 
-        self.sample_table.filter_samples(keep_samples=keep_samples, keep_file=keep_file)
+        # Work on a separate table so filtering a split does not mutate its
+        # parent or siblings. Summaries are recomputed lazily after selection.
+        if keep_samples is None:
+            if keep_file is None:
+                raise ValueError("Specify keep_samples or keep_file.")
+            from .parsers.misc_parsers import read_sample_filter_file
 
-        # IMPORTANT: After filtering samples, update SNP attributes that depend on the
-        # samples, such as MAF and N:
-        if "N" in self.snp_table:
-            self.compute_sample_size_per_snp()
-        if "MAF" in self.snp_table:
-            self.compute_allele_frequency()
+            keep_samples = read_sample_filter_file(keep_file)
+        keep = self.sample_table.table["IID"].isin(keep_samples)
+        if keep.all():
+            # Still check for external in-place changes before reusing caches.
+            self.set_sample_table(self.sample_table)
+            return
+        # Copy only the wrapper; take() allocates the selected table.
+        # The wrapper's phenotype/covariate settings are read-only during filtering.
+        selected = copy.copy(self.sample_table)
+        selected.table = self.sample_table.table.take(np.flatnonzero(keep))
+        self.set_sample_table(selected)
 
     def score(self, beta, standardize_genotype=False):
         """
@@ -573,16 +621,23 @@ class GenotypeMatrix:
         if chromosome:
             return {chromosome: self}
         else:
-            chrom_tables = self.snp_table.groupby("CHR")
+            chrom_tables = self.snp_table.groupby("CHR", observed=True)
 
             return {
                 c: self.__class__(
-                    sample_table=self.sample_table,
+                    sample_table=copy.deepcopy(self.sample_table),
                     snp_table=chrom_tables.get_group(c),
                     bed_file=self.bed_file,
                     temp_dir=self.temp_dir,
                     genome_build=self.genome_build,
                     threads=self.threads,
+                    **(
+                        {"total_samples": self.total_samples}
+                        if hasattr(self, "total_samples")
+                        else {"bed_reader": self.bed_reader}
+                        if hasattr(self, "bed_reader")
+                        else {}
+                    ),
                 )
                 for c in chrom_tables.groups
             }
@@ -600,6 +655,8 @@ class GenotypeMatrix:
         """
 
         if isinstance(variant_group_dict, dict):
+            if not variant_group_dict:
+                return {}
             variant_group_dict = pd.concat(
                 [
                     pd.DataFrame({"group": group, "SNP": snps})
@@ -612,30 +669,38 @@ class GenotypeMatrix:
                 and "group" in variant_group_dict.columns
             )
         else:
-            raise ValueError("The variant group dictionary is invalid!")
+            raise TypeError("The variant group dictionary is invalid!")
 
-        grouped_table = self.snp_table.merge(variant_group_dict, on="SNP").groupby(
-            "group"
-        )
+        grouped_table = self.snp_table.merge(
+            variant_group_dict.drop_duplicates(["group", "SNP"]), on="SNP", sort=False
+        ).groupby("group")
 
         return {
             group: self.__class__(
-                sample_table=self.sample_table,
+                sample_table=copy.deepcopy(self.sample_table),
                 snp_table=grouped_table.get_group(group).drop(columns="group"),
                 bed_file=self.bed_file,
                 temp_dir=self.temp_dir,
                 genome_build=self.genome_build,
                 threads=self.threads,
+                **(
+                    {"total_samples": self.total_samples}
+                    if hasattr(self, "total_samples")
+                    else {"bed_reader": self.bed_reader}
+                    if hasattr(self, "bed_reader")
+                    else {}
+                ),
             )
             for group in grouped_table.groups
         }
 
     def cleanup(self):
-        """
-        Clean up all temporary files and directories
-        """
+        """Release backend-owned resources; safe to call repeatedly.
 
-        pass
+        Implementations must preserve source genotype files and the shared
+        temporary directory, which may also be used by other matrices.
+        """
+        raise NotImplementedError
 
 
 class xarrayGenotypeMatrix(GenotypeMatrix):
@@ -684,6 +749,19 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
 
         # xarray matrix object, as defined by pandas-plink:
         self.xr_mat = xr_mat
+        if (
+            self.xr_mat is not None
+            and self.snp_table is not None
+            and "chrom" in self.xr_mat.coords
+        ):
+            self.xr_mat = self.xr_mat.assign_coords(
+                chrom=("variant", self.snp_table["CHR"].to_numpy())
+            )
+
+    def cleanup(self):
+        """Close resources attached to the xarray matrix, if any."""
+        if self.xr_mat is not None:
+            self.xr_mat.close()
 
     @classmethod
     def from_file(cls, file_path, temp_dir="temp", **kwargs):
@@ -785,7 +863,6 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
         snp_table.reset_index(inplace=True, drop=True)
         snp_table = snp_table.astype(
             {
-                "CHR": int,
                 "SNP": str,
                 "cM": np.float32,
                 "POS": np.int32,
@@ -816,42 +893,15 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
 
         super().set_sample_table(sample_table)
 
-        try:
-            if self.n != self.xr_mat.shape[0]:
-                self.xr_mat = self.xr_mat.sel(sample=self.samples)
-        except AttributeError:
-            pass
+        if getattr(self, "xr_mat", None) is not None and not np.array_equal(
+            self.xr_mat.coords["sample"].values, self.samples
+        ):
+            self.xr_mat = self.xr_mat.sel(sample=self.samples)
 
-    def filter_snps(self, extract_snps=None, extract_file=None):
-        """
-        Filter variants from the genotype matrix. User must specify either a list of variants to
-        extract or the path to a file with the list of variants to extract.
-
-        :param extract_snps: A list or array of SNP rsIDs to keep in the genotype matrix.
-        :param extract_file: The path to a file with the list of variants to extract.
-        """
-
-        super().filter_snps(extract_snps=extract_snps, extract_file=extract_file)
-
-        from .utils.compute_utils import intersect_arrays
-
-        idx = intersect_arrays(
-            self.xr_mat.variant.coords["snp"].values, self.snps, return_index=True
-        )
-
-        self.xr_mat = self.xr_mat.isel(variant=idx)
-
-    def filter_samples(self, keep_samples=None, keep_file=None):
-        """
-        Filter samples from the genotype matrix.
-        User must specify either a list of samples to keep or the path to a file with the list of samples to keep.
-
-        :param keep_samples: A list (or array) of sample IDs to keep in the genotype matrix.
-        :param keep_file: The path to a file with the list of samples to keep.
-        """
-
-        super().filter_samples(keep_samples=keep_samples, keep_file=keep_file)
-        self.xr_mat = self.xr_mat.sel(sample=self.samples)
+    def _filter_variant_rows(self, rows):
+        if self.xr_mat is not None:
+            self.xr_mat = self.xr_mat.isel(variant=rows)
+        super()._filter_variant_rows(rows)
 
     def to_numpy(self, dtype=np.int8):
         """
@@ -926,7 +976,12 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
         compute the allele frequency of each variant or SNP in the genotype matrix.
         """
         self.snp_table["MAF"] = (
-            (self.xr_mat.sum(axis=0) / (2.0 * self.n_per_snp)).compute().values
+            (
+                self.xr_mat.sum(axis=0)
+                / np.where(self.n_per_snp > 0, 2.0 * self.n_per_snp, np.nan)
+            )
+            .compute()
+            .values
         )
 
     def compute_sample_size_per_snp(self):
@@ -949,7 +1004,9 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
         for c, gt in split.items():
             gt.xr_mat = self.xr_mat
             if len(split) > 1:
-                gt.filter_snps(extract_snps=gt.snps)
+                gt.xr_mat = self.xr_mat.isel(
+                    variant=np.flatnonzero(np.isin(self.snp_index, gt.snp_index))
+                )
 
         return split
 
@@ -969,7 +1026,9 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
 
         for g, gt in split.items():
             gt.xr_mat = self.xr_mat
-            gt.filter_snps(extract_snps=gt.snps)
+            gt.xr_mat = self.xr_mat.isel(
+                variant=np.flatnonzero(np.isin(self.snp_index, gt.snp_index))
+            )
 
         return split
 
@@ -1002,6 +1061,10 @@ class bedReaderGenotypeMatrix(GenotypeMatrix):
 
         # The bed_reader object:
         self.bed_reader = bed_reader
+
+    def cleanup(self):
+        """No-op: BED reads manage their file handles and retain no temp files."""
+        return None
 
     @classmethod
     def from_file(cls, file_path, temp_dir="temp", **kwargs):
@@ -1054,7 +1117,6 @@ class bedReaderGenotypeMatrix(GenotypeMatrix):
             }
         ).astype(
             {
-                "CHR": int,
                 "SNP": str,
                 "cM": np.float32,
                 "POS": np.int32,
@@ -1159,9 +1221,13 @@ class bedReaderGenotypeMatrix(GenotypeMatrix):
         """
         Compute the allele frequency of each variant or SNP in the genotype matrix.
         """
-        self.snp_table["MAF"] = np.concatenate(
+        dosage_sum = np.concatenate(
             [np.nansum(bed_chunk, axis=0) for bed_chunk in self._iter_col_chunks()]
-        ) / (2.0 * self.n_per_snp)
+        )
+        n = self.n_per_snp
+        self.snp_table["MAF"] = np.divide(
+            dosage_sum, 2.0 * n, out=np.full(self.n_snps, np.nan), where=n > 0
+        )
 
     def compute_sample_size_per_snp(self):
         """
@@ -1261,24 +1327,29 @@ class MagenpyGenotypeMatrix(GenotypeMatrix):
 
         from .parsers.plink_parsers import parse_bim_file, parse_fam_file
 
-        if self.sample_table is None and self.bed_file:
-            self.sample_table = SampleTable(parse_fam_file(self.bed_file))
+        fam_table = None
+        if self.bed_file and (self.sample_table is None or total_samples is None):
+            fam_table = parse_fam_file(self.bed_file)
+
+        if self.sample_table is None and fam_table is not None:
+            self.set_sample_table(SampleTable(fam_table))
 
         if self.snp_table is None and self.bed_file:
             self.snp_table = parse_bim_file(self.bed_file)
             self.snp_table["original_index"] = np.arange(len(self.snp_table))
 
         if total_samples is None:
-            if self.sample_table is None:
-                self.total_samples = None
-            elif "original_index" in self.sample_table.table:
-                self.total_samples = (
-                    int(self.sample_table.table["original_index"].max()) + 1
-                )
-            else:
-                self.total_samples = self.n
+            # BED stride depends on the full source FAM, even when the supplied
+            # sample table contains only a subset of those samples.
+            self.total_samples = len(fam_table) if fam_table is not None else None
         else:
+            if int(total_samples) != total_samples or total_samples <= 0:
+                raise ValueError("total_samples must be a positive integer.")
             self.total_samples = int(total_samples)
+
+    def cleanup(self):
+        """No-op: native kernels release their file handles before returning."""
+        return None
 
     @classmethod
     def from_file(cls, file_path, temp_dir="temp", **kwargs):
@@ -1315,6 +1386,18 @@ class MagenpyGenotypeMatrix(GenotypeMatrix):
         for label, indices in (("sample", self.sample_index), ("SNP", self.snp_index)):
             if len(indices) == 0:
                 continue
+            if (
+                not np.issubdtype(indices.dtype, np.integer)
+                or np.any(indices < 0)
+                or np.any(indices > np.iinfo(np.int32).max)
+            ):
+                raise ValueError(
+                    f"{label} original indices must be nonnegative int32 integers."
+                )
+            if label == "sample" and np.any(indices >= self.total_samples):
+                raise ValueError(
+                    "Sample original indices exceed the source BED sample count."
+                )
             if np.any(np.diff(indices) <= 0):
                 raise ValueError(f"{label} original indices must be sorted and unique.")
 
@@ -1331,21 +1414,16 @@ class MagenpyGenotypeMatrix(GenotypeMatrix):
         if allele_frequencies is None:
             allele_frequencies = self.maf
 
-        allele_frequencies = np.array(
-            allele_frequencies,
-            dtype=np.float64,
-            order="C",
-            copy=True,
-        )
-        snp_indices = np.ascontiguousarray(self.snp_index, dtype=np.int64)
+        # Native wrappers enforce dtype/contiguity and consume frequencies as
+        # const data. Reuse existing arrays until indexing requires a new one.
+        allele_frequencies = np.asarray(allele_frequencies)
+        snp_indices = self.snp_index
 
         if for_selected_snps:
             if allele_frequencies.shape[0] == self.n_snps:
                 return allele_frequencies
             if allele_frequencies.shape[0] > int(snp_indices.max(initial=-1)):
-                return np.ascontiguousarray(
-                    allele_frequencies[snp_indices], dtype=np.float64
-                )
+                return allele_frequencies[snp_indices]
             raise ValueError(
                 "allele_frequencies must either match the selected SNP count "
                 "or be indexed by original BED SNP index."
@@ -1383,7 +1461,9 @@ class MagenpyGenotypeMatrix(GenotypeMatrix):
 
         self._validate_cpp_indices()
 
-        beta = np.asarray(beta, dtype=np.float64)
+        # Defer dtype/layout normalization to the native call below so a
+        # non-C-contiguous float32 matrix needs only one conversion.
+        beta = np.asarray(beta)
         return_flat = beta.ndim == 1
         if return_flat:
             beta = beta.reshape(-1, 1)
@@ -1458,8 +1538,7 @@ class MagenpyGenotypeMatrix(GenotypeMatrix):
             threads=self.threads,
         )
         self.snp_table["MAF"] = allele_frequencies
-        if "N" not in self.snp_table:
-            self.snp_table["N"] = n_per_snp
+        self.snp_table["N"] = n_per_snp
 
     def compute_sample_size_per_snp(self):
         from .stats.variant.variant_cpp import compute_variant_stats
@@ -1473,8 +1552,7 @@ class MagenpyGenotypeMatrix(GenotypeMatrix):
             threads=self.threads,
         )
         self.snp_table["N"] = n_per_snp
-        if "MAF" not in self.snp_table:
-            self.snp_table["MAF"] = allele_frequencies
+        self.snp_table["MAF"] = allele_frequencies
 
 
 class plinkBEDGenotypeMatrix(GenotypeMatrix):
@@ -1521,11 +1599,15 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
             self.bed_file = self.bed_file.replace(".bed", "")
 
         if self.sample_table is None and self.bed_file:
-            self.sample_table = SampleTable(parse_fam_file(self.bed_file))
+            self.set_sample_table(SampleTable(parse_fam_file(self.bed_file)))
 
         if self.snp_table is None and self.bed_file:
             self.snp_table = parse_bim_file(self.bed_file)
             self.snp_table["original_index"] = np.arange(len(self.snp_table))
+
+    def cleanup(self):
+        """No-op: each PLINK operation cleans its own temporary directory."""
+        return None
 
     @classmethod
     def from_file(cls, file_path, temp_dir="temp", **kwargs):
@@ -1558,21 +1640,15 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
 
         from .stats.score.utils import score_plink2
 
-        # Create a temporary directory where we store intermediate results:
-        tmp_score_dir = tempfile.TemporaryDirectory(
+        with tempfile.TemporaryDirectory(
             dir=self.temp_dir, prefix=self.temp_dir_prefix + "score_"
-        )
-
-        plink_score = score_plink2(
-            self,
-            beta,
-            standardize_genotype=standardize_genotype,
-            temp_dir=tmp_score_dir.name,
-        )
-
-        tmp_score_dir.cleanup()
-
-        return plink_score
+        ) as temp_dir:
+            return score_plink2(
+                self,
+                beta,
+                standardize_genotype=standardize_genotype,
+                temp_dir=temp_dir,
+            )
 
     def perform_gwas(self, **gwa_kwargs):
         """
@@ -1585,16 +1661,10 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
 
         from .stats.gwa.utils import perform_gwa_plink2
 
-        # Create a temporary directory where we store intermediate results:
-        tmp_gwas_dir = tempfile.TemporaryDirectory(
+        with tempfile.TemporaryDirectory(
             dir=self.temp_dir, prefix=self.temp_dir_prefix + "gwas_"
-        )
-
-        plink_gwa = perform_gwa_plink2(self, temp_dir=tmp_gwas_dir.name, **gwa_kwargs)
-
-        tmp_gwas_dir.cleanup()
-
-        return plink_gwa
+        ) as temp_dir:
+            return perform_gwa_plink2(self, temp_dir=temp_dir, **gwa_kwargs)
 
     def compute_allele_frequency(self):
         """
@@ -1605,16 +1675,12 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
 
         from .stats.variant.utils import compute_allele_frequency_plink2
 
-        # Create a temporary directory where we store intermediate results:
-        tmp_freq_dir = tempfile.TemporaryDirectory(
+        with tempfile.TemporaryDirectory(
             dir=self.temp_dir, prefix=self.temp_dir_prefix + "freq_"
-        )
-
-        self.snp_table["MAF"] = compute_allele_frequency_plink2(
-            self, temp_dir=tmp_freq_dir.name
-        )
-
-        tmp_freq_dir.cleanup()
+        ) as temp_dir:
+            self.snp_table["MAF"] = compute_allele_frequency_plink2(
+                self, temp_dir=temp_dir
+            )
 
     def compute_sample_size_per_snp(self):
         """
@@ -1627,13 +1693,9 @@ class plinkBEDGenotypeMatrix(GenotypeMatrix):
 
         from .stats.variant.utils import compute_sample_size_per_snp_plink2
 
-        # Create a temporary directory where we store intermediate results:
-        tmp_miss_dir = tempfile.TemporaryDirectory(
+        with tempfile.TemporaryDirectory(
             dir=self.temp_dir, prefix=self.temp_dir_prefix + "miss_"
-        )
-
-        self.snp_table["N"] = compute_sample_size_per_snp_plink2(
-            self, temp_dir=tmp_miss_dir.name
-        )
-
-        tmp_miss_dir.cleanup()
+        ) as temp_dir:
+            self.snp_table["N"] = compute_sample_size_per_snp_plink2(
+                self, temp_dir=temp_dir
+            )

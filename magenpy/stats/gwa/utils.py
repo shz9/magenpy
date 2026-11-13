@@ -557,7 +557,7 @@ def perform_gwa_magenpy(
         genotype_matrix.sample_index[mask], dtype=np.int32
     )
 
-    maf, n_per_snp, x_dot_y, sum_x_sq = compute_gwa_linear_stats(
+    maf, n_per_snp, x_dot_y, sum_x_sq, sum_y_sq = compute_gwa_linear_stats(
         genotype_matrix.bed_filename,
         np.ascontiguousarray(genotype_matrix.snp_index, dtype=np.int32),
         sample_indices,
@@ -565,6 +565,7 @@ def perform_gwa_magenpy(
         centered_phenotype,
         standardize_genotype=standardize_genotype,
         threads=genotype_matrix.threads,
+        return_y_sum_sq=True,
     )
 
     slope = np.divide(
@@ -574,8 +575,8 @@ def perform_gwa_magenpy(
         where=sum_x_sq > 0,
     )
 
-    y_centered_sum_sq = np.dot(centered_phenotype, centered_phenotype)
-    residual_sum_sq = y_centered_sum_sq - slope * x_dot_y
+    # Each variant fits an intercept over its own observed sample subset.
+    residual_sum_sq = sum_y_sq - slope * x_dot_y
     residual_sum_sq = np.maximum(residual_sum_sq, 0.0)
 
     s2 = np.divide(
@@ -599,7 +600,11 @@ def perform_gwa_magenpy(
     sumstats_table["BETA"] = slope
     sumstats_table["SE"] = se
 
+    # Simple linear regression uses a t test with variant-specific degrees of freedom.
+    from scipy.stats import t
+
+    sumstats_table["Z"] = slope / se
+    sumstats_table["PVAL"] = 2.0 * t.sf(np.abs(sumstats_table["Z"]), n_per_snp - 2)
     ss_table = SumstatsTable(sumstats_table)
-    _, _ = ss_table.z_score, ss_table.pval
 
     return ss_table

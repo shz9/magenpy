@@ -3,6 +3,8 @@ import logging
 import numpy as np
 import pandas as pd
 
+from ..utils.chromosome_utils import normalize_chromosome_column
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,21 +76,23 @@ def parse_ld_block_data(ldb_file_path):
     df = pd.read_csv(
         ldb_file_path,
         sep=r"\s+",
-        dtype={"chr": str, "start": str, "stop": str},
+        dtype={"chr": "category", "start": str, "stop": str},
     )
 
     # Drop rows with missing values:
     df.dropna(inplace=True)
-    df = df.loc[(df.start != 'None') & (df.stop != 'None')]
+    df = df.loc[(df.start != "None") & (df.stop != "None")]
 
     # Cast the start/stop columns to integers:
-    df = df.astype({'chr': str, 'start': np.int32, 'stop': np.int32})
+    df = df.astype({"start": np.int32, "stop": np.int32})
+
+    normalize_chromosome_column(df, column="chr")
 
     # Sort the dataframe:
-    df = df.sort_values('start')
+    df = df.sort_values("start")
 
-    for chrom in df['chr'].unique():
-        ld_blocks[int(chrom.replace('chr', ''))] = df.loc[df['chr'] == chrom, ['start', 'stop']].values
+    for chrom, blocks in df.groupby("chr", sort=False, observed=True):
+        ld_blocks[chrom] = blocks[["start", "stop"]].values
 
     return ld_blocks
 
@@ -106,7 +110,7 @@ def parse_cluster_assignment_file(cluster_assignment_file):
     """
     try:
         clusters = pd.read_csv(cluster_assignment_file, sep=r"\s+", dtype=str)
-        clusters.columns = ['FID', 'IID', 'Cluster']
+        clusters.columns = ["FID", "IID", "Cluster"]
     except Exception as e:
         logger.error(
             "Failed to parse the sample cluster assignment file:\n%s",

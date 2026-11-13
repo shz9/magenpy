@@ -8,9 +8,12 @@ you may invoke the following command:
 
 ```python linenums="1"
 import magenpy as mgp
-g_sim = mgp.PhenotypeSimulator(mgp.tgp_eur_data_path(),  # Path to 1000G genotype data
-                               pi=[.85, .15],  # Proportion of non-causal and causal variants
-                               h2=0.25)  # Heritability
+
+g_sim = mgp.PhenotypeSimulator(
+    mgp.tgp_eur_data_path(),  # Path to 1000G genotype data
+    pi=[0.85, 0.15],  # Proportion of non-causal and causal variants
+    h2=0.25,
+)  # Heritability
 # Export simulated phenotype to pandas dataframe:
 g_sim.to_phenotype_table()
 ```
@@ -40,10 +43,10 @@ command:
 
 ```python linenums="1"
 import magenpy as mgp
-g_sim = mgp.PhenotypeSimulator(mgp.tgp_eur_data_path(),
-                               phenotype_likelihood='binomial',
-                               prevalence=.08,
-                               h2=0.3)
+
+g_sim = mgp.PhenotypeSimulator(
+    mgp.tgp_eur_data_path(), phenotype_likelihood="binomial", prevalence=0.08, h2=0.3
+)
 g_sim.simulate()
 g_sim.to_phenotype_table()
 ```
@@ -77,9 +80,8 @@ simulated trait, with the `perform_gwas=True` flag:
 
 ```python linenums="1"
 import magenpy as mgp
-g_sim = mgp.PhenotypeSimulator(mgp.tgp_eur_data_path(),
-                               pi=[.85, .15],
-                               h2=0.25)
+
+g_sim = mgp.PhenotypeSimulator(mgp.tgp_eur_data_path(), pi=[0.85, 0.15], h2=0.25)
 g_sim.simulate(perform_gwas=True)
 ```
 
@@ -115,12 +117,15 @@ specifying the `backend` software that you wish to use:
 
 ```python linenums="1"
 import magenpy as mgp
-g_sim = mgp.PhenotypeSimulator(mgp.tgp_eur_data_path(),
-                               backend='plink', # Set the backend
-                               pi=[.85, .15],
-                               h2=0.25)
+
+g_sim = mgp.PhenotypeSimulator(
+    mgp.tgp_eur_data_path(),
+    backend="plink",  # Set the backend
+    pi=[0.85, 0.15],
+    h2=0.25,
+)
 g_sim.simulate(perform_gwas=True)
-g_sim.cleanup() # Clean up temporary files
+g_sim.cleanup()  # Clean up temporary files
 ```
 
 When using `plink`, we sometimes create temporary intermediate files to pass to the software. To clean up 
@@ -147,10 +152,9 @@ of all `GWADataLoader`-derived objects, as follows:
 ```python linenums="1"
 # Using xarray:
 import magenpy as mgp
+
 gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path())
-gdl.compute_ld(estimator='windowed',
-               output_dir='output/ldl/',
-               window_size=100)
+gdl.compute_ld(estimator="windowed", output_dir="output/ldl/", window_size=100)
 gdl.cleanup()
 ```
 
@@ -162,11 +166,9 @@ we can invoke a similar command:
 ```python linenums="1"
 # Using plink:
 import magenpy as mgp
-gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(),
-                        backend='plink')
-gdl.compute_ld(estimator='windowed',
-               output_dir='output/ld/',
-               cm_window_size=3.)
+
+gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(), backend="plink")
+gdl.compute_ld(estimator="windowed", output_dir="output/ld/", cm_window_size=3.0)
 gdl.cleanup()
 ```
 
@@ -227,11 +229,15 @@ and the citations therein. The LD estimators are:
    
 ```python linenums="1"
 import magenpy as mgp
-gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(),
-                        backend='plink')
-gdl.compute_ld('windowed', 
-               output_dir='output/ld/',
-               window_size=100, kb_window_size=1000, cm_window_size=2.)
+
+gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(), backend="plink")
+gdl.compute_ld(
+    "windowed",
+    output_dir="output/ld/",
+    window_size=100,
+    kb_window_size=1000,
+    cm_window_size=2.0,
+)
 gdl.cleanup()
 ```
 
@@ -241,12 +247,10 @@ variants that are in the same LD block, as defined by, e.g. LDetect. Given an LD
    
 ```python linenums="1"
 import magenpy as mgp
+
 ld_block_url = "https://bitbucket.org/nygcresearch/ldetect-data/raw/ac125e47bf7ff3e90be31f278a7b6a61daaba0dc/EUR/fourier_ls-all.bed"
-gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(),
-                        backend='plink')
-gdl.compute_ld('block', 
-               output_dir='output/ld/',
-               ld_blocks_file=ld_block_url)
+gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(), backend="plink")
+gdl.compute_ld("block", output_dir="output/ld/", ld_blocks_file=ld_block_url)
 gdl.cleanup()
 ```
 
@@ -262,13 +266,15 @@ If you have the LD blocks file on your system, you can also pass the path to the
 
 ```python linenums="1"
 import magenpy as mgp
-gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(),
-                        backend='plink')
-gdl.compute_ld('shrinkage', 
-               output_dir='output/ld/',
-               genetic_map_ne=11400, # effective population size (Ne)
-               genetic_map_sample_size=183, # Sample size
-               threshold=1e-3) # The cutoff value
+
+gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(), backend="plink")
+gdl.compute_ld(
+    "shrinkage",
+    output_dir="output/ld/",
+    genetic_map_ne=11400,  # effective population size (Ne)
+    genetic_map_sample_size=183,  # Sample size
+    threshold=1e-3,
+)  # The cutoff value
 gdl.cleanup()
 ```
 
@@ -279,9 +285,9 @@ gdl.cleanup()
    
 ```python linenums="1"
 import magenpy as mgp
-gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(),
-                        backend='plink')
-gdl.compute_ld('sample', output_dir='output/ld/')
+
+gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(), backend="plink")
+gdl.compute_ld("sample", output_dir="output/ld/")
 gdl.cleanup()
 ```
 
@@ -300,17 +306,18 @@ shows how to do this in a simple case:
 
 ```python linenums="1"
 import magenpy as mgp
+
 # First, generate some summary statistics from a simulation:
 g_sim = mgp.PhenotypeSimulator(mgp.tgp_eur_data_path())
 g_sim.simulate()
-g_sim.to_summary_statistics_table().to_csv(
-    "chr_22.sumstats", sep="\t", index=False
-)
+g_sim.to_summary_statistics_table().to_csv("chr_22.sumstats", sep="\t", index=False)
 # Then load those summary statistics and match them with previously
 # computed windowed LD matrix for chromosome 22:
-gdl = mgp.GWADataLoader(ld_store_files='output/windowed_ld/chr_22/',
-                        sumstats_files='chr_22.sumstats',
-                        sumstats_format='magenpy')
+gdl = mgp.GWADataLoader(
+    ld_store_files="output/windowed_ld/chr_22/",
+    sumstats_files="chr_22.sumstats",
+    sumstats_format="magenpy",
+)
 ```
 
 Here, the `GWADataLoader` object takes care of the harmonization step by 
@@ -346,13 +353,11 @@ gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path())
 You can choose another backend explicitly:
 
 ```python linenums="1"
-gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(),
-                        backend='bed-reader')
+gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(), backend="bed-reader")
 ```
 
 ```python linenums="1"
-gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(),
-                        backend='plink')
+gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(), backend="plink")
 ```
 
 The same backend names are accepted by the command-line tools via `--backend`.
@@ -366,6 +371,7 @@ configuration file as follows. First, let's see the default configurations that 
 
 ```python linenums="1"
 import magenpy as mgp
+
 mgp.print_options()
 ```
 
@@ -407,6 +413,6 @@ derived data structures, including all the `PhenotypeSimulator` classes:
 
 ```python linenums="1"
 import magenpy as mgp
-gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(),
-                        backend='plink')
+
+gdl = mgp.GWADataLoader(mgp.tgp_eur_data_path(), backend="plink")
 ```

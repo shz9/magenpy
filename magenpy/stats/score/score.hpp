@@ -12,20 +12,12 @@
 #include "../../utils/linear_algebra_utils.hpp"
 #include "../../utils/plink_bed_utils.hpp"
 
-template<typename T>
-void calculate_scores(std::string bed_filename,
-                      const T* effect_sizes,
-                      const int* snp_indices,
-                      const int* sample_indices,
-                      int total_samples,
-                      int num_samples,
-                      int num_snps,
-                      int num_scores,
-                      T* scores,
-                      int threads,
-                      const T* allele_frequencies = nullptr,
-                      bool standardize_genotype = false,
-                      bool impute_missing = false) {
+template <typename T>
+void calculate_scores(std::string bed_filename, const T *effect_sizes,
+                      const int *snp_indices, const int *sample_indices,
+                      int total_samples, int num_samples, int num_snps, int num_scores,
+                      T *scores, int threads, const T *allele_frequencies = nullptr,
+                      bool standardize_genotype = false, bool impute_missing = false) {
 
     if (total_samples <= 0) {
         throw std::invalid_argument("Total BED sample count must be positive.");
@@ -38,7 +30,8 @@ void calculate_scores(std::string bed_filename,
         throw std::invalid_argument("Null pointer passed to calculate_scores.");
     }
     if ((standardize_genotype || impute_missing) && allele_frequencies == nullptr) {
-        throw std::invalid_argument("Allele frequencies are required for standardization or missing-value imputation.");
+        throw std::invalid_argument("Allele frequencies are required for "
+                                    "standardization or missing-value imputation.");
     }
 
     validate_plink_bed_file(bed_filename);
@@ -47,8 +40,8 @@ void calculate_scores(std::string bed_filename,
         if (snp_indices[snp_pos] < 0) {
             throw std::out_of_range("SNP index must be non-negative.");
         }
-        if (allele_frequencies != nullptr &&
-            (allele_frequencies[snp_pos] < T(0) || allele_frequencies[snp_pos] > T(1))) {
+        if (allele_frequencies != nullptr && (allele_frequencies[snp_pos] < T(0) ||
+                                              allele_frequencies[snp_pos] > T(1))) {
             throw std::out_of_range("Allele frequencies must be in [0, 1].");
         }
     }
@@ -66,12 +59,9 @@ void calculate_scores(std::string bed_filename,
     const int num_threads = threads > 0 ? threads : 1;
     constexpr size_t target_block_bytes = 32u * 1024u * 1024u;
     const int snps_per_block = std::max<int>(
-        1,
-        static_cast<int>(std::min<size_t>(
-            static_cast<size_t>(std::numeric_limits<int>::max()),
-            std::max<size_t>(1, target_block_bytes / std::max<size_t>(1, stride))
-        ))
-    );
+        1, static_cast<int>(std::min<size_t>(
+               static_cast<size_t>(std::numeric_limits<int>::max()),
+               std::max<size_t>(1, target_block_bytes / std::max<size_t>(1, stride)))));
 
     std::vector<unsigned char> bed_block;
     bed_block.resize(static_cast<size_t>(snps_per_block) * stride);
@@ -88,21 +78,21 @@ void calculate_scores(std::string bed_filename,
         const int block_snps = std::min(snps_per_block, num_snps - block_start);
 
         for (int block_pos = 0; block_pos < block_snps; ++block_pos) {
-            read_plink_bed_row(bed_file,
-                               snp_indices[block_start + block_pos],
-                               variant_stride,
-                               bed_block.data() + static_cast<size_t>(block_pos) * stride);
+            read_plink_bed_row(
+                bed_file, snp_indices[block_start + block_pos], variant_stride,
+                bed_block.data() + static_cast<size_t>(block_pos) * stride);
         }
 
-        #ifdef _OPENMP
-            #pragma omp parallel for schedule(static) num_threads(num_threads)
-        #endif
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) num_threads(num_threads)
+#endif
         for (int group_pos = 0; group_pos < num_sample_groups; ++group_pos) {
-            const SelectedSampleByte& group = sample_groups[group_pos];
+            const SelectedSampleByte &group = sample_groups[group_pos];
 
             for (int block_pos = 0; block_pos < block_snps; ++block_pos) {
                 const unsigned char byte =
-                    bed_block[static_cast<size_t>(block_pos) * stride + group.byte_index];
+                    bed_block[static_cast<size_t>(block_pos) * stride +
+                              group.byte_index];
 
                 const uint8_t selected_nonzero_mask =
                     lookup.nonzero_mask[byte] & group.selected_mask;
@@ -111,15 +101,20 @@ void calculate_scores(std::string bed_filename,
                     continue;
                 }
 
-                const T* snp_effects =
-                    effect_sizes + static_cast<size_t>(block_start + block_pos) * num_scores;
-                const T allele_frequency = use_frequency_adjustment ?
-                    allele_frequencies[block_start + block_pos] : T(0);
+                const T *snp_effects =
+                    effect_sizes +
+                    static_cast<size_t>(block_start + block_pos) * num_scores;
+                const T allele_frequency =
+                    use_frequency_adjustment
+                        ? allele_frequencies[block_start + block_pos]
+                        : T(0);
                 const T mean_dosage = static_cast<T>(2) * allele_frequency;
                 const T variance = mean_dosage * (static_cast<T>(1) - allele_frequency);
-                const T inverse_sd = standardize_genotype && variance > T(0) ?
-                    static_cast<T>(1) / static_cast<T>(std::sqrt(static_cast<double>(variance))) :
-                    T(0);
+                const T inverse_sd =
+                    standardize_genotype && variance > T(0)
+                        ? static_cast<T>(1) /
+                              static_cast<T>(std::sqrt(static_cast<double>(variance)))
+                        : T(0);
 
                 const int output0 = group.output_index[0];
                 const int output1 = group.output_index[1];
@@ -137,32 +132,42 @@ void calculate_scores(std::string bed_filename,
                 T value3 = T(0);
 
                 if (standardize_genotype) {
-                    value0 = dosage0 >= 0 ? (static_cast<T>(dosage0) - mean_dosage) * inverse_sd : T(0);
-                    value1 = dosage1 >= 0 ? (static_cast<T>(dosage1) - mean_dosage) * inverse_sd : T(0);
-                    value2 = dosage2 >= 0 ? (static_cast<T>(dosage2) - mean_dosage) * inverse_sd : T(0);
-                    value3 = dosage3 >= 0 ? (static_cast<T>(dosage3) - mean_dosage) * inverse_sd : T(0);
-                }
-                else if (impute_missing) {
+                    value0 = dosage0 >= 0
+                                 ? (static_cast<T>(dosage0) - mean_dosage) * inverse_sd
+                                 : T(0);
+                    value1 = dosage1 >= 0
+                                 ? (static_cast<T>(dosage1) - mean_dosage) * inverse_sd
+                                 : T(0);
+                    value2 = dosage2 >= 0
+                                 ? (static_cast<T>(dosage2) - mean_dosage) * inverse_sd
+                                 : T(0);
+                    value3 = dosage3 >= 0
+                                 ? (static_cast<T>(dosage3) - mean_dosage) * inverse_sd
+                                 : T(0);
+                } else if (impute_missing) {
                     value0 = dosage0 >= 0 ? static_cast<T>(dosage0) : mean_dosage;
                     value1 = dosage1 >= 0 ? static_cast<T>(dosage1) : mean_dosage;
                     value2 = dosage2 >= 0 ? static_cast<T>(dosage2) : mean_dosage;
                     value3 = dosage3 >= 0 ? static_cast<T>(dosage3) : mean_dosage;
-                }
-                else {
+                } else {
                     value0 = dosage0 > 0 ? static_cast<T>(dosage0) : T(0);
                     value1 = dosage1 > 0 ? static_cast<T>(dosage1) : T(0);
                     value2 = dosage2 > 0 ? static_cast<T>(dosage2) : T(0);
                     value3 = dosage3 > 0 ? static_cast<T>(dosage3) : T(0);
                 }
 
-                T* scores0 = output0 >= 0 && value0 != T(0) ?
-                             scores + static_cast<size_t>(output0) * num_scores : nullptr;
-                T* scores1 = output1 >= 0 && value1 != T(0) ?
-                             scores + static_cast<size_t>(output1) * num_scores : nullptr;
-                T* scores2 = output2 >= 0 && value2 != T(0) ?
-                             scores + static_cast<size_t>(output2) * num_scores : nullptr;
-                T* scores3 = output3 >= 0 && value3 != T(0) ?
-                             scores + static_cast<size_t>(output3) * num_scores : nullptr;
+                T *scores0 = output0 >= 0 && value0 != T(0)
+                                 ? scores + static_cast<size_t>(output0) * num_scores
+                                 : nullptr;
+                T *scores1 = output1 >= 0 && value1 != T(0)
+                                 ? scores + static_cast<size_t>(output1) * num_scores
+                                 : nullptr;
+                T *scores2 = output2 >= 0 && value2 != T(0)
+                                 ? scores + static_cast<size_t>(output2) * num_scores
+                                 : nullptr;
+                T *scores3 = output3 >= 0 && value3 != T(0)
+                                 ? scores + static_cast<size_t>(output3) * num_scores
+                                 : nullptr;
 
                 for (int score_idx = 0; score_idx < num_scores; ++score_idx) {
                     const T effect = snp_effects[score_idx];
@@ -183,7 +188,6 @@ void calculate_scores(std::string bed_filename,
             }
         }
     }
-
 }
 
 #endif // SCORE_H

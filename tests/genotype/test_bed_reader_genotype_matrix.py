@@ -52,12 +52,14 @@ def _expected_gwas(genotypes, phenotype, standardize_genotype=False):
     x = np.where(observed, genotypes - mean, 0.0)
 
     if standardize_genotype:
-        sd = np.sqrt(np.divide(
-            np.square(x).sum(axis=0),
-            n_per_snp,
-            out=np.full(genotypes.shape[1], np.nan, dtype=np.float64),
-            where=n_per_snp > 0,
-        ))
+        sd = np.sqrt(
+            np.divide(
+                np.square(x).sum(axis=0),
+                n_per_snp,
+                out=np.full(genotypes.shape[1], np.nan, dtype=np.float64),
+                where=n_per_snp > 0,
+            )
+        )
         x = np.divide(
             x,
             sd,
@@ -83,12 +85,14 @@ def _expected_gwas(genotypes, phenotype, standardize_genotype=False):
         out=np.full(genotypes.shape[1], np.nan, dtype=np.float64),
         where=n_per_snp > 2,
     )
-    se = np.sqrt(np.divide(
-        s2,
-        sum_x_sq,
-        out=np.full(genotypes.shape[1], np.nan, dtype=np.float64),
-        where=sum_x_sq > 0,
-    ))
+    se = np.sqrt(
+        np.divide(
+            s2,
+            sum_x_sq,
+            out=np.full(genotypes.shape[1], np.nan, dtype=np.float64),
+            where=sum_x_sq > 0,
+        )
+    )
     maf = np.divide(
         dosage_sum,
         2.0 * n_per_snp,
@@ -155,10 +159,12 @@ def test_compute_variant_statistics(bed_reader_gmat, genotype_numpy):
 
 
 def test_score_matches_numpy(bed_reader_gmat, genotype_numpy):
-    beta = np.column_stack([
-        np.linspace(-0.2, 0.3, bed_reader_gmat.n_snps),
-        np.cos(np.arange(bed_reader_gmat.n_snps) / 7.0),
-    ])
+    beta = np.column_stack(
+        [
+            np.linspace(-0.2, 0.3, bed_reader_gmat.n_snps),
+            np.cos(np.arange(bed_reader_gmat.n_snps) / 7.0),
+        ]
+    )
 
     raw_genotypes = np.where(genotype_numpy > 0, genotype_numpy, 0).astype(np.float64)
     expected_raw = raw_genotypes @ beta
@@ -200,7 +206,9 @@ def test_standardized_score_matches_numpy_for_complete_variants(tmp_path):
 
 
 @pytest.mark.parametrize("standardize_genotype", [False, True])
-def test_perform_gwas_matches_numpy(bed_reader_gmat, genotype_numpy, standardize_genotype):
+def test_perform_gwas_matches_numpy(
+    bed_reader_gmat, genotype_numpy, standardize_genotype
+):
     sample_idx = np.arange(bed_reader_gmat.sample_size, dtype=np.float64)
     phenotype = 0.03 * sample_idx + np.sin(sample_idx / 5.0)
     bed_reader_gmat.sample_table.set_phenotype(
@@ -241,8 +249,8 @@ def test_compute_ld_matches_numpy_windowed(tmp_path, bed_reader_gmat, genotype_n
         row_end = int(ld_boundaries[1, row])
         if row_end <= row + 1:
             continue
-        expected_sparse[row, row + 1:row_end] = expected_full[row, row + 1:row_end]
-        expected_sparse[row + 1:row_end, row] = expected_full[row + 1:row_end, row]
+        expected_sparse[row, row + 1 : row_end] = expected_full[row, row + 1 : row_end]
+        expected_sparse[row + 1 : row_end, row] = expected_full[row + 1 : row_end, row]
 
     ld_mat = bed_reader_gmat.compute_ld(
         "windowed",
@@ -274,9 +282,7 @@ def test_block_ld_uses_blockwise_fallback(tmp_path, bed_reader_gmat):
     estimator = BlockLD(bed_reader_gmat, ld_blocks=blocks)
     assert estimator._direct_estimator is None
 
-    ld_mat = estimator.compute(
-        str(tmp_path / "bed_reader_block_ld"), dtype="float32"
-    )
+    ld_mat = estimator.compute(str(tmp_path / "bed_reader_block_ld"), dtype="float32")
 
     assert ld_mat.validate_ld_matrix()
     assert ld_mat.get_store_attr("LD estimator") == "block"

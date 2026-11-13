@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import os.path as osp
 from importlib import import_module
-from typing import Union
+from typing import TYPE_CHECKING, Union
 
 import numpy as np
 import pandas as pd
 
+from .utils.chromosome_utils import normalize_chromosome
 from .utils.model_utils import dequantize, quantize
+
+
+if TYPE_CHECKING:
+    from .LDLinearOperator import LDLinearOperator
 
 
 class _LazyZarr:
@@ -1107,9 +1112,9 @@ class LDMatrix:
     @property
     def chromosome(self):
         """
-        :return: The chromosome for which this LD matrix was calculated.
+        :return: Canonical chromosome key, without modifying the stored attribute.
         """
-        return self.get_store_attr("Chromosome")
+        return normalize_chromosome(self.get_store_attr("Chromosome"))
 
     @property
     def ld_estimator(self):

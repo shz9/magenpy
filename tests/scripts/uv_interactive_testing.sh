@@ -5,7 +5,7 @@
 # IPython exits.
 #
 # Usage:
-#   tests/uv_interactive_testing.sh [IPython arguments]
+#   tests/scripts/uv_interactive_testing.sh [IPython arguments]
 #
 # Optional environment variables:
 #   UV_INTERACTIVE_PYTHON=3.12  Select the Python interpreter/version.
@@ -20,7 +20,7 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/magenpy-ipython.XXXXXX")"
 VENV_DIR="$TEMP_ROOT/venv"
 export UV_CACHE_DIR="$TEMP_ROOT/uv-cache"

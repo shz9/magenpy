@@ -4,6 +4,8 @@ from collections.abc import Mapping
 import numpy as np
 import pandas as pd
 
+from ..utils.chromosome_utils import normalize_chromosome_column
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,7 +40,7 @@ class AnnotationMatrixParser:
         if user_dtype is not None and not isinstance(user_dtype, Mapping):
             return kwargs
 
-        dtype = {"SNP": str, "POS": np.float64}
+        dtype = {"CHR": "category", "SNP": str, "POS": np.float64}
         for raw_column, output_column in (self.col_name_converter or {}).items():
             if output_column in dtype:
                 dtype[raw_column] = dtype[output_column]
@@ -65,11 +67,12 @@ class AnnotationMatrixParser:
             )
             raise e
 
-        if drop_na:
-            df = df.dropna()
-
         if self.col_name_converter is not None:
             df.rename(columns=self.col_name_converter, inplace=True)
+
+        normalize_chromosome_column(df)
+        if drop_na:
+            df = df.dropna()
 
         if "POS" in df:
             if df["POS"].isna().any():
@@ -119,7 +122,7 @@ def parse_annotation_bed_file(annot_bed_file):
 
     The file contains 3-12 columns, starting with Chromosome, start_coordinate, end_coordinate, etc.
     After reading the raw file, we let pandas infer whether the file has a header or not and we
-    standardize the names of the first 3 columns and convert the chromosome column into an integer.
+    standardize the names of the first 3 columns and normalize chromosome labels.
 
     :param annot_bed_file: The path to the annotation BED file.
     :type annot_bed_file: str
@@ -131,7 +134,7 @@ def parse_annotation_bed_file(annot_bed_file):
             usecols=[0, 1, 2],
             sep="\t",
             names=["CHR", "Start", "End"],
-            dtype={"CHR": str, "Start": np.int32, "End": np.int32},
+            dtype={"CHR": "category", "Start": np.int32, "End": np.int32},
         )
     except Exception as e:
         logger.error(
@@ -140,6 +143,6 @@ def parse_annotation_bed_file(annot_bed_file):
         )
         raise e
 
-    annot_bed["CHR"] = annot_bed["CHR"].str.replace("chr", "").astype(int)
+    normalize_chromosome_column(annot_bed)
 
     return annot_bed

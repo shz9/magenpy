@@ -3,21 +3,21 @@
 # Build and run the PLINK-vs-magenpy backend comparison tests in Docker.
 #
 # Usage:
-#   bash tests/run_plink_backend_docker.sh
+#   bash tests/scripts/run_plink_backend_docker.sh
 #
 # Optional environment variables:
 #   DOCKER_PLATFORM=linux/amd64
 #   IMAGE_NAME=magenpy-plink-backend-tests
-#   PYTEST_ARGS="-v -m plink tests/test_magenpy_vs_plink_backend.py"
+#   PYTEST_ARGS="-q"
 
 set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+PROJECT_ROOT="$( cd "$SCRIPT_DIR/../.." && pwd )"
 
 DOCKER_PLATFORM="${DOCKER_PLATFORM:-linux/amd64}"
 IMAGE_NAME="${IMAGE_NAME:-magenpy-plink-backend-tests}"
-PYTEST_ARGS="${PYTEST_ARGS:--v -m plink tests/test_magenpy_vs_plink_backend.py}"
+PYTEST_ARGS="${PYTEST_ARGS:--q}"
 
 cd "$PROJECT_ROOT"
 
@@ -30,4 +30,4 @@ docker build \
 docker run --rm \
     --platform "$DOCKER_PLATFORM" \
     "$IMAGE_NAME" \
-    python -m pytest $PYTEST_ARGS
+    python tests/scripts/run_backend_checks.py $PYTEST_ARGS

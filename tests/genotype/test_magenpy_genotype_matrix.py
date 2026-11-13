@@ -203,9 +203,7 @@ def test_block_boundaries_handle_gaps():
     blocks = np.array([[10, 31], [50, 61]], dtype=np.int64)
 
     observed = find_ld_block_boundaries(positions, blocks)
-    expected = np.array(
-        [[0, 0, 0, 3, 4, 4], [3, 3, 3, 4, 6, 6]], dtype=np.int32
-    )
+    expected = np.array([[0, 0, 0, 3, 4, 4], [3, 3, 3, 4, 6, 6]], dtype=np.int32)
     np.testing.assert_array_equal(observed, expected)
 
 
@@ -241,3 +239,61 @@ def test_native_block_ld_matches_blockwise_fallback(tmp_path, magenpy_gmat):
     assert np.array_equal(direct.snps, fallback.snps)
     assert np.array_equal(direct.indptr[:], fallback.indptr[:])
     np.testing.assert_allclose(direct.data[:], fallback.data[:], rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.parametrize("split_method", ["variants", "chromosome"])
+def test_split_preserves_bed_stride(tmp_path, split_method):
+    g = MagenpyGenotypeMatrix.from_file(mgp.tgp_eur_data_path(), temp_dir=str(tmp_path))
+    full_n = g.total_samples
+    g.filter_samples(keep_samples=g.samples[:48])
+    g.filter_snps(extract_snps=g.snps[:64])
+    expected = g.to_numpy()
+    if split_method == "variants":
+        child = g.split_by_variants({"block": g.snps})["block"]
+    else:
+        # Force the multi-chromosome split branch without changing BED offsets.
+        g.snp_table.loc[g.snp_table.index[32:], "CHR"] = 23
+        child = g.split_by_chromosome()[g.snp_table.CHR.iloc[0]]
+        expected = expected[:, :32]
+    assert child.total_samples == full_n
+    np.testing.assert_array_equal(child.to_numpy(), expected)
+
+
+def test_loader_filters_samples_before_variant_qc(tmp_path):
+    reference = MagenpyGenotypeMatrix.from_file(
+        mgp.tgp_eur_data_path(), temp_dir=str(tmp_path)
+    )
+    selected = reference.samples[:48]
+    reference.filter_samples(keep_samples=selected)
+    reference.filter_by_allele_frequency(min_maf=0.05, min_mac=10)
+    loader = mgp.GWADataLoader(
+        bed_files=mgp.tgp_eur_data_path(),
+        backend="magenpy",
+        keep_samples=selected,
+        min_maf=0.05,
+        min_mac=10,
+        temp_dir=str(tmp_path),
+    )
+    result = next(iter(loader.genotype.values()))
+    np.testing.assert_array_equal(result.snps, reference.snps)
+    np.testing.assert_allclose(result.maf, reference.maf, equal_nan=True)
+    np.testing.assert_array_equal(result.n_per_snp, reference.n_per_snp)
+    loader.filter_samples(keep_samples=selected[:24])
+    expected_af, expected_n = _allele_frequency_and_n(result.to_numpy())
+    np.testing.assert_allclose(result.maf, expected_af, equal_nan=True)
+    np.testing.assert_array_equal(result.n_per_snp, expected_n)
+
+
+def test_mac_cutoff_rounds_counts_and_excludes_missing(magenpy_gmat):
+    table = magenpy_gmat.snp_table.iloc[:3].copy()
+    table["MAF"] = [np.nextafter(0.05, 0.0), 0.1, np.nan]
+    table["N"] = [100, 100, 0]
+    g = MagenpyGenotypeMatrix(
+        sample_table=magenpy_gmat.sample_table,
+        snp_table=table,
+        bed_file=magenpy_gmat.bed_file,
+        temp_dir=magenpy_gmat.temp_dir,
+        total_samples=magenpy_gmat.total_samples,
+    )
+    g.filter_by_allele_frequency(min_maf=0.01, min_mac=10)
+    np.testing.assert_array_equal(g.snps, table.SNP.values[:2])

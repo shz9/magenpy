@@ -1,0 +1,5 @@
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 88
+SortIncludes: Never
+Standard: c++17

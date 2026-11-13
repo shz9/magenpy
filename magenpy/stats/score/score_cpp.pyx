@@ -3,7 +3,6 @@
 
 from libcpp.string cimport string
 from libcpp cimport bool
-from cython cimport floating
 import numpy as np
 
 cdef extern from "score.hpp" nogil:

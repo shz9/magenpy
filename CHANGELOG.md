@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-11-13
+
+> **Critical correctness warning: recompute affected results.** Earlier releases
+> that used the `magenpy` backend could silently produce incorrect results after
+> sample or ancestry subsetting.
+> Allele-frequency QC could use pooled samples or stale MAF/sample-count caches.
+> Separately, native BED-backed chromosome/block splits could use an incorrect
+> sample count to calculate BED offsets, read the wrong genotypes, and corrupt
+> LD matrices and LD scores.
+>
+> If your workflow used sample subsets, review its outputs and rerun affected
+> frequency estimation, variant QC, LD matrices/LD scores, and dependent analyses
+> from the original unfiltered BED/FAM/BIM files with the intended sample lists.
+> **Installing this update does not repair previously saved results.**
+
+### Fixed
+
+- Apply sample selection, including phenotype/covariate-driven sample removal,
+  before MAF/MAC filtering. Invalidate cached MAF and per-variant sample counts
+  whenever the selected samples change.
+- Preserve the full source FAM sample count through chromosome and variant/block
+  splits, keeping native BED byte offsets independent of retained sample indices.
+- Keep xarray genotype columns aligned with variant metadata during QC and
+  harmonization; prevent repeated extraction IDs from duplicating variants and
+  isolate sample-table changes across splits.
+- Correct MAC cutoff rounding and exclude variants without observed genotypes
+  when applying frequency/count QC.
+- Implement cleanup for all genotype backends and ensure PLINK temporary
+  directories are removed even when an operation fails.
+- Compute native GWAS residual variance using each variant's observed phenotype
+  subset, correcting standard errors when genotype calls are missing; use the
+  finite-sample t distribution for native linear-GWAS p-values.
+- Preserve PLINK scoring rows with opposing nonzero weights, and make missing
+  calls contribute zero after genotype standardization.
+- Allow PLINK block/sample LD estimation without genetic-map distances.
+
+### Changed
+
+- Standardize chromosome labels before splitting and matching across genotypes,
+  summary statistics, annotations, and LD metadata. Encodings such as `chr1`,
+  `chr:1`, `chr_1`, and `1` share a canonical ID. Compact categorical storage uses
+  PLINK chromosome definitions, preserves additional contigs, and excludes unused
+  categories from chromosome discovery and grouping.
+- Consolidate chromosome and position-dtype normalization in summary-statistics
+  post-processing, and simplify harmonization with shared planning and allele
+  correction utilities, fewer table copies, and fewer LD-mask updates.
+- Rename `GenotypeMatrix.identifier_cols` to `variant_id_cols`; callers using the
+  former property should update their code.
+
+### Added
+
+- Add automatic safe Python fixes/formatting, C/C++ formatting, Cython quote
+  normalization, and independent lint checks in GitHub Actions, with pinned tools
+  and matching local `make fix` / `make lint` commands.
+- Expand regression coverage with independently encoded BED fixtures for subset
+  frequencies, QC, split offsets, scoring, GWAS, LD/LD scores, chromosome
+  normalization, memory reuse, and cleanup.
+- Require native-versus-PLINK parity tests on pushes, pull requests, and before
+  PyPI uploads, with pinned PLINK downloads, fresh native builds, and zero skips.
+
 ## [0.2.4] - 2026-11-11
 
 ### Added

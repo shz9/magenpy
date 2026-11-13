@@ -61,7 +61,7 @@ def score_plink2(genotype_matrix, betas, standardize_genotype=False, temp_dir="t
         df["BETA" + str(i)] = betas[:, i]
 
     # Remove any variants whose effect size is zero for all BETAs:
-    df = df.loc[df[["BETA" + str(i) for i in range(betas_shape)]].sum(axis=1) != 0]
+    df = df.loc[df[["BETA" + str(i) for i in range(betas_shape)]].ne(0).any(axis=1)]
 
     # If none of the variants have an effect size, return zeros:
     if len(df) == 0:
@@ -69,7 +69,9 @@ def score_plink2(genotype_matrix, betas, standardize_genotype=False, temp_dir="t
     else:
         # Standardize the genotype, if requested:
         if standardize_genotype:
-            standardize_text = " variance-standardize"
+            # Missing standardized genotypes contribute zero. Explicitly disable
+            # PLINK's raw-dosage mean imputation after the transformation.
+            standardize_text = " variance-standardize no-mean-imputation"
         else:
             standardize_text = ""
 

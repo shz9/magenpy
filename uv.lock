@@ -1607,7 +1607,7 @@ wheels = [
 
 [[package]]
 name = "magenpy"
-version = "0.2.4"
+version = "0.2.5"
 source = { editable = "." }
 dependencies = [
     { name = "joblib" },
@@ -1659,6 +1659,7 @@ s3 = [
 ]
 test = [
     { name = "pytest" },
+    { name = "statsmodels" },
 ]
 
 [package.metadata]
@@ -1684,6 +1685,7 @@ requires-dist = [
     { name = "scipy", specifier = "<1.17" },
     { name = "seaborn", marker = "extra == 'opt'" },
     { name = "statsmodels", marker = "extra == 'opt'" },
+    { name = "statsmodels", marker = "extra == 'test'" },
     { name = "tqdm" },
     { name = "zarr", specifier = "<3" },
 ]
