@@ -4,10 +4,21 @@
 pushes, pull requests, and manual dispatch. It measures the current revision and
 the PR base (or preceding push commit) **on the same Ubuntu runner**, at one and
 two native threads. Both extensions are compiled from source with OpenMP using
-the same pinned Python 3.12 runtime/build dependencies in
-[requirements-benchmark.txt](../requirements-benchmark.txt). The runner verifies
+one shared Python 3.12 environment.
+[requirements-benchmark.txt](../requirements-benchmark.txt) includes the runtime
+requirements and unpinned build tools; dependencies are installed once for both
+builds, and the resolved versions are retained in `dependencies.txt` in the
+artifact. The runner verifies
 that each worker imports the intended checkout. BLAS/NumExpr threads are fixed
 at one so native threading is measured independently.
+
+If the event's baseline commit is missing locally, the workflow tries fetching
+it from `origin`. If an automatic baseline is unavailable (for example, after a
+force push), it warns and uses `HEAD^`. A checkout without a parent records an
+initial run without a regression comparison. An invalid explicitly requested
+manual baseline fails rather than silently comparing against another revision.
+Early failures before any outputs exist do not cause a second artifact-upload
+failure; partial outputs are retained when available.
 
 The suite covers allele frequencies/counts, single-score calculation, standardized
 scoring, 16 simultaneous scores, GWAS with missing-call exclusion and mean
