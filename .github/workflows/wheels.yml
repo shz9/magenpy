@@ -24,7 +24,7 @@ jobs:
             macos-15,
           ]
     env:
-      CIBW_BUILD: "cp311-* cp312-* cp313-* cp314-*"
+      CIBW_BUILD: "cp311-* cp312-* cp313-*"
       CIBW_SKIP: "pp* cp36-* *-musllinux_* *win32 *_i686 *_s390x"
 
     steps:

@@ -7,7 +7,7 @@
 # $ bash tests/scripts/uv_manual_testing.sh
 #
 # Optional environment variables:
-#   PYTHON_VERSIONS="3.11 3.14"  Override the default Python versions.
+#   PYTHON_VERSIONS="3.11 3.13"  Override the default Python versions.
 #   UV_TEST_ENV_DIR=".uv-test-envs"  Override where temporary virtualenvs live.
 #   KEEP_UV_ENVS=1  Keep virtualenvs after each run for debugging.
 
@@ -28,11 +28,11 @@ echo "Project root: $PROJECT_ROOT"
 echo "Virtualenv root: $ENV_ROOT"
 
 # Define Python versions. Override with:
-#   PYTHON_VERSIONS="3.11 3.14" bash tests/scripts/uv_manual_testing.sh
+#   PYTHON_VERSIONS="3.11 3.13" bash tests/scripts/uv_manual_testing.sh
 if [[ -n "${PYTHON_VERSIONS:-}" ]]; then
     read -r -a python_versions <<< "$PYTHON_VERSIONS"
 else
-    python_versions=("3.11" "3.12" "3.13" "3.14")
+    python_versions=("3.11" "3.12" "3.13")
 fi
 
 mkdir -p "$ENV_ROOT"

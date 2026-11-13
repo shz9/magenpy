@@ -7,7 +7,7 @@ to ensure that a `C/C++` Compiler (with appropriate flags) is present on your sy
 
 Building the `magenpy` package requires the following dependencies:
 
-* `Python` (>=3.11; supported versions: 3.11, 3.12, 3.13, and 3.14)
+* `Python` (>=3.11,<3.14; supported versions: 3.11, 3.12, and 3.13)
 * `C/C++` Compiler
 * `Cython` (>=0.29.21)
 * `NumPy` (>=2.0)

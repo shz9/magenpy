@@ -43,8 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Drop Python 3.10 support and add Python 3.14 to the supported versions,
-  CI test matrices, and wheel builds. Python 3.11 is now the minimum version.
+- Drop Python 3.10 support. Supported versions, CI test matrices, and wheel
+  builds are limited to Python 3.11, 3.12, and 3.13. Exclude Python 3.14 from
+  package metadata until the Zarr 2 / numcodecs dependency stack can be
+  installed reliably across platforms.
 
 - Standardize chromosome labels before splitting and matching across genotypes,
   summary statistics, annotations, and LD metadata. Encodings such as `chr1`,
