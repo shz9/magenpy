@@ -268,6 +268,9 @@ def synthetic_panel(tmp_path_factory, request):
     x[:24, 0], x[24:48, 0] = 0, 2
     x[:24, 1], x[24:48, 1] = 2, 0
     x[:, 2], x[:, 3], x[:, 5] = -1, 0, 2
+    x[:, 6:8] = -1
+    x[0, 6] = 1  # Only one observed call.
+    x[:2, 7] = [0, 2]  # Two observed calls with nonzero genotype variance.
     x[:24, 4] = 0
     x[0, 4] = 1  # Exact MAC=1 boundary in the first cohort.
     x[:, 9], x[:, 10] = x[:, 8], 2 - x[:, 8]
@@ -787,3 +790,198 @@ def test_random_missing_ld_matches_independent_numpy(
         atol=1e-10,
         rtol=0,
     )
+
+
+def _numpy_linear_gwas(x, y, impute_missing, standardize):
+    """Fit independent per-SNP OLS models with explicit intercepts."""
+    from scipy.stats import t
+
+    columns = ["N", "MAF", "BETA", "SE", "Z", "PVAL"]
+    records = []
+    for raw in x.T:
+        observed = raw >= 0
+        n_observed = int(observed.sum())
+        row = dict.fromkeys(columns, np.nan)
+        row["N"] = 0
+        if n_observed:
+            mean = raw[observed].mean()
+            row["MAF"] = mean / 2
+            values = np.where(observed, raw, mean) if impute_missing else raw[observed]
+            phenotype = y if impute_missing else y[observed]
+            row["N"] = len(values)
+            if np.ptp(values) > 0:
+                if standardize:
+                    values = (values - values.mean()) / values.std()
+                design = np.column_stack((np.ones(len(values)), values))
+                coefficient = np.linalg.lstsq(design, phenotype, rcond=None)[0]
+                row["BETA"] = coefficient[1]
+                if len(values) > 2:
+                    residual = phenotype - design @ coefficient
+                    centered = values - values.mean()
+                    row["SE"] = np.sqrt(
+                        (residual @ residual)
+                        / ((len(values) - 2) * (centered @ centered))
+                    )
+                    row["Z"] = row["BETA"] / row["SE"]
+                    row["PVAL"] = 2 * t.sf(abs(row["Z"]), len(values) - 2)
+        records.append(row)
+    return pd.DataFrame(records, columns=columns)
+
+
+@pytest.mark.parametrize("impute_missing", [False, True])
+@pytest.mark.parametrize("standardize", [False, True])
+@pytest.mark.parametrize("threads", [1, 2])
+@pytest.mark.parametrize("selection", ["prefix", "interior"])
+def test_gwas_missing_call_modes_match_numpy_after_splits_and_outlier_removal(
+    tmp_path, synthetic_panel, impute_missing, standardize, threads, selection
+):
+    prefix, x = synthetic_panel["panels"]["missing"]
+    rows = _rows(synthetic_panel, selection)
+    cols = np.array([8, 9, 10, 12, 14, 17, 19, 22])
+    g = MagenpyGenotypeMatrix.from_file(prefix, temp_dir=str(tmp_path), threads=threads)
+    _ = g.maf, g.n_per_snp  # Warm pooled caches before sample selection.
+    g.filter_samples(keep_samples=synthetic_panel["samples"][rows])
+    g = g.split_by_chromosome()[1]
+    g = g.split_by_variants({"region": synthetic_panel["snps"][cols]})["region"]
+    cached_maf, cached_n = g.maf.copy(), g.n_per_snp.copy()
+    sample = np.arange(len(rows), dtype=float)
+    y = 0.03 * sample + np.sin(sample / 3.0) + 0.2 * np.cos(sample / 7.0)
+    y[3] = 50
+    g.sample_table.set_phenotype(y, phenotype_likelihood="gaussian")
+    retained = np.abs((y - y.mean()) / y.std()) <= 2.5
+    assert not retained.all()
+    expected = _numpy_linear_gwas(
+        x[np.ix_(rows, cols)][retained], y[retained], impute_missing, standardize
+    )
+    observed = g.perform_gwas(
+        impute_missing=impute_missing,
+        standardize_genotype=standardize,
+        outlier_sigma_threshold=2.5,
+    ).to_table()
+    np.testing.assert_array_equal(observed["SNP"], synthetic_panel["snps"][cols])
+    np.testing.assert_array_equal(observed["N"], expected["N"])
+    np.testing.assert_allclose(
+        observed[expected.columns.drop("N")],
+        expected.drop(columns="N"),
+        rtol=1e-10,
+        atol=1e-11,
+        equal_nan=True,
+    )
+    # GWAS-only imputation/phenotype masks must not change genotype caches.
+    np.testing.assert_array_equal(g.n_per_snp, cached_n)
+    np.testing.assert_array_equal(g.maf, cached_maf)
+
+
+@pytest.mark.parametrize("standardize", [False, True])
+def test_gwas_missing_call_modes_agree_on_complete_snps(
+    tmp_path, synthetic_panel, standardize
+):
+    prefix, x = synthetic_panel["panels"]["complete"]
+    rows = _rows(synthetic_panel, "interior")
+    cols = np.arange(8, 12)
+    g = MagenpyGenotypeMatrix.from_file(prefix, temp_dir=str(tmp_path))
+    g.filter_samples(keep_samples=synthetic_panel["samples"][rows])
+    g.filter_snps(extract_snps=synthetic_panel["snps"][cols])
+    assert np.all(x[np.ix_(rows, cols)] >= 0)
+    y = np.sin(np.arange(len(rows)) / 3.0)
+    g.sample_table.set_phenotype(y, phenotype_likelihood="gaussian")
+    default = g.perform_gwas(standardize_genotype=standardize).to_table()
+    for impute_missing in (False, True):
+        observed = g.perform_gwas(
+            standardize_genotype=standardize,
+            impute_missing=impute_missing,
+        ).to_table()
+        pd.testing.assert_frame_equal(default, observed)
+
+
+@pytest.mark.parametrize("impute_missing", [False, True])
+@pytest.mark.parametrize("standardize", [False, True])
+def test_gwas_imputation_handles_degenerate_snps(
+    tmp_path, synthetic_panel, impute_missing, standardize
+):
+    prefix, x = synthetic_panel["panels"]["complete"]
+    rows = _rows(synthetic_panel, "prefix")
+    cols = np.array([2, 3, 5, 6, 7, 8, 12])
+    g = MagenpyGenotypeMatrix.from_file(prefix, temp_dir=str(tmp_path))
+    g.filter_samples(keep_samples=synthetic_panel["samples"][rows])
+    g.filter_snps(extract_snps=synthetic_panel["snps"][cols])
+    y = np.sin(np.arange(len(rows)) / 3.0)
+    g.sample_table.set_phenotype(y, phenotype_likelihood="gaussian")
+    expected = _numpy_linear_gwas(x[np.ix_(rows, cols)], y, impute_missing, standardize)
+    observed = g.perform_gwas(
+        impute_missing=impute_missing,
+        standardize_genotype=standardize,
+    ).to_table()
+    np.testing.assert_array_equal(observed["N"], expected["N"])
+    np.testing.assert_allclose(
+        observed[expected.columns.drop("N")],
+        expected.drop(columns="N"),
+        rtol=1e-10,
+        atol=1e-11,
+        equal_nan=True,
+    )
+    assert observed.loc[0, "N"] == 0  # No observed mean exists for this SNP.
+    assert np.isnan(observed.loc[0, "BETA"])
+    assert np.isnan(observed.loc[3, "BETA"])  # One call cannot supply variation.
+    assert np.isfinite(observed.loc[4, "SE"]) == impute_missing
+
+
+@pytest.mark.parametrize("impute_missing", [False, True])
+def test_loader_forwards_gwas_imputation_to_each_chromosome(
+    tmp_path, synthetic_panel, impute_missing
+):
+    prefix, x = synthetic_panel["panels"]["missing"]
+    rows = _rows(synthetic_panel, "prefix")
+    cols = np.array([8, 12, 24, 31])
+    loader = mgp.GWADataLoader(
+        bed_files=prefix,
+        backend="magenpy",
+        min_maf=None,
+        min_mac=None,
+        keep_samples=synthetic_panel["samples"][rows],
+        temp_dir=str(tmp_path),
+    )
+    loader.filter_snps(extract_snps=synthetic_panel["snps"][cols])
+    y = np.sin(np.arange(len(rows)) / 3.0)
+    loader.set_phenotype(y, phenotype_likelihood="gaussian")
+    loader.perform_gwas(impute_missing=impute_missing)
+    for chromosome, g in loader.genotype.items():
+        expected = _numpy_linear_gwas(
+            x[np.ix_(rows, g.snp_index)], y, impute_missing, False
+        )
+        observed = loader.sumstats_table[chromosome].to_table()
+        np.testing.assert_array_equal(observed["N"], expected["N"])
+        np.testing.assert_allclose(
+            observed[expected.columns.drop("N")],
+            expected.drop(columns="N"),
+            rtol=1e-10,
+            atol=1e-11,
+        )
+
+
+@pytest.mark.parametrize("impute_missing", [False, True])
+@pytest.mark.parametrize("empty", [None, "samples", "snps"])
+def test_gwas_kernel_optional_outputs_and_empty_inputs(
+    tmp_path, synthetic_panel, impute_missing, empty
+):
+    from magenpy.stats.variant.variant_cpp import compute_gwa_linear_stats
+
+    prefix, _ = synthetic_panel["panels"]["missing"]
+    rows = np.arange(0 if empty == "samples" else 24, dtype=np.int32)
+    cols = np.array([] if empty == "snps" else [2, 3, 6, 7, 8, 12], dtype=np.int32)
+    y = np.sin(np.arange(len(rows)) / 3.0)
+    if len(y):
+        y -= y.mean()
+    args = (prefix + ".bed", cols, rows, synthetic_panel["n"], y)
+    options = dict(impute_missing=impute_missing, standardize_genotype=True)
+    original = compute_gwa_linear_stats(*args, **options)
+    extended = compute_gwa_linear_stats(*args, return_y_sum_sq=True, **options)
+    assert len(original) == 4 and len(extended) == 5
+    for a, b in zip(original, extended):
+        np.testing.assert_array_equal(a, b)
+        assert a.shape == (len(cols),)
+    if empty == "samples":
+        np.testing.assert_array_equal(extended[1], np.zeros(len(cols), dtype=np.int32))
+        assert np.isnan(extended[4]).all()
+    if empty == "snps":
+        assert extended[4].shape == (0,)

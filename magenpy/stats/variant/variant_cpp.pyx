@@ -69,6 +69,7 @@ cdef extern from "variant_utils.hpp" nogil:
                                                                     int num_snps,
                                                                     const T* centered_phenotype,
                                                                     cpp_bool standardize_genotype,
+                                                                    cpp_bool impute_missing,
                                                                     T* allele_frequencies,
                                                                     int* n_per_snp,
                                                                     T* x_dot_y,
@@ -207,14 +208,19 @@ cpdef compute_gwa_linear_stats(bed_filename,
                                const double[::1] centered_phenotype,
                                bint standardize_genotype=False,
                                int threads=1,
-                               bint return_y_sum_sq=False):
+                               bint return_y_sum_sq=False,
+                               bint impute_missing=False):
     """
     Compute per-SNP sufficient statistics for simple linear GWAS from a PLINK
     BED file without materializing the genotype matrix.
 
+    :param impute_missing: Mean-impute missing calls when True; otherwise exclude
+        missing calls per SNP. Standardization and n_per_snp use the regression
+        sample count. Allele frequencies always use observed calls; entirely
+        missing SNPs retain NaN frequencies and N=0.
     :return: Tuple `(allele_frequencies, n_per_snp, x_dot_y, sum_x_sq)`.
         When return_y_sum_sq=True, append phenotype sum of squares centered
-        within each SNP's observed sample subset.
+        over the samples included in each SNP's regression.
     """
 
     cdef:
@@ -281,6 +287,7 @@ cpdef compute_gwa_linear_stats(bed_filename,
                                          num_snps,
                                          centered_phenotype_ptr,
                                          c_standardize_genotype,
+                                         <cpp_bool> impute_missing,
                                          allele_frequency_ptr,
                                          n_per_snp_ptr,
                                          x_dot_y_ptr,

@@ -502,6 +502,7 @@ def perform_gwa_magenpy(
     genotype_matrix,
     temp_dir=None,
     standardize_genotype=False,
+    impute_missing=False,
     **phenotype_transform_kwargs,
 ):
     """
@@ -519,6 +520,12 @@ def perform_gwa_magenpy(
         GWAS helpers. The native backend does not write intermediate files.
     :param standardize_genotype: If True, genotype columns are standardized
         before association testing.
+    :param impute_missing: If True, replace missing genotypes with their SNP's
+        mean among observed calls in the selected, phenotype-filtered samples.
+        Otherwise, exclude missing calls separately for each SNP (the default).
+        N and residual degrees of freedom reflect the samples in the regression;
+        allele frequencies always use observed calls. Completely missing SNPs
+        retain N=0 and undefined association statistics.
     :param phenotype_transform_kwargs: Keyword arguments passed to
         `chained_transform`.
 
@@ -566,6 +573,7 @@ def perform_gwa_magenpy(
         standardize_genotype=standardize_genotype,
         threads=genotype_matrix.threads,
         return_y_sum_sq=True,
+        impute_missing=impute_missing,
     )
 
     slope = np.divide(
@@ -575,7 +583,7 @@ def perform_gwa_magenpy(
         where=sum_x_sq > 0,
     )
 
-    # Each variant fits an intercept over its own observed sample subset.
+    # The kernel centers phenotype variance over the samples used by each regression.
     residual_sum_sq = sum_y_sq - slope * x_dot_y
     residual_sum_sq = np.maximum(residual_sum_sq, 0.0)
 

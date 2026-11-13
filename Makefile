@@ -1,4 +1,4 @@
-.PHONY: fix fix-python fix-cython fix-cpp lint lint-python lint-cython lint-cpp build build-inplace test test-inplace test-plink-docker dist redist install install-from-source clean uninstall publish-test publish
+.PHONY: fix fix-python fix-cython fix-cpp lint lint-python lint-cython lint-cpp build build-inplace test test-inplace test-plink-docker benchmark dist redist install install-from-source clean uninstall publish-test publish
 
 # Install requirements-lint.txt in an active virtual environment first.
 fix: fix-python fix-cython fix-cpp
@@ -45,6 +45,9 @@ test:
 
 test-plink-docker:
 	bash tests/scripts/run_plink_backend_docker.sh
+
+benchmark:
+	python benchmarks/benchmark_native.py --output benchmark-results/current.json
 
 dist:
 	python setup.py sdist bdist_wheel

@@ -94,6 +94,15 @@ g_sim.perform_gwas()
 g_sim.to_summary_statistics_table()
 ```
 
+For the native `magenpy` backend, GWAS excludes missing genotype calls separately
+for each SNP by default. Enable mean imputation with
+`g_sim.perform_gwas(impute_missing=True)`. Means are estimated from observed
+calls among the selected samples after phenotype filtering. `N` counts the
+samples used in each regression, including imputed calls when enabled; genotype
+frequency/count caches continue to describe observed calls. Standardized
+genotypes are scaled after imputation. Completely missing SNPs retain `N=0` and
+undefined association statistics because their mean cannot be estimated.
+
 ```
         CHR         SNP       POS A1 A2  ...    N      BETA         Z        SE      PVAL
  0       22    rs131538  16871137  A  G  ...  378 -0.046662 -0.900937  0.051793  0.367622

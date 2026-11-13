@@ -128,9 +128,9 @@ typename std::enable_if<std::is_floating_point<T>::value, void>::type
 compute_gwa_linear_stats(std::string bed_filename, const int *snp_indices,
                          const int *sample_indices, int total_samples, int num_samples,
                          int num_snps, const T *centered_phenotype,
-                         bool standardize_genotype, T *allele_frequencies,
-                         int *n_per_snp, T *x_dot_y, T *sum_x_sq, T *sum_y_sq,
-                         int threads) {
+                         bool standardize_genotype, bool impute_missing,
+                         T *allele_frequencies, int *n_per_snp, T *x_dot_y, T *sum_x_sq,
+                         T *sum_y_sq, int threads) {
     /*
         Compute per-variant sufficient statistics for simple linear GWAS from
         a SNP-major PLINK BED file without materializing the genotype matrix.
@@ -140,11 +140,15 @@ compute_gwa_linear_stats(std::string bed_filename, const int *snp_indices,
             n_per_snp[snp_pos]
             x_dot_y[snp_pos] = x_j' y_centered
             sum_x_sq[snp_pos] = x_j' x_j
-            sum_y_sq[snp_pos] = centered phenotype sum of squares over observed calls
+            sum_y_sq[snp_pos] = centered phenotype sum of squares over regression
+       samples
 
-        Missing genotypes are assigned x=0 after centering/scaling. This
-        matches the existing xarray GWAS path, where missing genotypes are
-        filled with 0 after centering or standardization.
+        With impute_missing=false, regressions exclude each SNP's missing calls.
+        With impute_missing=true, missing calls receive the observed SNP mean.
+        Unscaled centered genotype cross-products are identical in both modes, but
+        phenotype variance, regression sample counts, and genotype scaling use
+        all selected samples under mean imputation. A completely missing SNP
+        cannot be imputed and retains N=0 with undefined statistics.
     */
 
     if (total_samples <= 0) {
@@ -188,6 +192,18 @@ compute_gwa_linear_stats(std::string bed_filename, const int *snp_indices,
             }
         }
         return;
+    }
+
+    T full_y_sum_sq = T(0);
+    if (impute_missing && sum_y_sq != nullptr) {
+        T full_y_sum = T(0);
+        for (int sample_pos = 0; sample_pos < num_samples; ++sample_pos) {
+            const T value = centered_phenotype[sample_pos];
+            full_y_sum += value;
+            full_y_sum_sq += value * value;
+        }
+        full_y_sum_sq = std::max(T(0), full_y_sum_sq - full_y_sum * full_y_sum /
+                                                           static_cast<T>(num_samples));
     }
 
     const PlinkDosageLookup lookup;
@@ -266,9 +282,14 @@ compute_gwa_linear_stats(std::string bed_filename, const int *snp_indices,
                 continue;
             }
 
+            const int regression_n = impute_missing ? num_samples : non_missing;
+            n_per_snp[snp_pos] = regression_n;
             if (sum_y_sq != nullptr) {
                 sum_y_sq[snp_pos] =
-                    std::max(T(0), observed_y_sum_sq - observed_y_sum * observed_y_sum /
+                    impute_missing
+                        ? full_y_sum_sq
+                        : std::max(T(0),
+                                   observed_y_sum_sq - observed_y_sum * observed_y_sum /
                                                            static_cast<T>(non_missing));
             }
             const T mean_dosage = dosage_sum / static_cast<T>(non_missing);
@@ -284,10 +305,10 @@ compute_gwa_linear_stats(std::string bed_filename, const int *snp_indices,
                 sum_x_sq[snp_pos] = T(0);
             } else if (standardize_genotype) {
                 const T scale =
-                    static_cast<T>(std::sqrt(static_cast<double>(non_missing) /
+                    static_cast<T>(std::sqrt(static_cast<double>(regression_n) /
                                              static_cast<double>(centered_sum_sq)));
                 x_dot_y[snp_pos] = centered_dot_y * scale;
-                sum_x_sq[snp_pos] = static_cast<T>(non_missing);
+                sum_x_sq[snp_pos] = static_cast<T>(regression_n);
             } else {
                 x_dot_y[snp_pos] = centered_dot_y;
                 sum_x_sq[snp_pos] = centered_sum_sq;

@@ -56,6 +56,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add continuous native speed/memory benchmarks for windowed/block LD, scoring,
+  GWAS, and variant statistics, with base/current comparisons on the same runner
+  and persistent CSV/Markdown history.
+- Support optional mean imputation in native GWAS with `impute_missing=True`,
+  retaining per-SNP exclusion of missing calls as the default. Regression sample
+  counts, standardization, residual variance, and p-values follow the chosen mode.
 - Add automatic safe Python fixes/formatting, C/C++ formatting, Cython quote
   normalization, and independent lint checks in GitHub Actions, with pinned tools
   and matching local `make fix` / `make lint` commands.

@@ -51,3 +51,6 @@ pip-delete-this-directory.txt
 
 # Strict backend CI report
 backend-validation.xml
+
+# Local performance runs (published history lives in benchmarks/).
+benchmark-results/

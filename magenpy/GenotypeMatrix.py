@@ -1514,17 +1514,21 @@ class MagenpyGenotypeMatrix(GenotypeMatrix):
             dtype=np.dtype(dtype),
         )
 
-    def perform_gwas(self, **gwa_kwargs):
+    def perform_gwas(self, impute_missing=False, **gwa_kwargs):
         """
         Perform genome-wide association testing of all variants against the
         phenotype using the native magenpy BED backend.
 
+        :param impute_missing: If True, mean-impute missing calls using the SNP's
+            observed mean in the samples used for GWAS. If False (the default),
+            exclude missing calls per SNP. N includes imputed samples when enabled;
+            completely missing SNPs retain N=0 and undefined statistics.
         :return: A summary statistics table containing the association results.
         """
 
         from .stats.gwa.utils import perform_gwa_magenpy
 
-        return perform_gwa_magenpy(self, **gwa_kwargs)
+        return perform_gwa_magenpy(self, impute_missing=impute_missing, **gwa_kwargs)
 
     def compute_allele_frequency(self):
         from .stats.variant.variant_cpp import compute_variant_stats
