@@ -833,3 +833,29 @@ def test_harmonization_uses_ld_index_api_only_when_selection_changes(
     calls = setter.call_count
     loader.harmonize_data()
     assert setter.call_count == calls
+
+
+def test_merge_snp_tables_preserves_source_indices_without_mutating_inputs():
+    reference = pd.DataFrame(
+        {"SNP": ["rs1", "rs2"], "A1": ["A", "C"], "A2": ["G", "T"]},
+        index=[10, 20],
+    )
+    alternative = pd.DataFrame(
+        {
+            "SNP": ["rs2", "rs1", "rs1"],
+            "A1": ["T", "A", "A"],
+            "A2": ["C", "G", "G"],
+            "BETA": [2.0, 1.0, 9.0],
+        },
+        index=[31, 41, 51],
+    )
+    original_ref, original_alt = reference.copy(), alternative.copy()
+    result = merge_snp_tables(
+        reference, alternative, return_ref_indices=True, return_alt_indices=True
+    )
+    np.testing.assert_array_equal(result["SNP"], ["rs1", "rs2"])
+    np.testing.assert_array_equal(result["REF_IDX"], [10, 20])
+    np.testing.assert_array_equal(result["ALT_IDX"], [41, 31])
+    np.testing.assert_array_equal(result["BETA"], [1.0, -2.0])
+    pd.testing.assert_frame_equal(reference, original_ref)
+    pd.testing.assert_frame_equal(alternative, original_alt)

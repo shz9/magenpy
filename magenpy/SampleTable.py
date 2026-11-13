@@ -201,14 +201,14 @@ class SampleTable:
 
             # Drop the phenotype column if it already exists:
             if "phenotype" in self.table.columns:
-                self.table.drop(columns=["phenotype"], inplace=True)
+                self.table = self.table.drop(columns=["phenotype"])
 
             self.table = self.table.merge(pheno_table, on=["FID", "IID"])
         else:
             self.table = pheno_table
 
         if self.table["phenotype"].isnull().all():
-            self.table.drop("phenotype", axis=1, inplace=True)
+            self.table = self.table.drop("phenotype", axis=1)
         elif drop_na:
             # Maybe using converters in the read_csv above?
             self.table = self.table.dropna(subset=["phenotype"])
@@ -243,7 +243,7 @@ class SampleTable:
         covar_table = pd.read_csv(covar_file, **read_csv_kwargs)
 
         if self._covariate_cols is not None:
-            self.table.drop(columns=self._covariate_cols, inplace=True)
+            self.table = self.table.drop(columns=self._covariate_cols)
 
         if read_csv_kwargs["header"] is None:
             self._covariate_cols = np.array(
@@ -275,7 +275,7 @@ class SampleTable:
             unique_vals = self.table["phenotype"].unique()
 
             if self.table["phenotype"].isnull().all():
-                self.table.drop("phenotype", axis=1, inplace=True)
+                self.table = self.table.drop("phenotype", axis=1)
             elif self._phenotype_likelihood != "gaussian":
                 if len(unique_vals) > 2:
                     self._phenotype_likelihood = "gaussian"

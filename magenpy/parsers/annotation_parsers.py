@@ -68,7 +68,7 @@ class AnnotationMatrixParser:
             raise e
 
         if self.col_name_converter is not None:
-            df.rename(columns=self.col_name_converter, inplace=True)
+            df = df.rename(columns=self.col_name_converter)
 
         normalize_chromosome_column(df)
         if drop_na:
@@ -80,7 +80,7 @@ class AnnotationMatrixParser:
             else:
                 df["POS"] = df["POS"].astype(np.int32)
 
-        df.sort_values(["CHR", "POS"], inplace=True)
+        df = df.sort_values(["CHR", "POS"])
 
         annotations = [ann for ann in df.columns if ann not in ("CHR", "SNP", "POS")]
 

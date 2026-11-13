@@ -22,9 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Replace deprecated pandas `inplace` arguments in table manipulation with
+  explicit assignments to avoid pandas 3.1 warnings and prepare for pandas 4.
+
 - Store `mgp_compute_ld --zip` Zarr keys at the archive root so local and remote
   LD readers can open the same archive without a chromosome-folder mismatch.
-
 - Apply sample selection, including phenotype/covariate-driven sample removal,
   before MAF/MAC filtering. Invalidate cached MAF and per-variant sample counts
   whenever the selected samples change.

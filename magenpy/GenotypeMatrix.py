@@ -471,10 +471,10 @@ class GenotypeMatrix:
 
     def _filter_variant_rows(self, rows):
         """Subset metadata and, for in-memory backends, the genotype columns."""
-        # Integer-array indexing selects independent rows. Reset only the index
-        # in place so older pandas versions do not copy the selected data again.
+        # Integer-array indexing selects independent rows; give the result a
+        # fresh positional index.
         self.snp_table = self.snp_table.take(rows)
-        self.snp_table.reset_index(drop=True, inplace=True)
+        self.snp_table = self.snp_table.reset_index(drop=True)
 
     def filter_snps(self, extract_snps=None, extract_file=None):
         """
@@ -843,7 +843,7 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
             "sex",
             "phenotype",
         ]
-        sample_table.reset_index(inplace=True, drop=True)
+        sample_table = sample_table.reset_index(drop=True)
         sample_table = sample_table.astype(
             {
                 "FID": str,
@@ -860,7 +860,7 @@ class xarrayGenotypeMatrix(GenotypeMatrix):
         # Set the snp table:
         snp_table = xr_gt.variant.coords.to_dataset().to_dataframe()
         snp_table.columns = ["CHR", "SNP", "cM", "POS", "A1", "A2"]
-        snp_table.reset_index(inplace=True, drop=True)
+        snp_table = snp_table.reset_index(drop=True)
         snp_table = snp_table.astype(
             {
                 "SNP": str,

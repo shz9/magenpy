@@ -80,7 +80,7 @@ def parse_ld_block_data(ldb_file_path):
     )
 
     # Drop rows with missing values:
-    df.dropna(inplace=True)
+    df = df.dropna()
     df = df.loc[(df.start != "None") & (df.stop != "None")]
 
     # Cast the start/stop columns to integers:

@@ -248,15 +248,15 @@ def merge_snp_tables(
     ref_include = on + ["A1", "A2"]
 
     if return_ref_indices:
-        ref_table.reset_index(inplace=True, names="REF_IDX")
+        ref_table = ref_table.reset_index(names="REF_IDX")
         ref_include += ["REF_IDX"]
     if return_alt_indices:
-        alt_table.reset_index(inplace=True, names="ALT_IDX")
+        alt_table = alt_table.reset_index(names="ALT_IDX")
 
     merged_table = ref_table[ref_include].merge(alt_table, how=how, on=on)
 
     if drop_duplicates:
-        merged_table.drop_duplicates(inplace=True, subset=on)
+        merged_table = merged_table.drop_duplicates(subset=on)
 
     if how == "left":
         merged_table["A1_y"] = merged_table["A1_y"].fillna(merged_table["A1_x"])
@@ -292,7 +292,7 @@ def merge_snp_tables(
     if correct_flips:
         flip_allele_statistics(merged_table, flip, signed_statistics=signed_statistics)
 
-    merged_table.drop(["A1_x", "A1_y", "A2_x", "A2_y"], axis=1, inplace=True)
+    merged_table = merged_table.drop(["A1_x", "A1_y", "A2_x", "A2_y"], axis=1)
 
     return merged_table
 
@@ -666,7 +666,7 @@ def map_variants_to_genomic_blocks(
     assert all([col in block_table.columns for col in block_boundary_cols])
 
     # Sort the variant table by position:
-    variant_table.sort_values(variant_pos_col, inplace=True)
+    variant_table = variant_table.sort_values(variant_pos_col)
 
     # Merge the two dataframes to assign each SNP to its corresponding block:
     merged_df = pd.merge_asof(

@@ -880,12 +880,13 @@ class GWADataLoader:
                         data._filter_variant_rows(indexer)
                     else:
                         table = table.take(indexer)
-                        table.reset_index(drop=True, inplace=True)
+                        table = table.reset_index(drop=True)
                         setattr(data, attribute, table)
                 elif name == "sumstats" and not table.index.equals(
                     pd.RangeIndex(len(table))
                 ):
-                    table.reset_index(drop=True, inplace=True)
+                    table = table.reset_index(drop=True)
+                    setattr(data, attribute, table)
 
             if self.sumstats_table is not None and "flip" in plan:
                 table = self.sumstats_table[c].table

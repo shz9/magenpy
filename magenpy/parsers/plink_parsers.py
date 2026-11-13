@@ -87,10 +87,10 @@ def parse_fam_file(plink_bfile):
 
     # If the phenotype is all null or unknown, drop the column:
     if fam_df["phenotype"].isnull().all():
-        fam_df.drop("phenotype", axis=1, inplace=True)
+        fam_df = fam_df.drop("phenotype", axis=1)
 
     # If the sex column is all null or unknown, drop the column:
     if fam_df["sex"].isnull().all():
-        fam_df.drop("sex", axis=1, inplace=True)
+        fam_df = fam_df.drop("sex", axis=1)
 
     return fam_df

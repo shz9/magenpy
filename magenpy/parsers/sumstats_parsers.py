@@ -333,7 +333,7 @@ class SumstatsParser:
             self.col_subset = original_col_subset
 
         if self.col_name_converter is not None:
-            df.rename(columns=self.col_name_converter, inplace=True)
+            df = df.rename(columns=self.col_name_converter)
 
         df = self.post_process(df)
 
