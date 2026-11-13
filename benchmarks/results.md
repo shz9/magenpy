@@ -1,8 +1,8 @@
 # Magenpy continuous benchmark results
 
-Latest revision: [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082). Push date (UTC): 2026-11-13T20:06:13+00:00. Benchmark run (UTC): 2026-11-13T20:08:23.600474+00:00.
+Latest revision: [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274). Push date (UTC): 2026-11-13T21:02:43+00:00. Benchmark run (UTC): 2026-11-13T21:05:13.795605+00:00.
 
-Latest host: AMD EPYC 9V74 80-Core Processor (Linux/x86_64); Python 3.12.16; OpenMP: True.
+Latest host: INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64); Python 3.13.18; OpenMP: True.
 Panel: 378 samples, 15,938 variants, 16 artificial blocks. Configuration: `{"block_snps": 1000, "dtype": "int16", "min_seconds": 0.15, "repeats": 5, "samples": 0, "snps": 0, "window_size": 250}`.
 
 Each function has its own history table, newest runs first. Commit links identify the measured source; '+ local changes' marks an uncommitted checkout. Push dates come from push-event metadata; a dash means no push date was recorded. Run dates are recorded separately for local, PR, and manual benchmarks.
@@ -15,6 +15,8 @@ Times are medians after one warm-up in fresh worker processes. LD includes compl
 
 | Commit ID | Push date (UTC) | Run date (UTC) | Threads | Runtime (ms) | Peak RSS (MiB) | Time / base | RSS / base | Host |
 |---|---|---|---:|---:|---:|---:|---:|---|
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 1 | 1138.407 | 171.8 | 0.98x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 2 | 742.034 | 171.3 | 1.00x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 1 | 1373.448 | 172.6 | 1.03x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 2 | 799.798 | 171.7 | 1.00x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`0d15c73`](https://github.com/shz9/magenpy/commit/0d15c73845192dd2e4df8b09536eb1cdfd717961) | 2026-11-13 | 2026-11-13 | 1 | 1586.676 | 188.6 | 1.00x | 1.00x | AMD EPYC 7763 64-Core Processor (Linux/x86_64; OMP True) |
@@ -31,6 +33,8 @@ Times are medians after one warm-up in fresh worker processes. LD includes compl
 
 | Commit ID | Push date (UTC) | Run date (UTC) | Threads | Runtime (ms) | Peak RSS (MiB) | Time / base | RSS / base | Host |
 |---|---|---|---:|---:|---:|---:|---:|---|
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 1 | 2225.302 | 234.4 | 0.99x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 2 | 1458.658 | 234.2 | 1.01x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 1 | 2793.812 | 234.9 | 1.05x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 2 | 1551.882 | 235.1 | 1.00x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`0d15c73`](https://github.com/shz9/magenpy/commit/0d15c73845192dd2e4df8b09536eb1cdfd717961) | 2026-11-13 | 2026-11-13 | 1 | 3119.417 | 254.8 | 1.01x | 1.00x | AMD EPYC 7763 64-Core Processor (Linux/x86_64; OMP True) |
@@ -61,6 +65,8 @@ Times are medians after one warm-up in fresh worker processes. LD includes compl
 
 | Commit ID | Push date (UTC) | Run date (UTC) | Threads | Runtime (ms) | Peak RSS (MiB) | Time / base | RSS / base | Host |
 |---|---|---|---:|---:|---:|---:|---:|---|
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 1 | 57.094 | 121.9 | 0.99x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 2 | 44.619 | 122.0 | 1.00x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 1 | 60.735 | 123.7 | 1.01x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 2 | 51.763 | 123.9 | 1.03x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`0d15c73`](https://github.com/shz9/magenpy/commit/0d15c73845192dd2e4df8b09536eb1cdfd717961) | 2026-11-13 | 2026-11-13 | 1 | 66.205 | 125.4 | 1.00x | 1.00x | AMD EPYC 7763 64-Core Processor (Linux/x86_64; OMP True) |
@@ -77,6 +83,8 @@ Times are medians after one warm-up in fresh worker processes. LD includes compl
 
 | Commit ID | Push date (UTC) | Run date (UTC) | Threads | Runtime (ms) | Peak RSS (MiB) | Time / base | RSS / base | Host |
 |---|---|---|---:|---:|---:|---:|---:|---|
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 1 | 42.132 | 122.2 | 1.00x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 2 | 36.294 | 122.0 | 0.99x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 1 | 51.635 | 123.7 | 1.03x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 2 | 46.640 | 123.8 | 1.02x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`0d15c73`](https://github.com/shz9/magenpy/commit/0d15c73845192dd2e4df8b09536eb1cdfd717961) | 2026-11-13 | 2026-11-13 | 1 | 57.322 | 125.4 | 1.01x | 1.00x | AMD EPYC 7763 64-Core Processor (Linux/x86_64; OMP True) |
@@ -93,6 +101,8 @@ Times are medians after one warm-up in fresh worker processes. LD includes compl
 
 | Commit ID | Push date (UTC) | Run date (UTC) | Threads | Runtime (ms) | Peak RSS (MiB) | Time / base | RSS / base | Host |
 |---|---|---|---:|---:|---:|---:|---:|---|
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 1 | 78.539 | 122.1 | 0.98x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 2 | 54.465 | 122.1 | 0.99x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 1 | 77.385 | 123.7 | 1.01x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 2 | 60.606 | 123.7 | 1.02x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`0d15c73`](https://github.com/shz9/magenpy/commit/0d15c73845192dd2e4df8b09536eb1cdfd717961) | 2026-11-13 | 2026-11-13 | 1 | 85.773 | 125.3 | 1.00x | 1.00x | AMD EPYC 7763 64-Core Processor (Linux/x86_64; OMP True) |
@@ -111,6 +121,8 @@ Times are medians after one warm-up in fresh worker processes. LD includes compl
 
 | Commit ID | Push date (UTC) | Run date (UTC) | Threads | Runtime (ms) | Peak RSS (MiB) | Time / base | RSS / base | Host |
 |---|---|---|---:|---:|---:|---:|---:|---|
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 1 | 38.482 | 181.9 | 0.98x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 2 | 36.605 | 181.5 | 1.00x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 1 | 49.241 | 184.4 | 1.02x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 2 | 47.046 | 184.1 | 1.02x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`0d15c73`](https://github.com/shz9/magenpy/commit/0d15c73845192dd2e4df8b09536eb1cdfd717961) | 2026-11-13 | 2026-11-13 | 1 | 52.289 | 183.9 | 0.99x | 1.00x | AMD EPYC 7763 64-Core Processor (Linux/x86_64; OMP True) |
@@ -127,6 +139,8 @@ Times are medians after one warm-up in fresh worker processes. LD includes compl
 
 | Commit ID | Push date (UTC) | Run date (UTC) | Threads | Runtime (ms) | Peak RSS (MiB) | Time / base | RSS / base | Host |
 |---|---|---|---:|---:|---:|---:|---:|---|
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 1 | 37.853 | 182.0 | 0.95x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 2 | 36.765 | 181.8 | 1.00x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 1 | 49.079 | 184.4 | 1.02x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 2 | 46.450 | 184.2 | 1.00x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`0d15c73`](https://github.com/shz9/magenpy/commit/0d15c73845192dd2e4df8b09536eb1cdfd717961) | 2026-11-13 | 2026-11-13 | 1 | 52.488 | 183.4 | 1.01x | 1.00x | AMD EPYC 7763 64-Core Processor (Linux/x86_64; OMP True) |
@@ -145,6 +159,8 @@ Times are medians after one warm-up in fresh worker processes. LD includes compl
 
 | Commit ID | Push date (UTC) | Run date (UTC) | Threads | Runtime (ms) | Peak RSS (MiB) | Time / base | RSS / base | Host |
 |---|---|---|---:|---:|---:|---:|---:|---|
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 1 | 30.323 | 123.3 | 1.00x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
+| [`7f7b8e1`](https://github.com/shz9/magenpy/commit/7f7b8e1a1598370276f96a6764911c5b1a2c6274) | 2026-11-13 | 2026-11-13 | 2 | 30.098 | 121.9 | 1.01x | 1.00x | INTEL(R) XEON(R) PLATINUM 8573C (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 1 | 41.081 | 125.2 | 1.01x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`141d43f`](https://github.com/shz9/magenpy/commit/141d43f18e73832b3831601522cd0c7412e17082) | 2026-11-13 | 2026-11-13 | 2 | 41.612 | 123.7 | 0.99x | 1.00x | AMD EPYC 9V74 80-Core Processor (Linux/x86_64; OMP True) |
 | [`0d15c73`](https://github.com/shz9/magenpy/commit/0d15c73845192dd2e4df8b09536eb1cdfd717961) | 2026-11-13 | 2026-11-13 | 1 | 42.384 | 126.8 | 1.01x | 1.00x | AMD EPYC 7763 64-Core Processor (Linux/x86_64; OMP True) |
