@@ -227,7 +227,7 @@ def _regular_files(root):
 
 
 def create_zero_zipped_archives(ld_matrices):
-    """Create store-only ZIP archives with root ``.zmetadata`` written last."""
+    """Create root-level Zarr ZIP stores with ``.zmetadata`` written last."""
     archive_paths = []
 
     for chromosome, ld_mat in sorted(ld_matrices.items()):
@@ -243,7 +243,7 @@ def create_zero_zipped_archives(ld_matrices):
         temporary_path = archive_path.with_name(f".{archive_path.name}.tmp")
         normal_files = sorted(
             (path for path in _regular_files(store_path) if path != zmetadata_path),
-            key=lambda path: _version_sort_key(path.relative_to(store_path.parent)),
+            key=lambda path: _version_sort_key(path.relative_to(store_path)),
         )
 
         try:
@@ -254,13 +254,13 @@ def create_zero_zipped_archives(ld_matrices):
                 allowZip64=True,
             ) as archive:
                 for path in normal_files:
-                    archive.write(path, path.relative_to(store_path.parent).as_posix())
+                    archive.write(path, path.relative_to(store_path).as_posix())
 
                 # Keep the root consolidated metadata as the final ZIP member.
                 if zmetadata_path.is_file():
                     archive.write(
                         zmetadata_path,
-                        zmetadata_path.relative_to(store_path.parent).as_posix(),
+                        zmetadata_path.relative_to(store_path).as_posix(),
                     )
 
             os.replace(temporary_path, archive_path)
@@ -412,7 +412,7 @@ parser.add_argument(
     default=False,
     action="store_true",
     help="Consolidate metadata and create a zero-compression ZIP archive "
-    "alongside each LD store.",
+    "alongside each LD store, with Zarr keys at the archive root.",
 )
 
 # Options for the various LD estimators:

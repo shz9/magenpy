@@ -39,6 +39,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
       - name: Build wheels
         uses: pypa/cibuildwheel@v4.1.0
 
@@ -57,7 +62,7 @@ jobs:
       - uses: actions/setup-python@v5
         name: Install Python
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
@@ -65,7 +70,7 @@ jobs:
           enable-cache: true
 
       - name: Build sdist
-        run: uv run --with build python -m build --sdist
+        run: uv run --python 3.13 --with build python -m build --sdist
 
       - name: Test install
         run: uv pip install --system dist/magenpy*.tar.gz

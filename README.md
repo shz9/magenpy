@@ -20,7 +20,7 @@ The package provides tools for:
 
 * Reading and processing genotype data in `plink` BED format.
 * Efficient LD matrix construction and storage in [Zarr](https://zarr.readthedocs.io/en/stable/index.html) array format.
-* Data structures for harmonizing various GWAS data sources.
+* Data structures and methods for harmonizing various GWAS data sources.
   * Includes parsers for commonly used GWAS summary statistics formats.
 * Simulating polygenic traits (continuous and binary) using complex genetic architectures.
     * Multi-cohort simulation scenarios (beta)
@@ -34,8 +34,9 @@ The package provides tools for:
 - [Sister package `viprs`](https://github.com/shz9/viprs)
 - [Linkage disequilibrium (LD) browser](https://shz9.github.io/ld_browser/)
 - [Citation / BibTeX records](./CITATION.md)
-- [Report issues/bugs](https://github.com/shz9/magenpy/issues)
+- [Benchmarks](./benchmarks/results.md)
 - [Testing, validation, and formatting](tests/README.md)
+- [Report issues/bugs](https://github.com/shz9/magenpy/issues)
 
 ### AI Usage
 [![AI-DECLARATION: assist](https://img.shields.io/badge/䷼%20AI--DECLARATION-assist-fef9c3?labelColor=fef9c3)](https://ai-declaration.md)

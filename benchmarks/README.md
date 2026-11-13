@@ -4,7 +4,7 @@
 pushes, pull requests, and manual dispatch. It measures the current revision and
 the PR base (or preceding push commit) **on the same Ubuntu runner**, at one and
 two native threads. Both extensions are compiled from source with OpenMP using
-one shared Python 3.12 environment.
+one shared Python 3.13 environment.
 [requirements-benchmark.txt](../requirements-benchmark.txt) includes the runtime
 requirements and unpinned build tools; dependencies are installed once for both
 builds, and the resolved versions are retained in `dependencies.txt` in the

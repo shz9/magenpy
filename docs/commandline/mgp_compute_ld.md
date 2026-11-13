@@ -57,8 +57,13 @@ mgp_compute_ld \
   --zip
 ```
 
-ZIP members retain the `chr_N/` prefix. Normal files are added in version-sorted
-order, and the root `chr_N/.zmetadata` member is appended last.
+ZIP members are relative to the chromosome store: `.zgroup`, `.zattrs`,
+`matrix/`, and `metadata/` are at the archive root, without a `chr_N/` wrapper.
+This layout can be read directly with `LDMatrix.from_path("output/ld/chr_22.zip")`
+or Zarr's `ZipStore`, and is also supported by magenpy's HTTP and Hugging Face
+ZIP readers. Normal files are added in version-sorted order, and `.zmetadata`
+is appended last. Zarr chunks keep their original compression; the ZIP layer
+adds no further compression.
 
 Package `INFO` messages are hidden by default so they do not duplicate progress-bar
 updates. Use `--log-level` to change command-line logging:

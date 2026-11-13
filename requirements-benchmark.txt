@@ -1,4 +1,4 @@
-# Shared runtime and build dependencies for both Python 3.12 benchmark builds.
+# Shared runtime and build dependencies for both Python 3.13 benchmark builds.
 -r requirements.txt
 Cython
 extension-helpers

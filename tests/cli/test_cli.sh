@@ -42,6 +42,10 @@ import re
 import sys
 import zipfile
 
+import magenpy as mgp
+import numpy as np
+import pandas as pd
+
 with zipfile.ZipFile(sys.argv[1]) as archive:
     members = archive.infolist()
 
@@ -49,7 +53,7 @@ if not members:
     raise SystemExit("The LD ZIP archive is empty.")
 if any(member.compress_type != zipfile.ZIP_STORED for member in members):
     raise SystemExit("The LD ZIP archive contains compressed members.")
-if members[-1].filename != "chr_22/.zmetadata":
+if members[-1].filename != ".zmetadata":
     raise SystemExit("Consolidated metadata is not the final ZIP member.")
 
 normal_names = [member.filename for member in members[:-1]]
@@ -59,6 +63,12 @@ version_key = lambda name: tuple(
 )
 if normal_names != sorted(normal_names, key=version_key):
     raise SystemExit("Normal ZIP members are not in version-sorted order.")
+
+original = mgp.LDMatrix.from_path("output/ld_windowed/chr_22")
+archived = mgp.LDMatrix.from_path(sys.argv[1])
+pd.testing.assert_frame_equal(archived.to_snp_table(), original.to_snp_table())
+np.testing.assert_array_equal(archived.indptr[:], original.indptr[:])
+np.testing.assert_array_equal(archived.data[:], original.data[:])
 PY
 
 LD_STORE_PATH="output/ld_windowed/chr_22"
